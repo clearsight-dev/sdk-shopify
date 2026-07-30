@@ -267,6 +267,37 @@ export interface PageInfo {
 export interface Connection<T> {
   nodes: T[];
   pageInfo: PageInfo;
+  /**
+   * Available filter facets for the current query — populated ONLY by
+   * `collections.products` (Storefront returns the facets valid for the
+   * collection given the applied `filters`). Each value's `input` is a JSON
+   * string you pass straight back in `ListOptions.filters`.
+   */
+  filters?: Filter[];
+}
+
+/**
+ * A Storefront `ProductFilter` input. In practice you never build this by hand:
+ * take a `FilterValue.input` string, `JSON.parse` it, and pass the objects here.
+ */
+export type ProductFilter = Record<string, unknown>;
+
+/** One value inside a filter facet (e.g. "In stock", "$0–$50", "Color: Blue"). */
+export interface FilterValue {
+  id: string;
+  label: string;
+  count: number;
+  /** JSON string — `JSON.parse` it into a ProductFilter and pass it back. */
+  input: string;
+}
+
+/** A filter facet returned by Storefront (Availability, Price, Product type, …). */
+export interface Filter {
+  id: string;
+  label: string;
+  /** e.g. "LIST" (checkbox values) or "PRICE_RANGE". */
+  type: string;
+  values: FilterValue[];
 }
 
 export interface ListOptions {
@@ -275,6 +306,8 @@ export interface ListOptions {
   query?: string;        // Storefront search syntax
   sortKey?: string;      // e.g. 'TITLE', 'PRICE', 'CREATED'
   reverse?: boolean;
+  /** Storefront ProductFilter inputs (from FilterValue.input). Collection only. */
+  filters?: ProductFilter[];
 }
 
 // ---------------------------------------------------------------------------
@@ -473,4 +506,11 @@ export interface ShopifyIntegration {
   customer: ShopifyCustomerAPI;
   blogs: ShopifyBlogsAPI;
   wishlist: ShopifyWishlistAPI;
+  /** Shop-level settings (money format / currency), loaded at init. */
+  shop: {
+    load(): Promise<{ moneyFormat: string | null; currencyCode: string | null }>;
+    moneyFormat(): string | null;
+  };
+  /** Format a Money value using the shop's `moneyFormat` (with symbol fallback). */
+  formatMoney(money: Money | null | undefined): string;
 }

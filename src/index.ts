@@ -1,30 +1,21 @@
 /**
  * Shopify integration facade — talks to the Storefront GraphQL API.
+ *
+ * Everything is exported from this root, including the React helpers, so a
+ * consumer only needs `@apptile/sdk-shopify`. The `/react` subpath is still
+ * published for back-compat.
  */
-import { blogs } from './blogs';
-import { cart } from './cart';
-import { collections } from './collections';
-import { customer } from './customer';
-import { products } from './products';
-import { wishlist } from './wishlist';
-import { isConfigured, setConfig } from './client';
-import type { ShopifyConfig, ShopifyIntegration } from './types';
-
-export const shopify: ShopifyIntegration = {
-  async init(config: ShopifyConfig): Promise<void> {
-    setConfig(config);
-  },
-  isReady(): boolean {
-    return isConfigured();
-  },
-  isMock: false,
-  products,
-  collections,
-  cart,
-  customer,
-  blogs,
-  wishlist,
-};
-
+export { shopify, shopify as default } from './shopify';
+export { formatMoney, applyMoneyFormat, shop } from './money';
+export { getMoneyFormat, getCurrencyCode } from './client';
 export type * from './types';
-export default shopify;
+
+// React helpers. Requires `react` (a peer dependency) — this SDK targets React
+// Native, so the root is React-aware by design.
+export {
+  ShopifyProvider,
+  useShopify,
+  useCart,
+  useWishlist,
+  type ShopifyProviderProps,
+} from './react';
