@@ -8,9 +8,28 @@ import { ShopifyConfig, ShopifyError, UserError } from './types';
 
 interface InternalState {
   config: ShopifyConfig | null;
+  /** `shop.moneyFormat` Liquid template (e.g. `"Rs. {{amount}}"`), fetched at init. */
+  moneyFormat: string | null;
+  /** `shop.paymentSettings.currencyCode` (e.g. `"INR"`). */
+  currencyCode: string | null;
 }
 
-const state: InternalState = { config: null };
+const state: InternalState = { config: null, moneyFormat: null, currencyCode: null };
+
+/** Cache the shop's money format + currency (called once after init). */
+export function setShopInfo(info: { moneyFormat?: string | null; currencyCode?: string | null }): void {
+  if (info.moneyFormat) state.moneyFormat = info.moneyFormat;
+  if (info.currencyCode) state.currencyCode = info.currencyCode;
+}
+
+/** The shop's `moneyFormat` Liquid template, or null until the shop query resolves. */
+export function getMoneyFormat(): string | null {
+  return state.moneyFormat;
+}
+
+export function getCurrencyCode(): string | null {
+  return state.currencyCode;
+}
 
 const DEFAULT_API_VERSION = '2024-10';
 

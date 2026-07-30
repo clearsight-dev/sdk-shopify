@@ -8,7 +8,7 @@ import {
   useRef,
   useState,
 } from "react";
-import { shopify } from "../index";
+import { shopify } from "../shopify";
 import type {
   Cart,
   CartLineInput,
@@ -16,7 +16,7 @@ import type {
   ShopifyConfig,
   WishlistItem,
   WishlistStorageAdapter,
-} from "../index";
+} from "../types";
 
 /**
  * Unified Shopify context — thin React wrapper over the SDK client.
@@ -63,6 +63,16 @@ const ShopifyContext = createContext<ShopifyContextType | undefined>(undefined);
 
 const CART_STORAGE_KEY = "shopify:cart-id:v1";
 
+/**
+ * Emitted by the provider on a successful commerce mutation, so the host app
+ * can react (e.g. show a toast) without wrapping the hooks. Fires only on the
+ * happy path.
+ */
+export type ShopifyEvent =
+  | { type: "cart:add" }
+  | { type: "wishlist:add" }
+  | { type: "wishlist:remove" };
+
 export interface ShopifyProviderProps {
   children: ReactNode;
   /** Storefront credentials passed straight through to `shopify.init()`. */
@@ -73,6 +83,8 @@ export interface ShopifyProviderProps {
    * consumer passes an AsyncStorage-compatible adapter.
    */
   storage?: WishlistStorageAdapter;
+  /** Fired on a successful cart/wishlist mutation. */
+  onEvent?: (event: ShopifyEvent) => void;
 }
 
 function defaultStorage(): WishlistStorageAdapter | null {
@@ -82,7 +94,7 @@ function defaultStorage(): WishlistStorageAdapter | null {
   return null;
 }
 
-export function ShopifyProvider({ children, config, storage }: ShopifyProviderProps) {
+export function ShopifyProvider({ children, config, storage, onEvent }: ShopifyProviderProps) {
   const [ready, setReady]           = useState(false);
   const [error, setError]           = useState<string | null>(null);
   const [cart, setCart]             = useState<Cart | null>(null);
@@ -165,10 +177,11 @@ export function ShopifyProvider({ children, config, storage }: ShopifyProviderPr
       const id = await ensureCartId();
       const next = await shopify.cart.addLines(id, [input]);
       await persistCart(next);
+      onEvent?.({ type: "cart:add" });
     } finally {
       setCartLoad(false);
     }
-  }, [ensureCartId, persistCart]);
+  }, [ensureCartId, persistCart, onEvent]);
 
   const cartUpdateLine = useCallback(async (lineId: string, quantity: number) => {
     if (!cart?.id) return;
@@ -217,9 +230,13 @@ export function ShopifyProvider({ children, config, storage }: ShopifyProviderPr
   // ─── Wishlist operations ──────────────────────────────────────────
   // The SDK's wishlist module owns storage + hydration; we just wrap
   // the mutating methods and rely on onChange to keep React in sync.
-  const wlAdd     = useCallback(async (p: Product | string) => { await (shopify.wishlist.add as any)(p); }, []);
+  const wlAdd     = useCallback(async (p: Product | string) => { await (shopify.wishlist.add as any)(p); onEvent?.({ type: "wishlist:add" }); }, [onEvent]);
   const wlRemove  = useCallback(async (id: string)          => { await shopify.wishlist.remove(id); }, []);
-  const wlToggle  = useCallback(async (p: Product | string) => (shopify.wishlist.toggle as any)(p),    []);
+  const wlToggle  = useCallback(async (p: Product | string) => {
+    const nowSaved = await (shopify.wishlist.toggle as any)(p);
+    onEvent?.({ type: nowSaved ? "wishlist:add" : "wishlist:remove" });
+    return nowSaved;
+  }, [onEvent]);
   const wlClear   = useCallback(async ()                    => { await shopify.wishlist.clear(); },    []);
   const wlRefresh = useCallback(async ()                    => { await shopify.wishlist.refresh(); },  []);
   const wlHas     = useCallback((id: string)                => shopify.wishlist.has(id),               []);

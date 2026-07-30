@@ -12,4 +12,5 @@ export {
   useCart,
   useWishlist,
   type ShopifyProviderProps,
+  type ShopifyEvent,
 } from "./ShopifyProvider";

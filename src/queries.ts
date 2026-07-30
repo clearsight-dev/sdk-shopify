@@ -197,11 +197,17 @@ export const COLLECTION_BY_HANDLE_QUERY = /* GraphQL */ `
 
 export const COLLECTION_PRODUCTS_QUERY = /* GraphQL */ `
   ${PRODUCT_FRAGMENT}
-  query CollectionProducts($handle: String!, $first: Int!, $after: String, $sortKey: ProductCollectionSortKeys, $reverse: Boolean) {
+  query CollectionProducts($handle: String!, $first: Int!, $after: String, $sortKey: ProductCollectionSortKeys, $reverse: Boolean, $filters: [ProductFilter!]) {
     collection(handle: $handle) {
-      products(first: $first, after: $after, sortKey: $sortKey, reverse: $reverse) {
+      products(first: $first, after: $after, sortKey: $sortKey, reverse: $reverse, filters: $filters) {
         nodes { ...ProductFields }
         pageInfo { hasNextPage hasPreviousPage startCursor endCursor }
+        filters {
+          id
+          label
+          type
+          values { id label count input }
+        }
       }
     }
   }
@@ -489,6 +495,19 @@ export const NODES_AS_PRODUCTS_QUERY = /* GraphQL */ `
     nodes(ids: $ids) {
       __typename
       ... on Product { ...ProductFields }
+    }
+  }
+`;
+
+/** Shop-level settings — money format template + currency. */
+export const SHOP_QUERY = /* GraphQL */ `
+  query ShopInfo {
+    shop {
+      name
+      moneyFormat
+      paymentSettings {
+        currencyCode
+      }
     }
   }
 `;

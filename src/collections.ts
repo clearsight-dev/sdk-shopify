@@ -10,6 +10,7 @@ import {
 import type {
   Collection,
   Connection,
+  Filter,
   ListOptions,
   PageInfo,
   Product,
@@ -21,7 +22,7 @@ interface CollectionsRaw {
 }
 interface CollectionRaw { collection: Collection | null }
 interface CollectionProductsRaw {
-  collection: { products: { nodes: any[]; pageInfo: PageInfo } } | null;
+  collection: { products: { nodes: any[]; pageInfo: PageInfo; filters?: Filter[] } } | null;
 }
 
 function normalizeProduct(p: any): Product {
@@ -73,13 +74,15 @@ export const collections: ShopifyCollectionsAPI = {
       after: opts?.after,
       sortKey: opts?.sortKey,
       reverse: opts?.reverse ?? false,
+      filters: opts?.filters,
     });
     if (!data.collection) {
-      return { nodes: [], pageInfo: { hasNextPage: false, hasPreviousPage: false, startCursor: null, endCursor: null } };
+      return { nodes: [], pageInfo: { hasNextPage: false, hasPreviousPage: false, startCursor: null, endCursor: null }, filters: [] };
     }
     return {
       nodes: data.collection.products.nodes.map(normalizeProduct),
       pageInfo: data.collection.products.pageInfo,
+      filters: data.collection.products.filters ?? [],
     };
   },
 };
