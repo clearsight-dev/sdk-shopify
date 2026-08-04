@@ -29,12 +29,52 @@ const cart = await shopify.cart.create({ lines: [{ merchandiseId: 'gid://…', q
 
 | API | Methods |
 |---|---|
-| `shopify.products`    | `list`, `byHandle`, `byId`, `search`, `recommended` |
+| `shopify.products`    | `list`, `byHandle`, `byId`, `byIds`, `search`, `recommended` |
 | `shopify.collections` | `list`, `byHandle`, `products` |
-| `shopify.cart`        | `create`, `get`, `addLines`, `updateLines`, `removeLines`, `applyDiscountCodes`, `setBuyerIdentity` |
+| `shopify.cart`        | `create`, `get`, `addLines`, `updateLines`, `removeLines`, `applyDiscountCodes`, `setBuyerIdentity`, `updateNote`, `updateAttributes` |
 | `shopify.customer`    | `signup`, `login`, `logout`, `profile`, `updateProfile`, `recoverPassword`, `orders`, `orderById` |
+| `shopify.metafields`  | `product`, `variant`, `collection`, `customer`, `order` |
 | `shopify.blogs`       | `list`, `byHandle`, `articles`, `articleByHandle` |
 | `shopify.wishlist`    | `init`, `add`, `remove`, `toggle`, `has`, `list`, `count`, `clear`, `refresh`, `onChange` |
+
+### Metafields — read-only
+
+Storefront won't enumerate a resource's metafields, so you pass the `{namespace, key}` pairs you want. Identifiers with nothing set are dropped from the result, so the array may be shorter than your input — and empty is a normal answer, not an error.
+
+```ts
+const fields = await shopify.metafields.variant(variantId, [
+  { namespace: 'auction', key: 'winners' },
+  { namespace: 'auction', key: 'allowedQty' },
+]);
+// value is always a string; `type` tells you how to read it
+const winners = fields.find(f => f.key === 'winners');
+if (winners?.type === 'json') JSON.parse(winners.value);
+```
+
+**Writing metafields is not possible here.** The Storefront API has no `metafieldsSet`; customer metafield writes need the Customer Account API, which is a separate endpoint and OAuth flow and is out of scope for this client.
+
+### Cart note & attributes
+
+Both are full replaces, mirroring the underlying mutations — read `cart.attributes` and spread it if you mean to add one rather than swap the set.
+
+```ts
+await shopify.cart.updateNote(cartId, 'Leave at the door');
+await shopify.cart.updateNote(cartId, null);            // clears it
+await shopify.cart.updateAttributes(cartId, [
+  ...cart.attributes,
+  { key: 'giftWrap', value: 'true' },
+]);
+```
+
+### Escape hatch
+
+`request()` runs any Storefront operation the SDK doesn't wrap, reusing the configured client — no second fetch layer, no second token store. `assertNoUserErrors` is exported alongside it so mutation payloads can be handled the way the built-in methods do.
+
+```ts
+import { request, assertNoUserErrors } from '@apptile/sdk-shopify';
+
+const data = await request<{ shop: { name: string } }>('query { shop { name } }');
+```
 
 ### Wishlist — local-storage backed
 

@@ -11,6 +11,7 @@ import { blogs } from './blogs';
 import { cart } from './cart';
 import { collections } from './collections';
 import { customer } from './customer';
+import { metafields } from './metafields';
 import { products } from './products';
 import { wishlist } from './wishlist';
 import { isConfigured, setConfig } from './client';
@@ -34,6 +35,7 @@ export const shopify: ShopifyIntegration = {
   customer,
   blogs,
   wishlist,
+  metafields,
   shop,
   formatMoney,
 };

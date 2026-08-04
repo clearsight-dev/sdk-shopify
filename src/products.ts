@@ -3,6 +3,7 @@
  */
 import { request } from './client';
 import {
+  NODES_AS_PRODUCTS_QUERY,
   PRODUCTS_LIST_QUERY,
   PRODUCT_BY_HANDLE_QUERY,
   PRODUCT_BY_ID_QUERY,
@@ -21,6 +22,13 @@ interface ProductsRaw {
 }
 interface ProductRaw { product: any | null }
 interface RecommendedRaw { productRecommendations: any[] | null }
+interface NodesRaw { nodes: any[] | null }
+
+/**
+ * Storefront costs a `nodes` call by the number of ids, so large sets are
+ * split. 100 matches the wishlist's batch size.
+ */
+const BY_IDS_BATCH_SIZE = 100;
 
 /**
  * Storefront API exposes prices as `priceRange.minVariantPrice / maxVariantPrice`
@@ -81,6 +89,20 @@ export const products: ShopifyProductsAPI = {
   async byId(id: string): Promise<Product | null> {
     const data = await request<ProductRaw>(PRODUCT_BY_ID_QUERY, { id });
     return data.product ? normalizeProduct(data.product) : null;
+  },
+
+  async byIds(ids: string[]): Promise<Product[]> {
+    if (ids.length === 0) return [];
+    const out: Product[] = [];
+    for (let index = 0; index < ids.length; index += BY_IDS_BATCH_SIZE) {
+      const chunk = ids.slice(index, index + BY_IDS_BATCH_SIZE);
+      const data = await request<NodesRaw>(NODES_AS_PRODUCTS_QUERY, { ids: chunk });
+      for (const node of data.nodes ?? []) {
+        // Deleted ids and non-Product nodes come back null / other typenames.
+        if (node && node.__typename === 'Product') out.push(normalizeProduct(node));
+      }
+    }
+    return out;
   },
 
   async search(query: string, opts?: Omit<ListOptions, 'query'>): Promise<Connection<Product>> {

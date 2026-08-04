@@ -141,8 +141,37 @@ export interface Cart {
   lines: CartLine[];
   cost: CartCost;
   discountCodes: CartDiscountCode[];
+  /** Cart-level order note, or null if unset. */
+  note: string | null;
+  /** Cart-level custom attributes — carried through to the order. */
+  attributes: CartAttribute[];
   createdAt: string;
   updatedAt: string;
+}
+
+/** A cart-level (or line-level) custom attribute key/value pair. */
+export interface CartAttribute {
+  key: string;
+  value: string;
+}
+
+/** Addresses a single metafield on a resource. */
+export interface MetafieldIdentifier {
+  namespace: string;
+  key: string;
+}
+
+/**
+ * A metafield as the Storefront API returns it. `value` is always a string —
+ * `type` tells you how to read it (`json`, `number_integer`, `boolean`, …), so
+ * parse accordingly rather than trusting the shape.
+ */
+export interface Metafield {
+  id: string;
+  namespace: string;
+  key: string;
+  value: string;
+  type: string;
 }
 
 export interface CartLineInput {
@@ -337,8 +366,34 @@ export interface ShopifyProductsAPI {
   list(opts?: ListOptions): Promise<Connection<Product>>;
   byHandle(handle: string): Promise<Product | null>;
   byId(id: string): Promise<Product | null>;
+  /**
+   * Fetch many products in one round-trip. Order follows `ids`; ids that no
+   * longer resolve are dropped, so the result may be shorter than the input.
+   * Chunked internally — pass as many ids as you like.
+   */
+  byIds(ids: string[]): Promise<Product[]>;
   search(query: string, opts?: Omit<ListOptions, 'query'>): Promise<Connection<Product>>;
   recommended(productId: string): Promise<Product[]>;
+}
+
+/**
+ * Reads metafields off the resources that expose them on the Storefront API.
+ *
+ * Storefront is **read-only** for metafields. Writing one (notably customer
+ * metafields) requires the Customer Account API, which is a different endpoint
+ * and OAuth flow — out of scope for this Storefront client.
+ *
+ * Every method takes explicit `{namespace, key}` identifiers: Storefront will
+ * not enumerate a resource's metafields for you.
+ */
+export interface ShopifyMetafieldsAPI {
+  product(productId: string, identifiers: MetafieldIdentifier[]): Promise<Metafield[]>;
+  variant(variantId: string, identifiers: MetafieldIdentifier[]): Promise<Metafield[]>;
+  collection(collectionId: string, identifiers: MetafieldIdentifier[]): Promise<Metafield[]>;
+  /** Requires a customer access token. */
+  customer(accessToken: string, identifiers: MetafieldIdentifier[]): Promise<Metafield[]>;
+  /** Order metafields — `orderId` is an Order GID. */
+  order(orderId: string, identifiers: MetafieldIdentifier[]): Promise<Metafield[]>;
 }
 
 export interface ShopifyCollectionsAPI {
@@ -361,6 +416,13 @@ export interface ShopifyCartAPI {
     cartId: string,
     identity: { email?: string; countryCode?: string; customerAccessToken?: string }
   ): Promise<Cart>;
+  /** Set the cart-level order note. Pass `null` to clear it. */
+  updateNote(cartId: string, note: string | null): Promise<Cart>;
+  /**
+   * Replace the cart-level custom attributes. This is a full replace, not a
+   * merge — read `cart.attributes` and spread it if you mean to add one.
+   */
+  updateAttributes(cartId: string, attributes: CartAttribute[]): Promise<Cart>;
 }
 
 export interface ShopifyCustomerAPI {
@@ -506,6 +568,8 @@ export interface ShopifyIntegration {
   customer: ShopifyCustomerAPI;
   blogs: ShopifyBlogsAPI;
   wishlist: ShopifyWishlistAPI;
+  /** Read metafields off products, variants, collections, customers, orders. */
+  metafields: ShopifyMetafieldsAPI;
   /** Shop-level settings (money format / currency), loaded at init. */
   shop: {
     load(): Promise<{ moneyFormat: string | null; currencyCode: string | null }>;

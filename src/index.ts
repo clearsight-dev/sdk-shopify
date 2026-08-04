@@ -8,6 +8,11 @@
 export { shopify, shopify as default } from './shopify';
 export { formatMoney, applyMoneyFormat, shop } from './money';
 export { getMoneyFormat, getCurrencyCode } from './client';
+// Escape hatch: run any Storefront operation this SDK doesn't wrap yet, against
+// the same configured client (no second token store, no second fetch layer).
+// `assertNoUserErrors` ships with it so callers can handle mutation payloads
+// the same way the built-in methods do.
+export { request, assertNoUserErrors } from './client';
 export type * from './types';
 
 // React helpers. Requires `react` (a peer dependency) — this SDK targets React

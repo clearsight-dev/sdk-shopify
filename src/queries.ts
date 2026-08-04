@@ -96,6 +96,8 @@ export const CART_FRAGMENT = /* GraphQL */ `
       totalTaxAmount { ...MoneyFields }
     }
     discountCodes { code applicable }
+    note
+    attributes { key value }
     createdAt
     updatedAt
     lines(first: 250) {
@@ -507,6 +509,96 @@ export const SHOP_QUERY = /* GraphQL */ `
       moneyFormat
       paymentSettings {
         currencyCode
+      }
+    }
+  }
+`;
+
+// ─── Cart note & attributes ───────────────────────────────────────────────
+// Cart-level counterparts to the line-level `attributes` on CartLineInput.
+// Both are full replaces, matching the underlying Storefront mutations.
+
+// `note` is non-null on the Storefront mutation, so clearing means sending an
+// empty string — `cart.updateNote(id, null)` maps to that.
+export const CART_NOTE_UPDATE_MUTATION = /* GraphQL */ `
+  ${CART_FRAGMENT}
+  mutation CartNoteUpdate($cartId: ID!, $note: String!) {
+    cartNoteUpdate(cartId: $cartId, note: $note) {
+      cart { ...CartFields }
+      userErrors { field message code }
+    }
+  }
+`;
+
+export const CART_ATTRIBUTES_UPDATE_MUTATION = /* GraphQL */ `
+  ${CART_FRAGMENT}
+  mutation CartAttributesUpdate($cartId: ID!, $attributes: [AttributeInput!]!) {
+    cartAttributesUpdate(cartId: $cartId, attributes: $attributes) {
+      cart { ...CartFields }
+      userErrors { field message code }
+    }
+  }
+`;
+
+// ─── Metafields ───────────────────────────────────────────────────────────
+// Storefront exposes metafields only by explicit identifier — there is no
+// "list all" — so every query takes `[HasMetafieldsIdentifier!]!`. Missing
+// identifiers come back as nulls in the array, which the caller strips.
+
+export const METAFIELD_FRAGMENT = /* GraphQL */ `
+  fragment MetafieldFields on Metafield {
+    id
+    namespace
+    key
+    value
+    type
+  }
+`;
+
+export const PRODUCT_METAFIELDS_QUERY = /* GraphQL */ `
+  ${METAFIELD_FRAGMENT}
+  query ProductMetafields($id: ID!, $identifiers: [HasMetafieldsIdentifier!]!) {
+    product(id: $id) {
+      metafields(identifiers: $identifiers) { ...MetafieldFields }
+    }
+  }
+`;
+
+export const VARIANT_METAFIELDS_QUERY = /* GraphQL */ `
+  ${METAFIELD_FRAGMENT}
+  query VariantMetafields($id: ID!, $identifiers: [HasMetafieldsIdentifier!]!) {
+    node(id: $id) {
+      ... on ProductVariant {
+        metafields(identifiers: $identifiers) { ...MetafieldFields }
+      }
+    }
+  }
+`;
+
+export const COLLECTION_METAFIELDS_QUERY = /* GraphQL */ `
+  ${METAFIELD_FRAGMENT}
+  query CollectionMetafields($id: ID!, $identifiers: [HasMetafieldsIdentifier!]!) {
+    collection(id: $id) {
+      metafields(identifiers: $identifiers) { ...MetafieldFields }
+    }
+  }
+`;
+
+export const CUSTOMER_METAFIELDS_QUERY = /* GraphQL */ `
+  ${METAFIELD_FRAGMENT}
+  query CustomerMetafields($accessToken: String!, $identifiers: [HasMetafieldsIdentifier!]!) {
+    customer(customerAccessToken: $accessToken) {
+      metafields(identifiers: $identifiers) { ...MetafieldFields }
+    }
+  }
+`;
+
+export const ORDER_METAFIELDS_QUERY = /* GraphQL */ `
+  ${METAFIELD_FRAGMENT}
+  query OrderMetafields($id: ID!, $identifiers: [HasMetafieldsIdentifier!]!) {
+    node(id: $id) {
+      ... on Order {
+        metafields(identifiers: $identifiers) { ...MetafieldFields }
       }
     }
   }

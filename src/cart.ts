@@ -3,6 +3,7 @@
  */
 import { request, assertNoUserErrors } from './client';
 import {
+  CART_ATTRIBUTES_UPDATE_MUTATION,
   CART_BUYER_IDENTITY_UPDATE_MUTATION,
   CART_CREATE_MUTATION,
   CART_DISCOUNT_CODES_UPDATE_MUTATION,
@@ -10,9 +11,11 @@ import {
   CART_LINES_ADD_MUTATION,
   CART_LINES_REMOVE_MUTATION,
   CART_LINES_UPDATE_MUTATION,
+  CART_NOTE_UPDATE_MUTATION,
 } from './queries';
 import type {
   Cart,
+  CartAttribute,
   CartLineInput,
   CartLineUpdateInput,
   ShopifyCartAPI,
@@ -26,6 +29,8 @@ interface CartUpdPayload    { cartLinesUpdate: { cart: any; userErrors: UserErro
 interface CartRmPayload     { cartLinesRemove: { cart: any; userErrors: UserError[] } }
 interface CartDiscPayload   { cartDiscountCodesUpdate: { cart: any; userErrors: UserError[] } }
 interface CartBuyPayload    { cartBuyerIdentityUpdate: { cart: any; userErrors: UserError[] } }
+interface CartNotePayload   { cartNoteUpdate: { cart: any; userErrors: UserError[] } }
+interface CartAttrPayload   { cartAttributesUpdate: { cart: any; userErrors: UserError[] } }
 
 /** GraphQL returns `lines.nodes`; we hoist to `lines` (an array). */
 function normalize(c: any): Cart {
@@ -41,6 +46,8 @@ function normalize(c: any): Cart {
     })),
     cost: c.cost,
     discountCodes: c.discountCodes ?? [],
+    note: c.note ?? null,
+    attributes: c.attributes ?? [],
     createdAt: c.createdAt,
     updatedAt: c.updatedAt,
   };
@@ -100,5 +107,25 @@ export const cart: ShopifyCartAPI = {
     });
     assertNoUserErrors('cartBuyerIdentityUpdate', data.cartBuyerIdentityUpdate.userErrors);
     return normalize(data.cartBuyerIdentityUpdate.cart);
+  },
+
+  async updateNote(cartId: string, note: string | null): Promise<Cart> {
+    // Storefront types `note` as String! — clearing is an empty string, and
+    // Shopify reports an unset note as '' rather than null.
+    const data = await request<CartNotePayload>(CART_NOTE_UPDATE_MUTATION, {
+      cartId,
+      note: note ?? '',
+    });
+    assertNoUserErrors('cartNoteUpdate', data.cartNoteUpdate.userErrors);
+    return normalize(data.cartNoteUpdate.cart);
+  },
+
+  async updateAttributes(cartId: string, attributes: CartAttribute[]): Promise<Cart> {
+    const data = await request<CartAttrPayload>(CART_ATTRIBUTES_UPDATE_MUTATION, {
+      cartId,
+      attributes,
+    });
+    assertNoUserErrors('cartAttributesUpdate', data.cartAttributesUpdate.userErrors);
+    return normalize(data.cartAttributesUpdate.cart);
   },
 };
