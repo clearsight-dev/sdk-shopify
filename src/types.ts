@@ -450,12 +450,34 @@ export interface TileCreditConfig {
   timeoutMs?: number;
 }
 
+/** Ledger entry enriched with the masked gift-card info it links to (redeem
+ *  rows only). Everything else — earn / adjust / expire — passes through
+ *  with `card: null`. Produced by `TileCreditClient.getHistory()`, which
+ *  fans-out ledger + list-gift-cards and joins by `giftCardGid`. */
+export interface TileCreditHistoryEntry extends TileCreditLedgerEntry {
+  card: {
+    last4: string;
+    status: TileCreditGiftCardStatus;
+    expiresAt: string | null;
+    initialAmountCents: number;
+  } | null;
+}
+
+export interface TileCreditHistoryPage {
+  entries: TileCreditHistoryEntry[];
+  nextCursor: string | null;
+}
+
 export interface TileCreditAPI {
   getWallet(): Promise<TileCreditWallet>;
   getLedger(opts?: { limit?: number; before?: string }): Promise<TileCreditLedgerPage>;
   listGiftCards(): Promise<{ giftCards: TileCreditIssuedGiftCard[] }>;
   getConfig(): Promise<TileCreditPublicConfig>;
   redeem(input: TileCreditRedeemInput): Promise<TileCreditRedeemResult>;
+  /** Ledger + gift-cards joined into one history feed. See docs §4.6.
+   *  Note: this issues TWO requests (ledger + list-gift-cards) in parallel;
+   *  use `getLedger` on its own if you don't need the card metadata. */
+  getHistory(opts?: { limit?: number; before?: string }): Promise<TileCreditHistoryPage>;
 }
 
 // ---------------------------------------------------------------------------

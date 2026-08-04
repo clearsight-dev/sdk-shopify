@@ -20,6 +20,8 @@ import type {
   TileCreditConfig,
   TileCreditErrorCode,
   TileCreditGiftCardStatus,
+  TileCreditHistoryEntry,
+  TileCreditHistoryPage,
   TileCreditIssuedGiftCard,
   TileCreditLedgerEntry,
   TileCreditLedgerPage,
@@ -177,6 +179,39 @@ export class TileCreditClient implements TileCreditAPI {
       redemptionMinCents: raw.redemptionMinCents ?? 0,
       redemptionMaxCents: raw.redemptionMaxCents ?? null,
     };
+  }
+
+  /**
+   * Ledger + gift-cards joined into one history feed (docs §4.6). Each redeem
+   * row gets `.card` populated with the masked info (last4 / status / expiry)
+   * so you can render "•••• adf7 · depleted" in one pass. Non-redeem rows
+   * pass through unchanged with `card: null`.
+   *
+   * Note: the join happens client-side. If you paginate the ledger with a
+   * cursor, the gift-cards call is a full re-fetch on every page — cache the
+   * `giftCards` map at the caller if you paginate deep.
+   */
+  async getHistory(opts: { limit?: number; before?: string } = {}): Promise<TileCreditHistoryPage> {
+    const [ledger, cards] = await Promise.all([
+      this.getLedger(opts),
+      this.listGiftCards(),
+    ]);
+    const cardByGid = new Map<string, TileCreditIssuedGiftCard>(
+      cards.giftCards.map((g) => [g.shopifyGiftCardGid, g]),
+    );
+    const entries: TileCreditHistoryEntry[] = ledger.entries.map((entry) => {
+      const card = entry.giftCardGid ? cardByGid.get(entry.giftCardGid) : undefined;
+      return {
+        ...entry,
+        card: card ? {
+          last4: card.last4,
+          status: card.status,
+          expiresAt: card.expiresAt,
+          initialAmountCents: card.initialAmountCents,
+        } : null,
+      };
+    });
+    return { entries, nextCursor: ledger.nextCursor };
   }
 
   async redeem(input: TileCreditRedeemInput): Promise<TileCreditRedeemResult> {
