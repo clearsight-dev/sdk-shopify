@@ -41,9 +41,10 @@ export const VARIANT_FRAGMENT = /* GraphQL */ `
   }
 `;
 
-export const PRODUCT_FRAGMENT = /* GraphQL */ `
+/** Every product field except media, which is where the card and gallery selections diverge. */
+const PRODUCT_CORE_FRAGMENT = /* GraphQL */ `
   ${VARIANT_FRAGMENT}
-  fragment ProductFields on Product {
+  fragment ProductCoreFields on Product {
     id
     handle
     title
@@ -68,6 +69,35 @@ export const PRODUCT_FRAGMENT = /* GraphQL */ `
     featuredImage { ...ImageFields }
     # The shopper-facing link, for sharing. Null unless published to the Online Store channel.
     onlineStoreUrl
+    updatedAt
+    createdAt
+  }
+`;
+
+/**
+ * Everything a product card needs, with media reduced to its content types.
+ *
+ * `hasVideo` and `mediaContentTypes` still resolve from this, which is all a grid asks of media — the
+ * play badge. Dropping the resolved URLs is the difference between every product in a grid carrying
+ * video sources and preview images and it carrying a list of enum values.
+ *
+ * Used by the paths that only ever feed cards: collection products, search, `byIds` and
+ * recommendations. `ProductFields` is the same thing plus resolved media, for the paths that render a
+ * gallery — `products.list`, `byHandle` and `byId`.
+ */
+export const PRODUCT_CARD_FRAGMENT = /* GraphQL */ `
+  ${PRODUCT_CORE_FRAGMENT}
+  fragment ProductCardFields on Product {
+    ...ProductCoreFields
+    # Only the content types — enough for a play badge, without the URLs behind it.
+    media(first: 250) { nodes { mediaContentType } }
+  }
+`;
+
+export const PRODUCT_FRAGMENT = /* GraphQL */ `
+  ${PRODUCT_CORE_FRAGMENT}
+  fragment ProductFields on Product {
+    ...ProductCoreFields
     # Videos are appended after images, so a small window misses them entirely.
     media(first: 250) {
       nodes {
@@ -81,8 +111,6 @@ export const PRODUCT_FRAGMENT = /* GraphQL */ `
         ... on ExternalVideo { id embeddedUrl host }
       }
     }
-    updatedAt
-    createdAt
   }
 `;
 
@@ -200,9 +228,9 @@ export const PRODUCT_BY_ID_QUERY = /* GraphQL */ `
 `;
 
 export const PRODUCT_RECOMMENDATIONS_QUERY = /* GraphQL */ `
-  ${PRODUCT_FRAGMENT}
+  ${PRODUCT_CARD_FRAGMENT}
   query Recommended($productId: ID!) {
-    productRecommendations(productId: $productId) { ...ProductFields }
+    productRecommendations(productId: $productId) { ...ProductCardFields }
   }
 `;
 
@@ -224,13 +252,13 @@ export const COLLECTION_BY_HANDLE_QUERY = /* GraphQL */ `
 `;
 
 export const COLLECTION_PRODUCTS_QUERY = /* GraphQL */ `
-  ${PRODUCT_FRAGMENT}
+  ${PRODUCT_CARD_FRAGMENT}
   query CollectionProducts($handle: String!, $first: Int!, $after: String, $sortKey: ProductCollectionSortKeys, $reverse: Boolean, $filters: [ProductFilter!]) {
     collection(handle: $handle) {
       handle
       title
       products(first: $first, after: $after, sortKey: $sortKey, reverse: $reverse, filters: $filters) {
-        nodes { ...ProductFields }
+        nodes { ...ProductCardFields }
         pageInfo { hasNextPage hasPreviousPage startCursor endCursor }
         filters {
           id
@@ -244,12 +272,28 @@ export const COLLECTION_PRODUCTS_QUERY = /* GraphQL */ `
 `;
 
 export const SEARCH_PRODUCTS_QUERY = /* GraphQL */ `
-  ${PRODUCT_FRAGMENT}
-  query SearchProducts($query: String!, $first: Int!, $after: String, $productFilters: [ProductFilter!]) {
-    search(query: $query, first: $first, after: $after, types: [PRODUCT], productFilters: $productFilters) {
+  ${PRODUCT_CARD_FRAGMENT}
+  query SearchProducts(
+    $query: String!
+    $first: Int!
+    $after: String
+    $productFilters: [ProductFilter!]
+    # SearchSortKeys, NOT ProductSortKeys — only RELEVANCE and PRICE exist here.
+    $sortKey: SearchSortKeys
+    $reverse: Boolean
+  ) {
+    search(
+      query: $query
+      first: $first
+      after: $after
+      types: [PRODUCT]
+      productFilters: $productFilters
+      sortKey: $sortKey
+      reverse: $reverse
+    ) {
       totalCount
       nodes {
-        ... on Product { ...ProductFields }
+        ... on Product { ...ProductCardFields }
       }
       pageInfo { hasNextPage hasPreviousPage startCursor endCursor }
       productFilters {
@@ -573,11 +617,11 @@ export const BLOG_ARTICLE_BY_HANDLE_QUERY = /* GraphQL */ `
  * ~100 IDs per call. The wishlist chunks larger sets automatically.
  */
 export const NODES_AS_PRODUCTS_QUERY = /* GraphQL */ `
-  ${PRODUCT_FRAGMENT}
+  ${PRODUCT_CARD_FRAGMENT}
   query WishlistNodes($ids: [ID!]!) {
     nodes(ids: $ids) {
       __typename
-      ... on Product { ...ProductFields }
+      ... on Product { ...ProductCardFields }
     }
   }
 `;

@@ -30,7 +30,6 @@ interface CollectionProductsRaw {
   } | null;
 }
 
-
 export const collections: ShopifyCollectionsAPI = {
   async list(opts?: ListOptions): Promise<Connection<Collection>> {
     const data = await request<CollectionsRaw>(COLLECTIONS_LIST_QUERY, {

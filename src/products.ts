@@ -2,6 +2,7 @@
  * Real Shopify products via Storefront API.
  */
 import { request } from './client';
+import { ShopifyError } from './types';
 import {
   NODES_AS_PRODUCTS_QUERY,
   SEARCH_PRODUCTS_QUERY,
@@ -68,13 +69,20 @@ function toMediaKind(mediaContentType: string): ProductMediaKind {
 }
 
 /**
- * Videos first, then images. Shopify appends video after the images, but a PDP gallery leads
- * with it — the production app opens on the first image with the video sitting at index 0.
+ * Ordered videos → images → 3D models. Shopify appends video after the images, but a PDP gallery
+ * leads with it, so the video ends up at index 0 and `selectInitialMediaIndex`-style callers can
+ * choose between opening on it or on the first still.
+ *
+ * 3D models sort last and keep `kind: 'model-3d'` rather than being folded in with the images: all
+ * this resolves for them is a preview still, and a consumer that cannot render one should be able to
+ * tell it apart from a photo instead of silently showing a frozen model.
+ *
  * Anything whose URL cannot be resolved is dropped so the result is always renderable.
  */
 function toMedia(nodes: any[]): ProductMedia[] {
   const videos: ProductMedia[] = [];
   const images: ProductMedia[] = [];
+  const models: ProductMedia[] = [];
 
   nodes.forEach((node, index) => {
     if (!node) return;
@@ -88,14 +96,78 @@ function toMedia(nodes: any[]): ProductMedia[] {
       embeddedUrl: kind === 'external-video' ? (node.embeddedUrl ?? null) : null,
     };
 
-    if (kind === 'image' || kind === 'model-3d') {
+    if (kind === 'image') {
       if (item.posterUrl) images.push(item);
+      return;
+    }
+    if (kind === 'model-3d') {
+      if (item.posterUrl) models.push(item);
       return;
     }
     if (item.videoUrl || item.embeddedUrl || item.posterUrl) videos.push(item);
   });
 
-  return [...videos, ...images];
+  return [...videos, ...images, ...models];
+}
+
+/**
+ * The `search` root sorts by `SearchSortKeys`, which is only `RELEVANCE | PRICE` — a much smaller
+ * set than the `ProductSortKeys` that `list` and `collections.products` take.
+ *
+ * Rejecting the rest rather than dropping it: silently returning relevance-ordered results to a
+ * caller that asked for `TITLE` is the bug this replaced. Undefined means "let Shopify default".
+ */
+const SEARCH_SORT_KEYS = new Set(['RELEVANCE', 'PRICE']);
+
+function toSearchSortKey(sortKey: string | undefined): string | undefined {
+  if (sortKey === undefined) return undefined;
+  const key = sortKey.toUpperCase();
+  if (!SEARCH_SORT_KEYS.has(key)) {
+    throw new ShopifyError(
+      `products.search cannot sort by '${sortKey}'. The Storefront search root accepts only ` +
+        `${[...SEARCH_SORT_KEYS].join(' or ')}; for the full ProductSortKeys set use ` +
+        `products.list({ query }) or collections.products().`
+    );
+  }
+  return key;
+}
+
+/**
+ * Resolve many product GIDs in one go, in the order given.
+ *
+ * Overloaded on `keepMissing` because the two modes return genuinely different shapes: the default
+ * drops what it cannot read, while `keepMissing` leaves a positional `null`. Declaring one signature
+ * for both would force every caller of the common case to null-check what can never be null.
+ */
+async function byIds(
+  ids: string[],
+  opts?: { batchSize?: number; keepMissing?: false }
+): Promise<Product[]>;
+async function byIds(
+  ids: string[],
+  opts: { batchSize?: number; keepMissing: true }
+): Promise<(Product | null)[]>;
+async function byIds(
+  ids: string[],
+  opts?: { batchSize?: number; keepMissing?: boolean }
+): Promise<(Product | null)[]> {
+  if (!ids.length) return [];
+  // 100 keeps a batch under Shopify's per-call cost ceiling for this fragment.
+  const batchSize = Math.max(1, Math.min(250, opts?.batchSize ?? 100));
+  const out: (Product | null)[] = [];
+
+  for (let i = 0; i < ids.length; i += batchSize) {
+    const chunk = ids.slice(i, i + batchSize);
+    const data = await request<NodesRaw>(NODES_AS_PRODUCTS_QUERY, { ids: chunk });
+    const nodes = Array.isArray(data.nodes) ? data.nodes : [];
+    for (let j = 0; j < chunk.length; j++) {
+      const node = nodes[j];
+      // `nodes(ids:)` answers positionally, with null for anything unreadable.
+      if (node && node.__typename === 'Product') out.push(normalizeProduct(node));
+      else if (opts?.keepMissing) out.push(null);
+    }
+  }
+  return out;
 }
 
 /**
@@ -167,25 +239,7 @@ export const products: ShopifyProductsAPI = {
     return data.product ? normalizeProduct(data.product) : null;
   },
 
-  async byIds(ids, opts): Promise<Product[]> {
-    if (!ids.length) return [];
-    // 100 keeps a batch under Shopify's per-call cost ceiling for this fragment.
-    const batchSize = Math.max(1, Math.min(250, opts?.batchSize ?? 100));
-    const out: Product[] = [];
-
-    for (let i = 0; i < ids.length; i += batchSize) {
-      const chunk = ids.slice(i, i + batchSize);
-      const data = await request<NodesRaw>(NODES_AS_PRODUCTS_QUERY, { ids: chunk });
-      const nodes = Array.isArray(data.nodes) ? data.nodes : [];
-      for (let j = 0; j < chunk.length; j++) {
-        const node = nodes[j];
-        // `nodes(ids:)` answers positionally, with null for anything unreadable.
-        if (node && node.__typename === 'Product') out.push(normalizeProduct(node));
-        else if (opts?.keepMissing) out.push(null as unknown as Product);
-      }
-    }
-    return out;
-  },
+  byIds: byIds as ShopifyProductsAPI['byIds'],
 
   async search(query: string, opts?: Omit<ListOptions, 'query'>): Promise<Connection<Product>> {
     const data = await request<SearchRaw>(SEARCH_PRODUCTS_QUERY, {
@@ -193,6 +247,8 @@ export const products: ShopifyProductsAPI = {
       first: opts?.first ?? 20,
       after: opts?.after,
       productFilters: opts?.filters,
+      sortKey: toSearchSortKey(opts?.sortKey),
+      reverse: opts?.reverse,
     });
     return {
       // `types: [PRODUCT]` still yields a union, so anything that is not a Product arrives as an

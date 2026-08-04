@@ -9,6 +9,7 @@ import {
   useState,
 } from "react";
 import { shopify } from "../shopify";
+import { ShopifyError } from "../types";
 import type {
   Cart,
   CartLineInput,
@@ -17,6 +18,18 @@ import type {
   WishlistItem,
   WishlistStorageAdapter,
 } from "../types";
+
+/**
+ * Whether Shopify rejected the *contents* of a mutation rather than failing to answer it.
+ *
+ * `userErrors` are the store's verdict on specific lines — an unsellable variant, a sold-out one —
+ * and are carried on `ShopifyError.errors`. Transport failures, HTTP errors and GraphQL errors all
+ * arrive with that array empty, which is what separates "this line is no good" from "the request
+ * did not work".
+ */
+function isLineRejection(error: unknown): boolean {
+  return error instanceof ShopifyError && error.errors.length > 0;
+}
 
 /**
  * Unified Shopify context — thin React wrapper over the SDK client.
@@ -90,6 +103,7 @@ const CART_STORAGE_KEY = "shopify:cart-id:v1";
  */
 export type ShopifyEvent =
   | { type: "cart:add" }
+  | { type: "cart:buyerIdentity" }
   | { type: "wishlist:add" }
   | { type: "wishlist:remove" };
 
@@ -218,17 +232,29 @@ export function ShopifyProvider({ children, config, storage, onEvent, wishlistKe
       let next: Cart | null = null;
       try {
         next = await shopify.cart.addLines(id, inputs);
-      } catch {
+      } catch (batchError) {
+        // Only Shopify rejecting specific lines is worth retrying one at a time. A transport or
+        // GraphQL failure would fail all N the same way, so retrying would turn one dead request
+        // into N and still end at null — indistinguishable from "every variant was unsellable".
+        if (!isLineRejection(batchError)) throw batchError;
+
         // The batch is all-or-nothing, so fall back to one line at a time and keep the successes.
         // Each result supersedes the last, so `next` ends up as the cart after the final accepted
         // line — which is the whole set of them, since they accumulate server-side.
+        let accepted = 0;
         for (const input of inputs) {
           try {
             next = await shopify.cart.addLines(id, [input]);
-          } catch {
-            // Skipped: this variant is gone or unsellable. The caller compares quantities to see.
+            accepted += 1;
+          } catch (lineError) {
+            // A line the store will no longer sell is the expected case and is skipped. Anything
+            // else means the retry itself is failing, so stop rather than hammer the remaining ones.
+            if (!isLineRejection(lineError)) throw lineError;
           }
         }
+        // Every line individually rejected. Surface the original rather than reporting an empty
+        // success, which reads to the caller as "nothing to add" instead of "none of this is sellable".
+        if (accepted === 0) throw batchError;
       }
       if (next) {
         await persistCart(next);
@@ -248,10 +274,16 @@ export function ShopifyProvider({ children, config, storage, onEvent, wishlistKe
     // Deliberately does NOT create a cart: attaching an identity to a cart that does not exist yet
     // would mint an empty one, and checkout has nothing to do with it.
     if (!cart?.id) return false;
-    const next = await shopify.cart.setBuyerIdentity(cart.id, identity);
-    await persistCart(next);
-    return true;
-  }, [cart, persistCart]);
+    setCartLoad(true);
+    try {
+      const next = await shopify.cart.setBuyerIdentity(cart.id, identity);
+      await persistCart(next);
+      onEvent?.({ type: "cart:buyerIdentity" });
+      return true;
+    } finally {
+      setCartLoad(false);
+    }
+  }, [cart, persistCart, onEvent]);
 
   const cartUpdateLine = useCallback(async (lineId: string, quantity: number) => {
     if (!cart?.id) return;

@@ -156,9 +156,16 @@ export interface Product {
   /** True when any media item is a `VIDEO` or `EXTERNAL_VIDEO`. Derived from the above. */
   hasVideo: boolean;
   /**
-   * Every attached media item with its URLs resolved, videos first then images — the order a
-   * PDP gallery presents them in. Items whose URL cannot be resolved are dropped, so this is
-   * always renderable.
+   * Every attached media item with its URLs resolved, ordered videos → images → 3D models. That is
+   * gallery order, not Shopify's: Shopify appends video after the images, while a PDP leads with it.
+   * `mediaContentTypes` keeps Shopify's own order if you need it.
+   *
+   * Items whose URL cannot be resolved are dropped, so this is always renderable.
+   *
+   * **Populated only by `products.list`, `byHandle` and `byId`.** The card paths — `collections.products`,
+   * `products.search`, `byIds` and `recommended` — fetch media content types without the URLs behind
+   * them, so this is `[]` there while `hasVideo` and `mediaContentTypes` still hold. Fetch the product
+   * on its own before rendering a gallery.
    */
   media: ProductMedia[];
   /** Updated/published timestamps as ISO 8601. */
@@ -418,7 +425,11 @@ export interface ListOptions {
   query?: string;        // Storefront search syntax
   sortKey?: string;      // e.g. 'TITLE', 'PRICE', 'CREATED'
   reverse?: boolean;
-  /** Storefront ProductFilter inputs (from FilterValue.input). Collection only. */
+  /**
+   * Storefront ProductFilter inputs (from `FilterValue.input`). Honoured by
+   * `collections.products` and `products.search`; ignored by `products.list`, whose root takes no
+   * filters.
+   */
   filters?: ProductFilter[];
 }
 
@@ -608,14 +619,24 @@ export interface ShopifyProductsAPI {
    *
    * Batched under the hood because Shopify caps query cost per call. Anything that does not
    * resolve — deleted, unpublished, or not a Product — is dropped rather than returned as a hole,
-   * so a caller that counts the result gets what it can actually render. Pass
-   * `keepMissing: true` to get a positional array with `null` in those slots instead.
+   * so a caller that counts the result gets what it can actually render.
    */
-  byIds(ids: string[], opts?: { batchSize?: number; keepMissing?: boolean }): Promise<Product[]>;
+  byIds(ids: string[], opts?: { batchSize?: number; keepMissing?: false }): Promise<Product[]>;
+  /**
+   * As above, but keeps a positional `null` for every id that did not resolve, so the result lines
+   * up index-for-index with `ids`.
+   */
+  byIds(
+    ids: string[],
+    opts: { batchSize?: number; keepMissing: true }
+  ): Promise<(Product | null)[]>;
   /**
    * Full-text search. Uses the `search` root rather than `products(query:)`, so the result also
    * carries `totalCount` and `filters` — the facets a filter sheet needs, in the same shape
    * `collections.products` returns.
+   *
+   * `sortKey` here is `SearchSortKeys`, which is only `RELEVANCE` or `PRICE`. Anything else throws
+   * rather than being ignored; use `list({ query })` for the full `ProductSortKeys` set.
    */
   search(query: string, opts?: Omit<ListOptions, 'query'>): Promise<Connection<Product>>;
   recommended(productId: string): Promise<Product[]>;

@@ -91,10 +91,14 @@ export const variants: ShopifyVariantsAPI = {
       const chunk = ids.slice(i, i + batchSize);
       const data = await request<NodesRaw>(NODES_AS_VARIANTS_QUERY, { ids: chunk });
       const nodes = Array.isArray(data.nodes) ? data.nodes : [];
-      for (const node of nodes) {
-        // `nodes(ids:)` answers positionally with null for anything unreadable, and the union means a
-        // non-variant arrives as an empty object rather than being dropped — hence the id check.
-        if (node && node.id && (!node.__typename || node.__typename === 'ProductVariant')) {
+      // Walked by position over the chunk, as `products.byIds` does: `nodes(ids:)` answers
+      // positionally with null for anything unreadable.
+      for (let j = 0; j < chunk.length; j++) {
+        const node = nodes[j];
+        // The union means a non-variant (a Product GID, say) arrives as an object the inline fragment
+        // never populated rather than being dropped — so `product` would be missing. Requiring
+        // `__typename` and `id` is what keeps `normalizeVariant` off an incomplete node.
+        if (node && node.id && node.__typename === 'ProductVariant') {
           out.push(normalizeVariant(node));
         }
       }
