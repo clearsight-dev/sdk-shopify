@@ -152,6 +152,7 @@ export const CART_FRAGMENT = /* GraphQL */ `
       nodes {
         id
         quantity
+        attributes { key value }
         cost {
           totalAmount { ...MoneyFields }
           amountPerQuantity { ...MoneyFields }
@@ -160,10 +161,7 @@ export const CART_FRAGMENT = /* GraphQL */ `
         merchandise {
           ... on ProductVariant {
             ...VariantFields
-            # The line has to name its product — the variant alone only carries the option
-            # value ("0", "L"). Asked for here rather than in VariantFields so a product's own
-            # variants do not each re-fetch their parent.
-            product { title handle }
+            product { id title handle }
           }
         }
       }

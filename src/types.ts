@@ -202,11 +202,12 @@ export interface CartLine {
   id: string;            // line GID
   quantity: number;
   merchandise: ProductVariant;
+  attributes: CartLineAttribute[];
   /**
    * The product this line's variant belongs to. Cart lines need it to render a name and to link
    * back to the PDP; `merchandise.title` is only the option value ("0", "L").
    */
-  product: { title: string; handle: string } | null;
+  product: { id: string; title: string; handle: string } | null;
   cost: {
     totalAmount: Money;
     amountPerQuantity: Money;
@@ -247,10 +248,15 @@ export interface Cart {
   updatedAt: string;
 }
 
+export interface CartLineAttribute {
+  key: string;
+  value: string;
+}
+
 export interface CartLineInput {
   merchandiseId: string; // ProductVariant GID
   quantity: number;
-  attributes?: { key: string; value: string }[];
+  attributes?: CartLineAttribute[];
   /**
    * SellingPlan GID, for a pre-order or deferred-payment line. Passing it is what makes checkout
    * authorise rather than capture — a pre-authorisation is an ordinary add-to-cart on the plan.
@@ -262,7 +268,71 @@ export interface CartLineUpdateInput {
   /** Existing CartLine.id */
   id: string;
   quantity: number;
+  attributes?: CartLineAttribute[];
 }
+
+/**
+ * A policy layer over cart writes: it can veto or decorate a line before it is sent, and is told
+ * what landed and what left. Passed to `ShopifyProvider` so *every* caller of the cart hooks is
+ * covered — a guard bolted onto individual screens is one new screen away from being bypassed.
+ *
+ * Written for stock-reservation services (reserve before the add, hand back on the way out), but
+ * nothing here is specific to one: a gift-with-purchase or bundling rule fits the same shape.
+ *
+ * Guards are advisory infrastructure, never a source of failure. A `before*` hook that throws is
+ * treated as approval and the write proceeds, so a reservation service being down degrades to an
+ * ordinary cart rather than an app that cannot add to cart.
+ */
+export interface CartLineGuard {
+  /**
+   * Vets an add before it is sent. Return the input — decorated, e.g. with attributes — to
+   * proceed, or `null` to cancel. A cancelled add resolves `false` and emits no `cart:add`, so
+   * callers do not report success.
+   *
+   * Note a decorated add is not merged into an existing line for the same variant — Shopify merges
+   * only when the attributes match too — so a guard that stamps a per-add value gets a line per add.
+   */
+  beforeAdd?(input: CartLineInput): MaybePromise<CartLineInput | null>;
+  /**
+   * Vets raising the quantity of a line already in the cart. Same contract as `beforeAdd`. Only
+   * increases are offered — a decrease has nothing to vet and is reported through `onReleased`.
+   */
+  beforeIncrease?(line: CartLine, nextQuantity: number): MaybePromise<CartLineUpdateInput | null>;
+  /** A write that landed, for reporting. Cannot affect the cart. */
+  onLanded?(event: CartLineLandedEvent): void;
+  /**
+   * Units the cart no longer holds. Covers the three ways that happens, so a guard that reserved
+   * stock has one place to give it back — including the case it approved and Shopify then refused.
+   */
+  onReleased?(event: CartLineReleasedEvent): void;
+}
+
+export interface CartLineLandedEvent {
+  /** ProductVariant GID. */
+  variantId: string;
+  /** How many units this write added. */
+  quantity: number;
+  /** The resulting line, when it could be identified in the returned cart. */
+  line: CartLine | null;
+  cart: Cart;
+}
+
+export interface CartLineReleasedEvent {
+  variantId: string;
+  /** How many units left the cart. For a removal, the whole line. */
+  quantity: number;
+  /**
+   * `decreased` / `removed` — the shopper's doing. `rejected` — the guard approved the write and
+   * Shopify refused it, so nothing was ever held.
+   */
+  reason: 'decreased' | 'removed' | 'rejected';
+  /** The line as it was before the write. Null for a rejected add, which never became one. */
+  line: CartLine | null;
+  /** The resulting cart, or null when the write failed. */
+  cart: Cart | null;
+}
+
+export type MaybePromise<T> = T | Promise<T>;
 
 // ---------------------------------------------------------------------------
 // Customer

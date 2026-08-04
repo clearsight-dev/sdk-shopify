@@ -40,6 +40,7 @@ function normalize(c: any): Cart {
     lines: (c.lines?.nodes ?? []).map((line: any) => ({
       id: line.id,
       quantity: line.quantity,
+      attributes: line.attributes ?? [],
       merchandise: line.merchandise,
       product: line.merchandise?.product ?? null,
       cost: line.cost,
