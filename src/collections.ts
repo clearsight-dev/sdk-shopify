@@ -1,6 +1,3 @@
-/**
- * Real Shopify collections via Storefront API.
- */
 import { request } from './client';
 import { normalizeProduct } from './products';
 import {

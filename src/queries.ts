@@ -1,14 +1,3 @@
-/**
- * Shopify Storefront GraphQL fragments + operations.
- *
- * Fragments are inlined into operations as template strings — keeps
- * zero runtime deps.
- */
-
-// ---------------------------------------------------------------------------
-// Fragments
-// ---------------------------------------------------------------------------
-
 export const MONEY_FRAGMENT = /* GraphQL */ `
   fragment MoneyFields on MoneyV2 {
     amount
@@ -67,7 +56,6 @@ const PRODUCT_CORE_FRAGMENT = /* GraphQL */ `
     variants(first: 100) { nodes { ...VariantFields } }
     images(first: 20) { nodes { ...ImageFields } }
     featuredImage { ...ImageFields }
-    # The shopper-facing link, for sharing. Null unless published to the Online Store channel.
     onlineStoreUrl
     updatedAt
     createdAt
@@ -75,21 +63,14 @@ const PRODUCT_CORE_FRAGMENT = /* GraphQL */ `
 `;
 
 /**
- * Everything a product card needs, with media reduced to its content types.
- *
- * `hasVideo` and `mediaContentTypes` still resolve from this, which is all a grid asks of media — the
- * play badge. Dropping the resolved URLs is the difference between every product in a grid carrying
- * video sources and preview images and it carrying a list of enum values.
- *
- * Used by the paths that only ever feed cards: collection products, search, `byIds` and
- * recommendations. `ProductFields` is the same thing plus resolved media, for the paths that render a
- * gallery — `products.list`, `byHandle` and `byId`.
+ * For the card-only paths — collection products, search, `byIds`, recommendations. Media is
+ * reduced to content types, which is all a grid asks of it (the play badge), rather than every
+ * product in the grid carrying video sources and preview images. `ProductFields` has both.
  */
 export const PRODUCT_CARD_FRAGMENT = /* GraphQL */ `
   ${PRODUCT_CORE_FRAGMENT}
   fragment ProductCardFields on Product {
     ...ProductCoreFields
-    # Only the content types — enough for a play badge, without the URLs behind it.
     media(first: 250) { nodes { mediaContentType } }
   }
 `;
@@ -105,8 +86,7 @@ export const PRODUCT_FRAGMENT = /* GraphQL */ `
         alt
         previewImage { url }
         ... on MediaImage { id image { url altText } }
-        # Only mp4 sources are usable without a streaming player, but the mimeType has to be
-        # selected to tell them from the HLS/DASH manifests Shopify also returns.
+        # mimeType tells the usable mp4s from the HLS/DASH manifests Shopify also returns.
         ... on Video { id sources { url mimeType width height } }
         ... on ExternalVideo { id embeddedUrl host }
       }
@@ -197,9 +177,7 @@ export const CUSTOMER_FRAGMENT = /* GraphQL */ `
   }
 `;
 
-// ---------------------------------------------------------------------------
 // Operations
-// ---------------------------------------------------------------------------
 
 export const PRODUCTS_LIST_QUERY = /* GraphQL */ `
   ${PRODUCT_FRAGMENT}
@@ -458,9 +436,7 @@ export const CUSTOMER_UPDATE_MUTATION = /* GraphQL */ `
   }
 `;
 
-// ---------------------------------------------------------------------------
 // Orders
-// ---------------------------------------------------------------------------
 
 export const ORDER_FRAGMENT = /* GraphQL */ `
   ${MONEY_FRAGMENT}
@@ -528,9 +504,7 @@ export const CUSTOMER_ORDER_BY_ID_QUERY = /* GraphQL */ `
   }
 `;
 
-// ---------------------------------------------------------------------------
 // Blogs / Articles
-// ---------------------------------------------------------------------------
 
 export const BLOG_FRAGMENT = /* GraphQL */ `
   fragment BlogFields on Blog {
@@ -601,19 +575,9 @@ export const BLOG_ARTICLE_BY_HANDLE_QUERY = /* GraphQL */ `
   }
 `;
 
-// ---------------------------------------------------------------------------
 // Wishlist — batch product hydration by ID
-// ---------------------------------------------------------------------------
 
-/**
- * Fetch many products by ID in one round-trip via the Storefront `nodes`
- * root field. Deleted / access-denied products come back as `null` in
- * the returned array (position-preserved), which the caller uses to
- * prune the local wishlist.
- *
- * Batch size caps depend on Storefront query cost — practical limit is
- * ~100 IDs per call. The wishlist chunks larger sets automatically.
- */
+/** Deleted or access-denied products come back as `null`, position-preserved. */
 export const NODES_AS_PRODUCTS_QUERY = /* GraphQL */ `
   ${PRODUCT_CARD_FRAGMENT}
   query WishlistNodes($ids: [ID!]!) {
@@ -624,7 +588,6 @@ export const NODES_AS_PRODUCTS_QUERY = /* GraphQL */ `
   }
 `;
 
-/** Shop-level settings — money format template + currency. */
 export const SHOP_QUERY = /* GraphQL */ `
   query ShopInfo {
     shop {
@@ -637,14 +600,7 @@ export const SHOP_QUERY = /* GraphQL */ `
   }
 `;
 
-/**
- * Waitlist-style variant resolution: variant GIDs in, variants out, each carrying enough of its
- * parent product to render a card without a second round trip.
- *
- * Variants rather than products because pre-order eligibility is a per-variant fact — stock,
- * purchasability and the selling-plan allocation all live on the variant, so a product-level query
- * could not answer it.
- */
+/** Each variant carries enough of its parent product to render a card without a second trip. */
 export const NODES_AS_VARIANTS_QUERY = /* GraphQL */ `
   ${VARIANT_FRAGMENT}
   query VariantNodes($ids: [ID!]!) {
@@ -663,7 +619,6 @@ export const NODES_AS_VARIANTS_QUERY = /* GraphQL */ `
           title
           handle
           featuredImage { ...ImageFields }
-          # Only the content types — enough to know whether a play badge belongs on the card.
           media(first: 250) { nodes { mediaContentType } }
         }
       }

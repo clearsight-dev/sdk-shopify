@@ -1,12 +1,6 @@
-/**
- * The Shopify integration facade.
- *
- * Lives in its own module (not index.ts) so that `react/ShopifyProvider` can use
- * it WITHOUT importing back through the barrel. index.ts re-exports the React
- * helpers, so if the provider imported `../index` the two would form a require
- * cycle — which a minified bundle resolves to `undefined` (React error #130).
- * Dependency direction stays one-way: index -> react -> shopify.
- */
+// Separate from index.ts so ShopifyProvider can import the facade without going
+// through the barrel — that would be a require cycle, which minified bundles
+// resolve to `undefined` (React error #130). Direction: index -> react -> shopify.
 import { blogs } from './blogs';
 import { cart } from './cart';
 import { collections } from './collections';
@@ -22,8 +16,6 @@ import type { ShopifyConfig, ShopifyIntegration } from './types';
 export const shopify: ShopifyIntegration = {
   async init(config: ShopifyConfig): Promise<void> {
     setConfig(config);
-    // Load the shop's moneyFormat so all currency fields format like the store
-    // (e.g. "Rs. {{amount}}"). Best-effort — never blocks init on failure.
     await shop.load();
   },
   isReady(): boolean {

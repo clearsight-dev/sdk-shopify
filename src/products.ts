@@ -1,6 +1,3 @@
-/**
- * Real Shopify products via Storefront API.
- */
 import { request } from './client';
 import { ShopifyError } from './types';
 import {
@@ -37,10 +34,9 @@ interface SearchRaw {
   };
 }
 
-/** Shopify's video media content types. `MODEL_3D` and `IMAGE` are not videos. */
 const VIDEO_CONTENT_TYPES = new Set(['VIDEO', 'EXTERNAL_VIDEO']);
 
-/** Exported so `variants.ts` decides on a play badge by the same rule this module uses. */
+/** Exported so `variants.ts` decides on a play badge by the same rule. */
 export function hasVideoContentType(mediaContentTypes: string[]): boolean {
   return mediaContentTypes.some((type) => VIDEO_CONTENT_TYPES.has(type));
 }
@@ -69,15 +65,9 @@ function toMediaKind(mediaContentType: string): ProductMediaKind {
 }
 
 /**
- * Ordered videos → images → 3D models. Shopify appends video after the images, but a PDP gallery
- * leads with it, so the video ends up at index 0 and `selectInitialMediaIndex`-style callers can
- * choose between opening on it or on the first still.
- *
- * 3D models sort last and keep `kind: 'model-3d'` rather than being folded in with the images: all
- * this resolves for them is a preview still, and a consumer that cannot render one should be able to
- * tell it apart from a photo instead of silently showing a frozen model.
- *
- * Anything whose URL cannot be resolved is dropped so the result is always renderable.
+ * Ordered videos → images → 3D models: Shopify appends video after the images, but a
+ * PDP gallery leads with it. Models keep their own `kind` so a consumer that cannot
+ * render one doesn't show its preview still as a photo. Unresolvable URLs are dropped.
  */
 function toMedia(nodes: any[]): ProductMedia[] {
   const videos: ProductMedia[] = [];
@@ -110,13 +100,8 @@ function toMedia(nodes: any[]): ProductMedia[] {
   return [...videos, ...images, ...models];
 }
 
-/**
- * The `search` root sorts by `SearchSortKeys`, which is only `RELEVANCE | PRICE` — a much smaller
- * set than the `ProductSortKeys` that `list` and `collections.products` take.
- *
- * Rejecting the rest rather than dropping it: silently returning relevance-ordered results to a
- * caller that asked for `TITLE` is the bug this replaced. Undefined means "let Shopify default".
- */
+// The `search` root sorts by `SearchSortKeys`, a much smaller set than the `ProductSortKeys`
+// `list` takes. Anything else throws rather than silently returning relevance order.
 const SEARCH_SORT_KEYS = new Set(['RELEVANCE', 'PRICE']);
 
 function toSearchSortKey(sortKey: string | undefined): string | undefined {
@@ -132,13 +117,8 @@ function toSearchSortKey(sortKey: string | undefined): string | undefined {
   return key;
 }
 
-/**
- * Resolve many product GIDs in one go, in the order given.
- *
- * Overloaded on `keepMissing` because the two modes return genuinely different shapes: the default
- * drops what it cannot read, while `keepMissing` leaves a positional `null`. Declaring one signature
- * for both would force every caller of the common case to null-check what can never be null.
- */
+// Overloaded because the modes return different shapes: the default drops what it cannot
+// read, `keepMissing` leaves a positional `null`.
 async function byIds(
   ids: string[],
   opts?: { batchSize?: number; keepMissing?: false }
@@ -152,7 +132,7 @@ async function byIds(
   opts?: { batchSize?: number; keepMissing?: boolean }
 ): Promise<(Product | null)[]> {
   if (!ids.length) return [];
-  // 100 keeps a batch under Shopify's per-call cost ceiling for this fragment.
+  // 100 keeps a batch under Shopify's per-call query cost ceiling for this fragment.
   const batchSize = Math.max(1, Math.min(250, opts?.batchSize ?? 100));
   const out: (Product | null)[] = [];
 
@@ -170,11 +150,6 @@ async function byIds(
   return out;
 }
 
-/**
- * Storefront API exposes prices as `priceRange.minVariantPrice / maxVariantPrice`
- * but we expose them as `priceRange.min / max`. Shape-match here so callers
- * don't see the GraphQL nesting.
- */
 export function normalizeProduct(p: any): Product {
   const mediaTypes: string[] = (p.media?.nodes ?? [])
     .map((node: { mediaContentType?: string }) => node?.mediaContentType)
@@ -251,9 +226,8 @@ export const products: ShopifyProductsAPI = {
       reverse: opts?.reverse,
     });
     return {
-      // `types: [PRODUCT]` still yields a union, so anything that is not a Product arrives as an
-      // empty object rather than being dropped by the server — narrow on `id` instead of casting,
-      // or it would map to a card with no title and no price.
+      // `types: [PRODUCT]` still yields a union: a non-Product arrives as an empty object
+      // rather than being dropped, and would map to a card with no title and no price.
       nodes: (data.search.nodes ?? []).filter((node) => node && 'id' in node).map(normalizeProduct),
       pageInfo: data.search.pageInfo,
       filters: data.search.productFilters ?? [],

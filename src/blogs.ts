@@ -1,6 +1,3 @@
-/**
- * Real Shopify blogs / articles via Storefront API.
- */
 import { request } from './client';
 import {
   BLOGS_LIST_QUERY,
@@ -30,7 +27,6 @@ interface BlogArticleRaw {
   blog: { articleByHandle: any | null } | null;
 }
 
-/** Storefront `authorV2` → friendlier `author` shape. */
 function normalizeArticle(a: any): Article {
   return {
     id: a.id,

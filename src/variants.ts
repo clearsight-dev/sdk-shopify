@@ -1,10 +1,6 @@
-/**
- * Variant resolution by GID.
- *
- * Separate from `products` because a variant resolved on its own needs things a nested variant never
- * does — its parent product's identity, and its selling-plan allocation. Waitlists are the motivating
- * case: you wait on one size or colour, and whether it can be pre-authorised is decided per variant.
- */
+// Separate from `products` because a variant resolved on its own needs what a nested one never
+// does — its parent product's identity, and its selling-plan allocation (pre-order eligibility
+// is a per-variant fact).
 import { request } from './client';
 import { NODES_AS_VARIANTS_QUERY } from './queries';
 import { hasVideoContentType } from './products';
@@ -57,8 +53,8 @@ function normalizeVariant(node: RawVariantNode): StandaloneVariant {
     price: node.price,
     compareAtPrice: node.compareAtPrice ?? null,
     selectedOptions: node.selectedOptions ?? [],
-    // The variant's own image when it has one: an entry is for a specific colour, so the product's
-    // featured image can be showing something else entirely.
+    // The variant's own image first: it is for one specific colour, which the product's
+    // featured image may not be showing.
     image: node.image ?? node.product.featuredImage ?? null,
     product: {
       id: node.product.id,
@@ -83,7 +79,7 @@ function normalizeVariant(node: RawVariantNode): StandaloneVariant {
 export const variants: ShopifyVariantsAPI = {
   async byIds(ids, opts): Promise<StandaloneVariant[]> {
     if (!ids.length) return [];
-    // 100 keeps a batch under Shopify's per-call cost ceiling for this fragment, as in products.byIds.
+    // 100 keeps a batch under Shopify's per-call query cost ceiling, as in products.byIds.
     const batchSize = Math.max(1, Math.min(250, opts?.batchSize ?? 100));
     const out: StandaloneVariant[] = [];
 
@@ -91,13 +87,11 @@ export const variants: ShopifyVariantsAPI = {
       const chunk = ids.slice(i, i + batchSize);
       const data = await request<NodesRaw>(NODES_AS_VARIANTS_QUERY, { ids: chunk });
       const nodes = Array.isArray(data.nodes) ? data.nodes : [];
-      // Walked by position over the chunk, as `products.byIds` does: `nodes(ids:)` answers
-      // positionally with null for anything unreadable.
+      // `nodes(ids:)` answers positionally, with null for anything unreadable. A non-variant GID
+      // arrives as an object the inline fragment never populated, so the `__typename` check is
+      // what keeps `normalizeVariant` off a node with no `product`.
       for (let j = 0; j < chunk.length; j++) {
         const node = nodes[j];
-        // The union means a non-variant (a Product GID, say) arrives as an object the inline fragment
-        // never populated rather than being dropped — so `product` would be missing. Requiring
-        // `__typename` and `id` is what keeps `normalizeVariant` off an incomplete node.
         if (node && node.id && node.__typename === 'ProductVariant') {
           out.push(normalizeVariant(node));
         }

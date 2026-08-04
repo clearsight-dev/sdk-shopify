@@ -24,12 +24,8 @@ import type {
 } from "../types";
 
 /**
- * Whether Shopify rejected the *contents* of a mutation rather than failing to answer it.
- *
- * `userErrors` are the store's verdict on specific lines — an unsellable variant, a sold-out one —
- * and are carried on `ShopifyError.errors`. Transport failures, HTTP errors and GraphQL errors all
- * arrive with that array empty, which is what separates "this line is no good" from "the request
- * did not work".
+ * Shopify rejecting the *contents* of a mutation rather than failing to answer it: only
+ * `userErrors` populate `ShopifyError.errors`, so transport and GraphQL failures arrive empty.
  */
 function isLineRejection(error: unknown): boolean {
   return error instanceof ShopifyError && error.errors.length > 0;
@@ -44,9 +40,7 @@ function sameAttributes(a: CartLineAttribute[], b: CartLineAttribute[]): boolean
 
 /**
  * The line a just-sent input became. Shopify merges an add into an existing line only when the
- * attributes match too, so an integration that stamps a per-add attribute produces a *new* line for
- * the same variant — hence matching on attributes first, and falling back to the last line for the
- * variant.
+ * attributes match too, so a per-add attribute yields a *new* line for the same variant.
  */
 function lineFor(cart: Cart, input: CartLineInput): CartLine | null {
   const candidates = cart.lines.filter((line) => line.merchandise?.id === input.merchandiseId);
@@ -55,60 +49,42 @@ function lineFor(cart: Cart, input: CartLineInput): CartLine | null {
   return exact ?? candidates[candidates.length - 1];
 }
 
-/**
- * Unified Shopify context — thin React wrapper over the SDK client.
- *
- * Framework-agnostic by design: the storage backend is injected by the
- * consumer, so this works in web (window.localStorage) or React Native
- * (pass an AsyncStorage-compatible adapter). Nothing here imports RN
- * or any other platform-specific module.
- */
-
 interface CartState {
   cart: Cart | null;
   loading: boolean;
   itemCount: number;
-  /**
-   * Resolves `true` when the line landed. A `false` means a `cartGuard` cancelled the add — the
-   * cart is unchanged and no `cart:add` was emitted, so callers must not report success (open a
-   * confirmation sheet, announce it to a live room). Shopify refusing the line still throws.
-   */
+  /** `false` means a `cartGuard` cancelled the add and no `cart:add` fired, so do not report
+   *  success. Shopify refusing the line still throws. */
   addLine:            (input: CartLineInput) => Promise<boolean>;
   /**
-   * Several lines in one go, for reorder-style flows. Returns the resulting cart so the caller can
-   * tell what actually landed — `null` when nothing did.
-   *
-   * Tolerant by design: one line the store will no longer sell fails the whole `cartLinesAdd`, so a
-   * rejected batch is retried line by line and whatever the store still accepts is kept. Lines a
-   * `cartGuard` cancels are dropped the same way.
+   * Returns the resulting cart, `null` when nothing landed. One unsellable line fails the whole
+   * `cartLinesAdd`, so a rejected batch is retried line by line and the successes are kept.
    */
   addLines:           (inputs: CartLineInput[]) => Promise<Cart | null>;
   /**
-   * `false` when a `cartGuard` cancelled the increase; the cart is unchanged.
-   *
-   * `attributes` REPLACE the line's set — Shopify does not merge them — so send the existing ones
-   * alongside any change. Omit the argument to leave them untouched, which is the common case.
+   * `false` when a `cartGuard` cancelled the increase. `attributes` REPLACE the line's set —
+   * Shopify does not merge them — so omit the argument to leave them untouched.
    */
   updateLine:         (lineId: string, quantity: number, attributes?: CartLineAttribute[]) => Promise<boolean>;
   removeLine:         (lineId: string) => Promise<void>;
   applyDiscountCodes: (codes: string[]) => Promise<void>;
   /**
-   * Associates a buyer with the cart, so an order is attributed to them and checkout opens already
-   * signed in. Returns false when there is no cart yet — nothing to attach to.
-   *
-   * For **new customer accounts** the Customer Account API access token goes straight into
-   * `customerAccessToken`; no exchange for a classic Storefront token is needed.
+   * Attributes the order to a buyer and opens checkout signed in. `false` when there is no cart
+   * yet. New customer accounts pass their Customer Account API token straight through.
    */
   setBuyerIdentity: (identity: {
     email?: string;
     countryCode?: string;
     customerAccessToken?: string;
   }) => Promise<boolean>;
-  /**
-   * Re-reads the cart from Shopify and returns it, so a caller acting on the result does not have to
-   * wait for the re-render to see it. Null when there is no cart or it no longer resolves.
-   */
+  /** Re-reads the cart and returns it, so a caller need not wait for the re-render. */
   refresh:            () => Promise<Cart | null>;
+  /**
+   * Switches to a cart handed over from elsewhere — another device, a support agent, the web store.
+   * A read and a swap, not a mutation: nothing is written to either cart. Null when that id no
+   * longer resolves, in which case the current cart is left alone.
+   */
+  adopt:              (cartId: string) => Promise<Cart | null>;
   reset:              () => Promise<void>;
 }
 
@@ -116,7 +92,7 @@ interface WishlistState {
   items:        WishlistItem[];
   count:        number;
   has:          (productId: string) => boolean;
-  /** Alias for `has` — kept as an ergonomic name for wishlist UIs. */
+  /** Alias for `has`. */
   isWishlisted: (productId: string) => boolean;
   add:          (product: Product | string) => Promise<void>;
   remove:       (productId: string) => Promise<void>;
@@ -136,11 +112,7 @@ const ShopifyContext = createContext<ShopifyContextType | undefined>(undefined);
 
 const CART_STORAGE_KEY = "shopify:cart-id:v1";
 
-/**
- * Emitted by the provider on a successful commerce mutation, so the host app
- * can react (e.g. show a toast) without wrapping the hooks. Fires only on the
- * happy path.
- */
+/** Emitted only on a successful mutation, so the host app can react without wrapping the hooks. */
 export type ShopifyEvent =
   | { type: "cart:add" }
   | { type: "cart:buyerIdentity" }
@@ -149,26 +121,16 @@ export type ShopifyEvent =
 
 export interface ShopifyProviderProps {
   children: ReactNode;
-  /** Storefront credentials passed straight through to `shopify.init()`. */
   config: ShopifyConfig;
   /**
-   * Storage backend used for the cart id and the wishlist. In the browser
-   * this defaults to `window.localStorage`; in React Native (or Node) the
-   * consumer passes an AsyncStorage-compatible adapter.
+   * Backs the cart id and the wishlist. Defaults to `window.localStorage`; React Native and Node
+   * consumers pass an AsyncStorage-compatible adapter.
    */
   storage?: WishlistStorageAdapter;
-  /** Fired on a successful cart/wishlist mutation. */
   onEvent?: (event: ShopifyEvent) => void;
-  /**
-   * Vets cart writes and observes what landed — see `CartLineGuard`. Sitting on the provider is
-   * what makes it unbypassable: every screen reaches the cart through these hooks.
-   */
+  /** Vets cart writes — see `CartLineGuard`. On the provider so no screen can bypass it. */
   cartGuard?: CartLineGuard;
-  /**
-   * Keep wishlist entries whose product no longer resolves, as `product: null`, rather than
-   * pruning them. See `WishlistInitOptions.keepDeleted` — recommended for a shopper-facing
-   * wishlist, where an unpublished product should come back rather than disappear.
-   */
+  /** See `WishlistInitOptions.keepDeleted`. Recommended for a shopper-facing wishlist. */
   wishlistKeepDeleted?: boolean;
 }
 
@@ -190,20 +152,15 @@ export function ShopifyProvider({ children, config, storage, onEvent, cartGuard,
   const storageRef = useRef<WishlistStorageAdapter | null>(null);
   storageRef.current = storage ?? defaultStorage();
 
-  // Held in a ref so the cart callbacks do not change identity when the host passes a new guard
-  // object, and so a guard swapped mid-session takes effect on the next write.
+  // In a ref so the cart callbacks keep their identity when the host passes a new guard object.
   const guardRef = useRef<CartLineGuard | undefined>(cartGuard);
   guardRef.current = cartGuard;
 
 
   /**
-   * Shopify rejects concurrent writes to one cart — "Could not complete operation. The cart
-   * conflicted with another request." — so every mutation goes through this queue and waits for the
-   * one before it. Two screens, a background sweep and a stepper tap can all reach the cart at once;
-   * ordering them here is the only place that covers all of them.
-   *
-   * The chain is never poisoned by a failure: the next write runs whether its predecessor resolved or
-   * threw, while the caller still sees its own error.
+   * Shopify rejects concurrent writes to one cart ("The cart conflicted with another request"), so
+   * every mutation waits for the one before it. The chain is never poisoned by a failure: the next
+   * write runs either way, while the caller still sees its own error.
    */
   const writeQueue = useRef<Promise<unknown>>(Promise.resolve());
   const serialize = useCallback(<T,>(write: () => Promise<T>): Promise<T> => {
@@ -263,14 +220,12 @@ export function ShopifyProvider({ children, config, storage, onEvent, cartGuard,
     );
   }, [runGuard]);
 
-  // ─── Init the SDK, cart, and wishlist once ────────────────────────
   useEffect(() => {
     let mounted = true;
     (async () => {
       try {
         await shopify.init(config);
 
-        // Cart: restore by id or create
         setCartLoad(true);
         try {
           const s = storageRef.current;
@@ -286,7 +241,6 @@ export function ShopifyProvider({ children, config, storage, onEvent, cartGuard,
           if (mounted) setCartLoad(false);
         }
 
-        // Wishlist: hydrate from storage, background-refresh from API
         const initialItems = await shopify.wishlist.init({
           storage: storageRef.current ?? undefined,
           keepDeleted: wishlistKeepDeleted,
@@ -301,8 +255,7 @@ export function ShopifyProvider({ children, config, storage, onEvent, cartGuard,
         console.error("[ShopifyProvider] init failed", e);
         if (mounted) {
           setError(e instanceof Error ? e.message : String(e));
-          // Mark ready so downstream UIs can render an error state
-          // instead of an indefinite spinner.
+          // Ready so downstream UIs render an error state rather than an indefinite spinner.
           setReady(true);
         }
       }
@@ -314,7 +267,6 @@ export function ShopifyProvider({ children, config, storage, onEvent, cartGuard,
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // ─── Cart operations ──────────────────────────────────────────────
   const persistCart = useCallback(async (next: Cart | null) => {
     setCart(next);
     const s = storageRef.current;
@@ -354,8 +306,7 @@ export function ShopifyProvider({ children, config, storage, onEvent, cartGuard,
 
   const cartAddLines = useCallback(async (requested: CartLineInput[]): Promise<Cart | null> => {
     if (requested.length === 0) return cart;
-    // Vetted up front so a cancelled line never reaches the batch — one unsellable line already
-    // fails the whole `cartLinesAdd`, and a guard's veto should not cost the others their fast path.
+    // Vetted up front so a guard's veto does not cost the other lines their fast path.
     const inputs = (await Promise.all(requested.map(approveAdd))).filter(
       (input): input is CartLineInput => input !== null,
     );
@@ -364,24 +315,21 @@ export function ShopifyProvider({ children, config, storage, onEvent, cartGuard,
     try {
       const id = await ensureCartId();
       let next: Cart | null = null;
-      // Which inputs actually landed, so the guard hears about exactly those — and about the units
-      // it approved for lines the store then refused.
+      // Which inputs landed, so the guard hears about exactly those.
       let landed: CartLineInput[] = [];
       try {
         next = await serialize(() => shopify.cart.addLines(id, inputs));
         landed = inputs;
       } catch (batchError) {
-        // Only Shopify rejecting specific lines is worth retrying one at a time. A transport or
-        // GraphQL failure would fail all N the same way, so retrying would turn one dead request
-        // into N and still end at null — indistinguishable from "every variant was unsellable".
+        // A transport or GraphQL failure would fail all N the same way, so retrying it would turn
+        // one dead request into N and still end at null. Only line rejections are worth retrying.
         if (!isLineRejection(batchError)) {
           inputs.forEach(releaseRejected);
           throw batchError;
         }
 
-        // The batch is all-or-nothing, so fall back to one line at a time and keep the successes.
-        // Each result supersedes the last, so `next` ends up as the cart after the final accepted
-        // line — which is the whole set of them, since they accumulate server-side.
+        // The batch is all-or-nothing, so retry one line at a time and keep the successes. They
+        // accumulate server-side, so `next` ends up holding the whole accepted set.
         for (let i = 0; i < inputs.length; i += 1) {
           const input = inputs[i];
           try {
@@ -389,16 +337,15 @@ export function ShopifyProvider({ children, config, storage, onEvent, cartGuard,
             landed.push(input);
           } catch (lineError) {
             releaseRejected(input);
-            // A line the store will no longer sell is the expected case and is skipped. Anything
-            // else means the retry itself is failing, so stop rather than hammer the remaining ones.
+            // Anything but a rejection means the retry itself is failing, so stop.
             if (!isLineRejection(lineError)) {
               inputs.slice(i + 1).forEach(releaseRejected);
               throw lineError;
             }
           }
         }
-        // Every line individually rejected. Surface the original rather than reporting an empty
-        // success, which reads to the caller as "nothing to add" instead of "none of this is sellable".
+        // Every line individually rejected. Surface the original rather than an empty success,
+        // which reads as "nothing to add" instead of "none of this is sellable".
         if (landed.length === 0) throw batchError;
       }
       if (next) {
@@ -418,8 +365,7 @@ export function ShopifyProvider({ children, config, storage, onEvent, cartGuard,
     countryCode?: string;
     customerAccessToken?: string;
   }): Promise<boolean> => {
-    // Deliberately does NOT create a cart: attaching an identity to a cart that does not exist yet
-    // would mint an empty one, and checkout has nothing to do with it.
+    // Deliberately does NOT create a cart — that would mint an empty one checkout never sees.
     if (!cart?.id) return false;
     setCartLoad(true);
     try {
@@ -442,8 +388,8 @@ export function ShopifyProvider({ children, config, storage, onEvent, cartGuard,
     const previous = cart.lines.find((line) => line.id === lineId) ?? null;
     const delta = previous ? quantity - previous.quantity : 0;
 
-    // Only an increase can be vetted — a decrease is reported after the fact, since there is
-    // nothing to refuse and the units are only really free once Shopify has taken them back.
+    // Only an increase can be vetted; a decrease is reported after the fact, once Shopify has
+    // actually taken the units back.
     let update: CartLineUpdateInput = { id: lineId, quantity, ...(attributes ? { attributes } : {}) };
     if (previous && delta > 0 && guard?.beforeIncrease) {
       const approved = await runGuard(() => guard.beforeIncrease!(previous, quantity), update);
@@ -526,14 +472,19 @@ export function ShopifyProvider({ children, config, storage, onEvent, cartGuard,
     return next;
   }, [cart, persistCart]);
 
+  const cartAdopt = useCallback(async (cartId: string): Promise<Cart | null> => {
+    const next = await shopify.cart.get(cartId);
+    if (next) await persistCart(next);
+    return next;
+  }, [persistCart]);
+
   const cartReset = useCallback(async () => {
     const created = await shopify.cart.create();
     await persistCart(created);
   }, [persistCart]);
 
-  // ─── Wishlist operations ──────────────────────────────────────────
-  // The SDK's wishlist module owns storage + hydration; we just wrap
-  // the mutating methods and rely on onChange to keep React in sync.
+  // The wishlist module owns storage and hydration; these just wrap the mutating methods and
+  // rely on onChange to keep React in sync.
   const wlAdd     = useCallback(async (p: Product | string) => { await (shopify.wishlist.add as any)(p); onEvent?.({ type: "wishlist:add" }); }, [onEvent]);
   const wlRemove  = useCallback(async (id: string)          => { await shopify.wishlist.remove(id); }, []);
   const wlToggle  = useCallback(async (p: Product | string) => {
@@ -556,6 +507,7 @@ export function ShopifyProvider({ children, config, storage, onEvent, cartGuard,
       applyDiscountCodes: cartApplyDiscounts,
       setBuyerIdentity:   cartSetBuyerIdentity,
       refresh:            cartRefresh,
+      adopt:              cartAdopt,
       reset:              cartReset,
     },
     wishlist: {
@@ -571,26 +523,23 @@ export function ShopifyProvider({ children, config, storage, onEvent, cartGuard,
     },
   }), [
     ready, error,
-    cart, cartLoading, cartAddLine, cartAddLines, cartUpdateLine, cartRemoveLine, cartApplyDiscounts, cartSetBuyerIdentity, cartRefresh, cartReset,
+    cart, cartLoading, cartAddLine, cartAddLines, cartUpdateLine, cartRemoveLine, cartApplyDiscounts, cartSetBuyerIdentity, cartRefresh, cartAdopt, cartReset,
     wlItems, wlHas, wlAdd, wlRemove, wlToggle, wlClear, wlRefresh,
   ]);
 
   return <ShopifyContext.Provider value={value}>{children}</ShopifyContext.Provider>;
 }
 
-/** Full Shopify context — SDK readiness plus cart and wishlist state. */
 export function useShopify(): ShopifyContextType {
   const ctx = useContext(ShopifyContext);
   if (!ctx) throw new Error("useShopify must be used within a ShopifyProvider");
   return ctx;
 }
 
-/** Cart-only shortcut. Same object as `useShopify().cart`. */
 export function useCart(): CartState {
   return useShopify().cart;
 }
 
-/** Wishlist-only shortcut. Same object as `useShopify().wishlist`. */
 export function useWishlist(): WishlistState {
   return useShopify().wishlist;
 }

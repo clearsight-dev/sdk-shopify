@@ -1,16 +1,5 @@
-/**
- * Local-storage-backed wishlist.
- *
- * Storage layout: a single JSON array under `storageKey`. Each row is
- * `{ productId, basic, addedAt }` — small enough that a 5MB localStorage
- * quota holds tens of thousands of entries.
- *
- * On init the wishlist rehydrates from storage instantly, then fires a
- * background `refresh()` that batches product IDs through the Storefront
- * `nodes` root and merges the up-to-date `Product` into each entry.
- * Deleted products come back as `null` and (unless `keepDeleted` is set)
- * are pruned from local storage on the next write.
- */
+// Storage layout: one JSON array of `{ productId, basic, addedAt }` under `storageKey`.
+// Init rehydrates from it instantly, then background-refreshes the full products.
 import { request } from './client';
 import { normalizeProduct } from './products';
 import { NODES_AS_PRODUCTS_QUERY } from './queries';
@@ -47,8 +36,6 @@ const state: WishlistState = {
   listeners: new Set(),
 };
 
-/* ─── Storage helpers ────────────────────────────────────────────── */
-
 function defaultStorage(): WishlistStorageAdapter | null {
   if (typeof globalThis !== 'undefined' && typeof (globalThis as any).localStorage !== 'undefined') {
     return (globalThis as any).localStorage as WishlistStorageAdapter;
@@ -65,7 +52,6 @@ async function loadFromStorage(): Promise<WishlistItem[]> {
     if (!Array.isArray(parsed)) return [];
     return parsed.filter(isValidItemShape);
   } catch {
-    // Corrupt storage — start fresh rather than crash.
     return [];
   }
 }
@@ -76,13 +62,11 @@ async function saveToStorage(): Promise<void> {
   try {
     await Promise.resolve(state.storage.setItem(state.storageKey, serialized));
   } catch {
-    // Storage full or unavailable — nothing to fall back to; the in-memory
-    // state remains correct until the next successful write.
+    // Storage full or unavailable — in-memory state stays correct regardless.
   }
 }
 
-/** Drop the hydrated `product` field before persisting — it's large and
- *  refreshable, and we don't want to bust the storage quota. */
+/** Drops the hydrated `product` before persisting — it is large and refreshable. */
 function stripHydrated(item: WishlistItem): Omit<WishlistItem, 'product'> {
   return { productId: item.productId, basic: item.basic, addedAt: item.addedAt };
 }
@@ -96,8 +80,6 @@ function isValidItemShape(v: any): v is WishlistItem {
   );
 }
 
-/* ─── Index maintenance ──────────────────────────────────────────── */
-
 function rebuildIndex(): void {
   state.index.clear();
   state.items.forEach((it, i) => state.index.set(it.productId, i));
@@ -110,8 +92,6 @@ function notify(): void {
   });
 }
 
-/* ─── Snapshot extraction ────────────────────────────────────────── */
-
 function basicFromProduct(p: Product): WishlistItem['basic'] {
   return {
     handle: p.handle,
@@ -121,17 +101,11 @@ function basicFromProduct(p: Product): WishlistItem['basic'] {
   };
 }
 
-/* ─── Hydration ──────────────────────────────────────────────────── */
-
 interface NodesResponse {
   nodes: Array<{ __typename?: string } | null>;
 }
 
-/**
- * Fetch products for the given IDs in `batchSize`-sized chunks.
- * Position-preserving: the returned array is the same length as `ids`,
- * with `null` for products that were deleted or aren't accessible.
- */
+/** Position-preserving: same length as `ids`, `null` where a product no longer resolves. */
 async function fetchProductsByIds(ids: string[]): Promise<Array<Product | null>> {
   if (ids.length === 0) return [];
   const out: Array<Product | null> = [];
@@ -144,15 +118,12 @@ async function fetchProductsByIds(ids: string[]): Promise<Array<Product | null>>
       if (node && (node as any).__typename === 'Product') {
         out.push(normalizeProduct(node));
       } else {
-        // Missing, deleted, or a non-Product node — treat as null.
         out.push(null);
       }
     }
   }
   return out;
 }
-
-/* ─── Public API ─────────────────────────────────────────────────── */
 
 async function init(opts?: WishlistInitOptions): Promise<WishlistItem[]> {
   state.storage    = opts?.storage    ?? defaultStorage();
@@ -163,9 +134,9 @@ async function init(opts?: WishlistInitOptions): Promise<WishlistItem[]> {
   state.ready = true;
 
   if (opts?.hydrateOnInit !== false && state.items.length > 0) {
-    // Fire-and-forget — the caller can await `refresh()` explicitly if
-    // they need the hydrated products before rendering.
-    void refresh({ keepDeleted: opts?.keepDeleted }).catch(() => { /* swallow: cached items still render */ });
+    // Fire-and-forget: cached items already render, and a caller that needs the
+    // hydrated products can await `refresh()` itself.
+    void refresh({ keepDeleted: opts?.keepDeleted }).catch(() => {});
   }
   notify();
   return state.items.slice();
@@ -180,7 +151,7 @@ async function add(a: Product | string, b?: WishlistItem['basic']): Promise<Wish
   const basic = typeof a === 'string' ? (b ?? {}) : basicFromProduct(a);
   const existingIdx = state.index.get(productId);
   if (existingIdx != null) {
-    // Refresh the basic snapshot but preserve `addedAt` and hydrated product.
+    // Refresh the snapshot but preserve `addedAt`.
     const existing = state.items[existingIdx];
     const merged: WishlistItem = { ...existing, basic: { ...existing.basic, ...basic } };
     if (typeof a !== 'string') merged.product = a;
@@ -251,8 +222,6 @@ async function refresh(opts?: WishlistRefreshOptions): Promise<WishlistItem[]> {
   const ids = state.items.map((it) => it.productId);
   const hydrated = await fetchProductsByIds(ids);
 
-  // Rebuild items in original order, mapping each id to its hydrated
-  // Product (or null). Prune deleted entries unless `keepDeleted` is on.
   const nextItems: WishlistItem[] = [];
   const keepDeleted = opts?.keepDeleted === true;
   for (let i = 0; i < state.items.length; i++) {

@@ -1,6 +1,3 @@
-/**
- * Real Shopify cart via Storefront API.
- */
 import { request, assertNoUserErrors } from './client';
 import {
   CART_BUYER_IDENTITY_UPDATE_MUTATION,
@@ -31,7 +28,6 @@ interface CartBuyPayload    { cartBuyerIdentityUpdate: { cart: any; userErrors: 
 interface CartGcAddPayload  { cartGiftCardCodesUpdate: { cart: any; userErrors: UserError[] } }
 interface CartGcRmPayload   { cartGiftCardCodesRemove: { cart: any; userErrors: UserError[] } }
 
-/** GraphQL returns `lines.nodes`; we hoist to `lines` (an array). */
 function normalize(c: any): Cart {
   return {
     id: c.id,
