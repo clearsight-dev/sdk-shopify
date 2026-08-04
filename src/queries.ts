@@ -66,6 +66,21 @@ export const PRODUCT_FRAGMENT = /* GraphQL */ `
     variants(first: 100) { nodes { ...VariantFields } }
     images(first: 20) { nodes { ...ImageFields } }
     featuredImage { ...ImageFields }
+    # The shopper-facing link, for sharing. Null unless published to the Online Store channel.
+    onlineStoreUrl
+    # Videos are appended after images, so a small window misses them entirely.
+    media(first: 250) {
+      nodes {
+        mediaContentType
+        alt
+        previewImage { url }
+        ... on MediaImage { id image { url altText } }
+        # Only mp4 sources are usable without a streaming player, but the mimeType has to be
+        # selected to tell them from the HLS/DASH manifests Shopify also returns.
+        ... on Video { id sources { url mimeType width height } }
+        ... on ExternalVideo { id embeddedUrl host }
+      }
+    }
     updatedAt
     createdAt
   }
@@ -115,7 +130,13 @@ export const CART_FRAGMENT = /* GraphQL */ `
           compareAtAmountPerQuantity { ...MoneyFields }
         }
         merchandise {
-          ... on ProductVariant { ...VariantFields }
+          ... on ProductVariant {
+            ...VariantFields
+            # The line has to name its product — the variant alone only carries the option
+            # value ("0", "L"). Asked for here rather than in VariantFields so a product's own
+            # variants do not each re-fetch their parent.
+            product { title handle }
+          }
         }
       }
     }
@@ -206,6 +227,8 @@ export const COLLECTION_PRODUCTS_QUERY = /* GraphQL */ `
   ${PRODUCT_FRAGMENT}
   query CollectionProducts($handle: String!, $first: Int!, $after: String, $sortKey: ProductCollectionSortKeys, $reverse: Boolean, $filters: [ProductFilter!]) {
     collection(handle: $handle) {
+      handle
+      title
       products(first: $first, after: $after, sortKey: $sortKey, reverse: $reverse, filters: $filters) {
         nodes { ...ProductFields }
         pageInfo { hasNextPage hasPreviousPage startCursor endCursor }
@@ -215,6 +238,25 @@ export const COLLECTION_PRODUCTS_QUERY = /* GraphQL */ `
           type
           values { id label count input }
         }
+      }
+    }
+  }
+`;
+
+export const SEARCH_PRODUCTS_QUERY = /* GraphQL */ `
+  ${PRODUCT_FRAGMENT}
+  query SearchProducts($query: String!, $first: Int!, $after: String, $productFilters: [ProductFilter!]) {
+    search(query: $query, first: $first, after: $after, types: [PRODUCT], productFilters: $productFilters) {
+      totalCount
+      nodes {
+        ... on Product { ...ProductFields }
+      }
+      pageInfo { hasNextPage hasPreviousPage startCursor endCursor }
+      productFilters {
+        id
+        label
+        type
+        values { id label count input }
       }
     }
   }
@@ -548,6 +590,40 @@ export const SHOP_QUERY = /* GraphQL */ `
       moneyFormat
       paymentSettings {
         currencyCode
+      }
+    }
+  }
+`;
+
+/**
+ * Waitlist-style variant resolution: variant GIDs in, variants out, each carrying enough of its
+ * parent product to render a card without a second round trip.
+ *
+ * Variants rather than products because pre-order eligibility is a per-variant fact — stock,
+ * purchasability and the selling-plan allocation all live on the variant, so a product-level query
+ * could not answer it.
+ */
+export const NODES_AS_VARIANTS_QUERY = /* GraphQL */ `
+  ${VARIANT_FRAGMENT}
+  query VariantNodes($ids: [ID!]!) {
+    nodes(ids: $ids) {
+      __typename
+      ... on ProductVariant {
+        ...VariantFields
+        sellingPlanAllocations(first: 1) {
+          nodes {
+            sellingPlan { id name }
+            remainingBalanceChargeAmount { ...MoneyFields }
+          }
+        }
+        product {
+          id
+          title
+          handle
+          featuredImage { ...ImageFields }
+          # Only the content types — enough to know whether a play badge belongs on the card.
+          media(first: 250) { nodes { mediaContentType } }
+        }
       }
     }
   }

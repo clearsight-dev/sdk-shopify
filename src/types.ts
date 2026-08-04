@@ -43,6 +43,25 @@ export interface Image {
   height: number | null;
 }
 
+/** What a `ProductMedia` item actually is, normalised off Shopify's `mediaContentType`. */
+export type ProductMediaKind = 'image' | 'video' | 'external-video' | 'model-3d';
+
+/**
+ * One attached media item with its URLs resolved, so a gallery does not have to know
+ * Shopify's `MediaImage | Video | ExternalVideo | Model3d` union.
+ */
+export interface ProductMedia {
+  id: string;
+  kind: ProductMediaKind;
+  alt: string | null;
+  /** Still frame. Shopify provides one for videos too, so it doubles as a poster. */
+  posterUrl: string | null;
+  /** Playable file for `Video`; null for images and external video. */
+  videoUrl: string | null;
+  /** YouTube/Vimeo embed for `ExternalVideo`; null otherwise. */
+  embeddedUrl: string | null;
+}
+
 // ---------------------------------------------------------------------------
 // Products & variants
 // ---------------------------------------------------------------------------
@@ -70,6 +89,42 @@ export interface ProductVariant {
   image: Image | null;
 }
 
+/** A pre-order/deferred-payment plan the store has enrolled a variant in. */
+export interface SellingPlan {
+  id: string;
+  name: string;
+  /** What is still owed after the deposit, when the plan defers part of the payment. */
+  remainingBalance: string | null;
+  currencyCode: string | null;
+}
+
+/**
+ * A variant resolved on its own, carrying enough of its parent product to render a card.
+ *
+ * Distinct from `ProductVariant`, which only ever appears nested inside a Product and so has no need
+ * to name one.
+ */
+export interface StandaloneVariant extends ProductVariant {
+  product: {
+    id: string;
+    title: string;
+    handle: string;
+    featuredImage: Image | null;
+    /** True when the product has any video media — enough to decide on a play badge. */
+    hasVideo: boolean;
+  };
+  /** Present only when the store has enrolled this variant for pre-order. */
+  sellingPlan: SellingPlan | null;
+}
+
+export interface ShopifyVariantsAPI {
+  /**
+   * Resolves variant GIDs positionally. Anything unreadable — a deleted variant, or an id the token
+   * cannot see — is dropped rather than returned as a hole, so callers get only variants that exist.
+   */
+  byIds(ids: string[], opts?: { batchSize?: number }): Promise<StandaloneVariant[]>;
+}
+
 export interface Product {
   id: string;            // GID
   handle: string;        // url-safe slug
@@ -87,6 +142,25 @@ export interface Product {
   variants: ProductVariant[];
   images: Image[];
   featuredImage: Image | null;
+  /**
+   * The shopper-facing storefront URL, for sharing. Null unless the product is published to
+   * the Online Store channel, so anything built on it needs a fallback.
+   */
+  onlineStoreUrl: string | null;
+  /**
+   * `mediaContentType` of every attached media item, in Shopify's order — `IMAGE`, `VIDEO`,
+   * `EXTERNAL_VIDEO`, `MODEL_3D`. Only the content type is fetched, not the media itself, so
+   * a card can flag a video without paying for the URLs.
+   */
+  mediaContentTypes: string[];
+  /** True when any media item is a `VIDEO` or `EXTERNAL_VIDEO`. Derived from the above. */
+  hasVideo: boolean;
+  /**
+   * Every attached media item with its URLs resolved, videos first then images — the order a
+   * PDP gallery presents them in. Items whose URL cannot be resolved are dropped, so this is
+   * always renderable.
+   */
+  media: ProductMedia[];
   /** Updated/published timestamps as ISO 8601. */
   updatedAt: string;
   createdAt: string;
@@ -121,6 +195,11 @@ export interface CartLine {
   id: string;            // line GID
   quantity: number;
   merchandise: ProductVariant;
+  /**
+   * The product this line's variant belongs to. Cart lines need it to render a name and to link
+   * back to the PDP; `merchandise.title` is only the option value ("0", "L").
+   */
+  product: { title: string; handle: string } | null;
   cost: {
     totalAmount: Money;
     amountPerQuantity: Money;
@@ -165,6 +244,11 @@ export interface CartLineInput {
   merchandiseId: string; // ProductVariant GID
   quantity: number;
   attributes?: { key: string; value: string }[];
+  /**
+   * SellingPlan GID, for a pre-order or deferred-payment line. Passing it is what makes checkout
+   * authorise rather than capture — a pre-authorisation is an ordinary add-to-cart on the plan.
+   */
+  sellingPlanId?: string;
 }
 
 export interface CartLineUpdateInput {
@@ -290,6 +374,18 @@ export interface Connection<T> {
    * string you pass straight back in `ListOptions.filters`.
    */
   filters?: Filter[];
+  /**
+   * The parent collection's own fields — populated ONLY by `collections.products`, so a
+   * screen can title itself from the same request that fetched the grid instead of issuing
+   * a second `collections.byHandle`. Absent when the handle resolves to nothing.
+   */
+  collection?: { handle: string; title: string };
+  /**
+   * Every match, not just the loaded window — populated ONLY by `products.search`, because the
+   * `search` root is the one Storefront connection that reports it. A results header that counted
+   * `nodes.length` instead would climb as the shopper scrolled.
+   */
+  totalCount?: number;
 }
 
 /**
@@ -507,6 +603,20 @@ export interface ShopifyProductsAPI {
   list(opts?: ListOptions): Promise<Connection<Product>>;
   byHandle(handle: string): Promise<Product | null>;
   byId(id: string): Promise<Product | null>;
+  /**
+   * Resolve many product GIDs in one go, in the order given.
+   *
+   * Batched under the hood because Shopify caps query cost per call. Anything that does not
+   * resolve — deleted, unpublished, or not a Product — is dropped rather than returned as a hole,
+   * so a caller that counts the result gets what it can actually render. Pass
+   * `keepMissing: true` to get a positional array with `null` in those slots instead.
+   */
+  byIds(ids: string[], opts?: { batchSize?: number; keepMissing?: boolean }): Promise<Product[]>;
+  /**
+   * Full-text search. Uses the `search` root rather than `products(query:)`, so the result also
+   * carries `totalCount` and `filters` — the facets a filter sheet needs, in the same shape
+   * `collections.products` returns.
+   */
   search(query: string, opts?: Omit<ListOptions, 'query'>): Promise<Connection<Product>>;
   recommended(productId: string): Promise<Product[]>;
 }
@@ -625,6 +735,15 @@ export interface WishlistInitOptions {
    * Set false for lazy hydration (call `refresh()` on your own schedule).
    */
   hydrateOnInit?: boolean;
+  /**
+   * Forwarded to the hydration `refresh()`. Set true to keep an entry whose product did not
+   * resolve, with `product: null`, instead of dropping it from storage.
+   *
+   * Worth setting for a shopper-facing wishlist: `null` means "no longer readable", which covers
+   * a product that is only *temporarily* unpublished as well as one genuinely deleted — and the
+   * default silently loses the entry forever in the first case.
+   */
+  keepDeleted?: boolean;
 }
 
 export interface WishlistRefreshOptions {
@@ -678,6 +797,7 @@ export interface ShopifyIntegration {
   readonly isMock: boolean;
 
   products: ShopifyProductsAPI;
+  variants: ShopifyVariantsAPI;
   collections: ShopifyCollectionsAPI;
   cart: ShopifyCartAPI;
   customer: ShopifyCustomerAPI;

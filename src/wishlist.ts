@@ -165,7 +165,7 @@ async function init(opts?: WishlistInitOptions): Promise<WishlistItem[]> {
   if (opts?.hydrateOnInit !== false && state.items.length > 0) {
     // Fire-and-forget — the caller can await `refresh()` explicitly if
     // they need the hydrated products before rendering.
-    void refresh().catch(() => { /* swallow: cached items still render */ });
+    void refresh({ keepDeleted: opts?.keepDeleted }).catch(() => { /* swallow: cached items still render */ });
   }
   notify();
   return state.items.slice();

@@ -32,9 +32,29 @@ interface CartState {
   loading: boolean;
   itemCount: number;
   addLine:            (input: CartLineInput) => Promise<void>;
+  /**
+   * Several lines in one go, for reorder-style flows. Returns the resulting cart so the caller can
+   * tell what actually landed — `null` when nothing did.
+   *
+   * Tolerant by design: one line the store will no longer sell fails the whole `cartLinesAdd`, so a
+   * rejected batch is retried line by line and whatever the store still accepts is kept.
+   */
+  addLines:           (inputs: CartLineInput[]) => Promise<Cart | null>;
   updateLine:         (lineId: string, quantity: number) => Promise<void>;
   removeLine:         (lineId: string) => Promise<void>;
   applyDiscountCodes: (codes: string[]) => Promise<void>;
+  /**
+   * Associates a buyer with the cart, so an order is attributed to them and checkout opens already
+   * signed in. Returns false when there is no cart yet — nothing to attach to.
+   *
+   * For **new customer accounts** the Customer Account API access token goes straight into
+   * `customerAccessToken`; no exchange for a classic Storefront token is needed.
+   */
+  setBuyerIdentity: (identity: {
+    email?: string;
+    countryCode?: string;
+    customerAccessToken?: string;
+  }) => Promise<boolean>;
   refresh:            () => Promise<void>;
   reset:              () => Promise<void>;
 }
@@ -85,6 +105,12 @@ export interface ShopifyProviderProps {
   storage?: WishlistStorageAdapter;
   /** Fired on a successful cart/wishlist mutation. */
   onEvent?: (event: ShopifyEvent) => void;
+  /**
+   * Keep wishlist entries whose product no longer resolves, as `product: null`, rather than
+   * pruning them. See `WishlistInitOptions.keepDeleted` — recommended for a shopper-facing
+   * wishlist, where an unpublished product should come back rather than disappear.
+   */
+  wishlistKeepDeleted?: boolean;
 }
 
 function defaultStorage(): WishlistStorageAdapter | null {
@@ -94,7 +120,7 @@ function defaultStorage(): WishlistStorageAdapter | null {
   return null;
 }
 
-export function ShopifyProvider({ children, config, storage, onEvent }: ShopifyProviderProps) {
+export function ShopifyProvider({ children, config, storage, onEvent, wishlistKeepDeleted }: ShopifyProviderProps) {
   const [ready, setReady]           = useState(false);
   const [error, setError]           = useState<string | null>(null);
   const [cart, setCart]             = useState<Cart | null>(null);
@@ -131,6 +157,7 @@ export function ShopifyProvider({ children, config, storage, onEvent }: ShopifyP
         // Wishlist: hydrate from storage, background-refresh from API
         const initialItems = await shopify.wishlist.init({
           storage: storageRef.current ?? undefined,
+          keepDeleted: wishlistKeepDeleted,
         });
         if (mounted) setWlItems(initialItems);
         wlUnsubRef.current = shopify.wishlist.onChange((items) => {
@@ -182,6 +209,49 @@ export function ShopifyProvider({ children, config, storage, onEvent }: ShopifyP
       setCartLoad(false);
     }
   }, [ensureCartId, persistCart, onEvent]);
+
+  const cartAddLines = useCallback(async (inputs: CartLineInput[]): Promise<Cart | null> => {
+    if (inputs.length === 0) return cart;
+    setCartLoad(true);
+    try {
+      const id = await ensureCartId();
+      let next: Cart | null = null;
+      try {
+        next = await shopify.cart.addLines(id, inputs);
+      } catch {
+        // The batch is all-or-nothing, so fall back to one line at a time and keep the successes.
+        // Each result supersedes the last, so `next` ends up as the cart after the final accepted
+        // line — which is the whole set of them, since they accumulate server-side.
+        for (const input of inputs) {
+          try {
+            next = await shopify.cart.addLines(id, [input]);
+          } catch {
+            // Skipped: this variant is gone or unsellable. The caller compares quantities to see.
+          }
+        }
+      }
+      if (next) {
+        await persistCart(next);
+        onEvent?.({ type: "cart:add" });
+      }
+      return next;
+    } finally {
+      setCartLoad(false);
+    }
+  }, [cart, ensureCartId, persistCart, onEvent]);
+
+  const cartSetBuyerIdentity = useCallback(async (identity: {
+    email?: string;
+    countryCode?: string;
+    customerAccessToken?: string;
+  }): Promise<boolean> => {
+    // Deliberately does NOT create a cart: attaching an identity to a cart that does not exist yet
+    // would mint an empty one, and checkout has nothing to do with it.
+    if (!cart?.id) return false;
+    const next = await shopify.cart.setBuyerIdentity(cart.id, identity);
+    await persistCart(next);
+    return true;
+  }, [cart, persistCart]);
 
   const cartUpdateLine = useCallback(async (lineId: string, quantity: number) => {
     if (!cart?.id) return;
@@ -238,7 +308,7 @@ export function ShopifyProvider({ children, config, storage, onEvent }: ShopifyP
     return nowSaved;
   }, [onEvent]);
   const wlClear   = useCallback(async ()                    => { await shopify.wishlist.clear(); },    []);
-  const wlRefresh = useCallback(async ()                    => { await shopify.wishlist.refresh(); },  []);
+  const wlRefresh = useCallback(async ()                    => { await shopify.wishlist.refresh({ keepDeleted: wishlistKeepDeleted }); },  [wishlistKeepDeleted]);
   const wlHas     = useCallback((id: string)                => shopify.wishlist.has(id),               []);
 
   const value = useMemo<ShopifyContextType>(() => ({
@@ -246,9 +316,11 @@ export function ShopifyProvider({ children, config, storage, onEvent }: ShopifyP
     cart: {
       cart, loading: cartLoading, itemCount: cart?.totalQuantity ?? 0,
       addLine:            cartAddLine,
+      addLines:           cartAddLines,
       updateLine:         cartUpdateLine,
       removeLine:         cartRemoveLine,
       applyDiscountCodes: cartApplyDiscounts,
+      setBuyerIdentity:   cartSetBuyerIdentity,
       refresh:            cartRefresh,
       reset:              cartReset,
     },
@@ -265,7 +337,7 @@ export function ShopifyProvider({ children, config, storage, onEvent }: ShopifyP
     },
   }), [
     ready, error,
-    cart, cartLoading, cartAddLine, cartUpdateLine, cartRemoveLine, cartApplyDiscounts, cartRefresh, cartReset,
+    cart, cartLoading, cartAddLine, cartAddLines, cartUpdateLine, cartRemoveLine, cartApplyDiscounts, cartSetBuyerIdentity, cartRefresh, cartReset,
     wlItems, wlHas, wlAdd, wlRemove, wlToggle, wlClear, wlRefresh,
   ]);
 

@@ -3,6 +3,8 @@
  */
 import { request } from './client';
 import {
+  NODES_AS_PRODUCTS_QUERY,
+  SEARCH_PRODUCTS_QUERY,
   PRODUCTS_LIST_QUERY,
   PRODUCT_BY_HANDLE_QUERY,
   PRODUCT_BY_ID_QUERY,
@@ -10,9 +12,12 @@ import {
 } from './queries';
 import type {
   Connection,
+  Filter,
   ListOptions,
   PageInfo,
   Product,
+  ProductMedia,
+  ProductMediaKind,
   ShopifyProductsAPI,
 } from './types';
 
@@ -21,6 +26,77 @@ interface ProductsRaw {
 }
 interface ProductRaw { product: any | null }
 interface RecommendedRaw { productRecommendations: any[] | null }
+interface NodesRaw { nodes: ({ __typename?: string } | null)[] }
+interface SearchRaw {
+  search: {
+    totalCount: number;
+    nodes: any[];
+    pageInfo: PageInfo;
+    productFilters?: Filter[];
+  };
+}
+
+/** Shopify's video media content types. `MODEL_3D` and `IMAGE` are not videos. */
+const VIDEO_CONTENT_TYPES = new Set(['VIDEO', 'EXTERNAL_VIDEO']);
+
+/** Exported so `variants.ts` decides on a play badge by the same rule this module uses. */
+export function hasVideoContentType(mediaContentTypes: string[]): boolean {
+  return mediaContentTypes.some((type) => VIDEO_CONTENT_TYPES.has(type));
+}
+
+interface RawVideoSource {
+  url: string;
+  mimeType: string;
+  width: number;
+  height: number;
+}
+
+/** Prefer the largest mp4 — HLS/DASH manifests need a streaming player. */
+function pickVideoUrl(sources: RawVideoSource[] | null | undefined): string | null {
+  if (!sources?.length) return null;
+  const mp4 = sources
+    .filter((source) => source.mimeType === 'video/mp4')
+    .sort((a, b) => b.width - a.width);
+  return mp4[0]?.url ?? sources[0].url;
+}
+
+function toMediaKind(mediaContentType: string): ProductMediaKind {
+  if (mediaContentType === 'EXTERNAL_VIDEO') return 'external-video';
+  if (mediaContentType === 'VIDEO') return 'video';
+  if (mediaContentType === 'MODEL_3D') return 'model-3d';
+  return 'image';
+}
+
+/**
+ * Videos first, then images. Shopify appends video after the images, but a PDP gallery leads
+ * with it — the production app opens on the first image with the video sitting at index 0.
+ * Anything whose URL cannot be resolved is dropped so the result is always renderable.
+ */
+function toMedia(nodes: any[]): ProductMedia[] {
+  const videos: ProductMedia[] = [];
+  const images: ProductMedia[] = [];
+
+  nodes.forEach((node, index) => {
+    if (!node) return;
+    const kind = toMediaKind(node.mediaContentType);
+    const item: ProductMedia = {
+      id: node.id ?? `${node.mediaContentType}-${index}`,
+      kind,
+      alt: node.alt ?? node.image?.altText ?? null,
+      posterUrl: node.image?.url ?? node.previewImage?.url ?? null,
+      videoUrl: kind === 'video' ? pickVideoUrl(node.sources) : null,
+      embeddedUrl: kind === 'external-video' ? (node.embeddedUrl ?? null) : null,
+    };
+
+    if (kind === 'image' || kind === 'model-3d') {
+      if (item.posterUrl) images.push(item);
+      return;
+    }
+    if (item.videoUrl || item.embeddedUrl || item.posterUrl) videos.push(item);
+  });
+
+  return [...videos, ...images];
+}
 
 /**
  * Storefront API exposes prices as `priceRange.minVariantPrice / maxVariantPrice`
@@ -28,6 +104,10 @@ interface RecommendedRaw { productRecommendations: any[] | null }
  * don't see the GraphQL nesting.
  */
 export function normalizeProduct(p: any): Product {
+  const mediaTypes: string[] = (p.media?.nodes ?? [])
+    .map((node: { mediaContentType?: string }) => node?.mediaContentType)
+    .filter((type: unknown): type is string => typeof type === 'string');
+
   return {
     id: p.id,
     handle: p.handle,
@@ -53,6 +133,10 @@ export function normalizeProduct(p: any): Product {
     variants: p.variants?.nodes ?? [],
     images: p.images?.nodes ?? [],
     featuredImage: p.featuredImage ?? null,
+    onlineStoreUrl: p.onlineStoreUrl ?? null,
+    mediaContentTypes: mediaTypes,
+    hasVideo: mediaTypes.some((type: string) => VIDEO_CONTENT_TYPES.has(type)),
+    media: toMedia(p.media?.nodes ?? []),
     updatedAt: p.updatedAt,
     createdAt: p.createdAt,
   };
@@ -83,8 +167,42 @@ export const products: ShopifyProductsAPI = {
     return data.product ? normalizeProduct(data.product) : null;
   },
 
+  async byIds(ids, opts): Promise<Product[]> {
+    if (!ids.length) return [];
+    // 100 keeps a batch under Shopify's per-call cost ceiling for this fragment.
+    const batchSize = Math.max(1, Math.min(250, opts?.batchSize ?? 100));
+    const out: Product[] = [];
+
+    for (let i = 0; i < ids.length; i += batchSize) {
+      const chunk = ids.slice(i, i + batchSize);
+      const data = await request<NodesRaw>(NODES_AS_PRODUCTS_QUERY, { ids: chunk });
+      const nodes = Array.isArray(data.nodes) ? data.nodes : [];
+      for (let j = 0; j < chunk.length; j++) {
+        const node = nodes[j];
+        // `nodes(ids:)` answers positionally, with null for anything unreadable.
+        if (node && node.__typename === 'Product') out.push(normalizeProduct(node));
+        else if (opts?.keepMissing) out.push(null as unknown as Product);
+      }
+    }
+    return out;
+  },
+
   async search(query: string, opts?: Omit<ListOptions, 'query'>): Promise<Connection<Product>> {
-    return this.list({ ...opts, query });
+    const data = await request<SearchRaw>(SEARCH_PRODUCTS_QUERY, {
+      query,
+      first: opts?.first ?? 20,
+      after: opts?.after,
+      productFilters: opts?.filters,
+    });
+    return {
+      // `types: [PRODUCT]` still yields a union, so anything that is not a Product arrives as an
+      // empty object rather than being dropped by the server — narrow on `id` instead of casting,
+      // or it would map to a card with no title and no price.
+      nodes: (data.search.nodes ?? []).filter((node) => node && 'id' in node).map(normalizeProduct),
+      pageInfo: data.search.pageInfo,
+      filters: data.search.productFilters ?? [],
+      totalCount: data.search.totalCount,
+    };
   },
 
   async recommended(productId: string): Promise<Product[]> {

@@ -41,6 +41,7 @@ function normalize(c: any): Cart {
       id: line.id,
       quantity: line.quantity,
       merchandise: line.merchandise,
+      product: line.merchandise?.product ?? null,
       cost: line.cost,
     })),
     cost: c.cost,

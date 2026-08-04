@@ -12,6 +12,7 @@ import { cart } from './cart';
 import { collections } from './collections';
 import { customer } from './customer';
 import { products } from './products';
+import { variants } from './variants';
 import { wishlist } from './wishlist';
 import { isConfigured, setConfig } from './client';
 import { shop, formatMoney } from './money';
@@ -30,6 +31,7 @@ export const shopify: ShopifyIntegration = {
   },
   isMock: false,
   products,
+  variants,
   collections,
   cart,
   customer,
