@@ -133,6 +133,19 @@ export interface CartDiscountCode {
   applicable: boolean;
 }
 
+/** One gift card applied to a cart. Pass `.id` to `cartGiftCardCodesRemove`
+ *  when removing (NOT the raw code). See docs section 5.5. */
+export interface AppliedGiftCard {
+  id: string;
+  lastCharacters: string;
+  /** Amount deducted from THIS cart's total by this card. */
+  presentmentAmountUsed: Money;
+  /** Card's remaining balance after this apply. */
+  balance: Money;
+  /** Historical total consumed across all applies. */
+  amountUsed: Money;
+}
+
 export interface Cart {
   id: string;            // cart GID
   /** Shopify-hosted checkout URL — open in a webview to complete purchase. */
@@ -141,6 +154,9 @@ export interface Cart {
   lines: CartLine[];
   cost: CartCost;
   discountCodes: CartDiscountCode[];
+  /** Gift cards applied to this cart. Empty when none. Populated by
+   *  cartGiftCardCodesUpdate/Remove; also included on plain `cart.get`. */
+  appliedGiftCards: AppliedGiftCard[];
   createdAt: string;
   updatedAt: string;
 }
@@ -311,6 +327,138 @@ export interface ListOptions {
 }
 
 // ---------------------------------------------------------------------------
+// Tile Credit — customer wallet + gift-card mint + cart apply
+// ---------------------------------------------------------------------------
+
+/** Summary of a customer's wallet. `expiringCents` is the amount that will
+ *  expire within the tile-credit service's configured horizon. */
+export interface TileCreditWallet {
+  appId: string;
+  customer: {
+    shopifyCustomerGid: string;
+    email: string | null;
+    firstName: string | null;
+    lastName: string | null;
+  };
+  balanceCents: number;
+  lifetimeEarnedCents: number;
+  lifetimeRedeemedCents: number;
+  expiringCents: number;
+}
+
+export type TileCreditLedgerType = 'earn' | 'redeem' | 'adjust' | 'expire';
+export type TileCreditLedgerSource =
+  | 'signup' | 'live-join' | 'order-fulfilled' | 'manual-grant'
+  | 'manual-deduct' | 'redemption' | 'expiry-sweep';
+
+export interface TileCreditLedgerEntry {
+  id: string;
+  type: TileCreditLedgerType;
+  amountCents: number;
+  currencyCode: string;
+  reason: string | null;
+  source: TileCreditLedgerSource;
+  sourceRef: string | null;
+  createdAt: string;
+  expiresAt: string | null;
+  giftCardGid: string | null;
+  idempotencyKey: string | null;
+}
+
+export interface TileCreditLedgerPage {
+  entries: TileCreditLedgerEntry[];
+  /** Pass as `before` on the next call. `null` means end of history. */
+  nextCursor: string | null;
+}
+
+export type TileCreditGiftCardStatus = 'active' | 'depleted' | 'expired' | 'disabled';
+
+export interface TileCreditIssuedGiftCard {
+  id: string;
+  shopifyGiftCardGid: string;
+  /** Last four of the card code — the full code is never stored server-side. */
+  last4: string;
+  initialAmountCents: number;
+  currencyCode: string;
+  createdAt: string;
+  expiresAt: string | null;
+  status: TileCreditGiftCardStatus;
+  ledgerEntryId: string;
+  redemptionAmountCents: number;
+}
+
+export interface TileCreditPublicConfig {
+  currency: string;
+  redemptionMinCents: number;
+  /** `null` → no cap besides the wallet balance. */
+  redemptionMaxCents: number | null;
+}
+
+export interface TileCreditRedeemInput {
+  amountCents: number;
+  /** Persist BEFORE the call so a retry after a network error returns the
+   *  same code with `duplicate: true`. Auto-generated if omitted, but then
+   *  you lose crash-safety. */
+  idempotencyKey?: string;
+  reason?: string;
+}
+
+export interface TileCreditRedeemResult {
+  giftCardGid: string;
+  /** Full code — returned exactly once per idempotencyKey. Show + copy
+   *  immediately, or persist briefly if you need to retry a cart-apply. */
+  code: string;
+  last4: string;
+  amountCents: number;
+  currencyCode: string;
+  expiresOn: string | null;
+  ledgerEntryId: string;
+  duplicate: boolean;
+  balanceCents: number;
+}
+
+export type TileCreditErrorCode =
+  | 'unauthorized' | 'forbidden' | 'not_found' | 'validation'
+  | 'conflict' | 'insufficient_balance' | 'shopify_upstream'
+  | 'rate_limited' | 'internal' | 'network';
+
+/** Normalized error class. Branch on `.code`, not `.message`.
+ *  See docs section 7.1 for the taxonomy and UX guidance. */
+export class TileCreditError extends Error {
+  public readonly code: TileCreditErrorCode;
+  public readonly status?: number;
+  public readonly details?: Record<string, unknown>;
+  constructor(code: TileCreditErrorCode, message: string, status?: number, details?: Record<string, unknown>) {
+    super(message);
+    this.name = 'TileCreditError';
+    this.code = code;
+    this.status = status;
+    this.details = details;
+  }
+}
+
+export interface TileCreditConfig {
+  /** Cloud Run URL, no trailing slash. */
+  baseUrl: string;
+  /** `shcat_…` (Customer Accounts API) OR classic Storefront customer token. */
+  customerAccessToken: string;
+  /** `{shop}.myshopify.com` — case-insensitive; lower-cased internally. */
+  shopDomain: string;
+  /** Cancels every in-flight request when aborted. */
+  signal?: AbortSignal;
+  /** Per-request timeout. Default 20_000ms. */
+  timeoutMs?: number;
+}
+
+export interface TileCreditAPI {
+  getWallet(): Promise<TileCreditWallet>;
+  getLedger(opts?: { limit?: number; before?: string }): Promise<TileCreditLedgerPage>;
+  listGiftCards(): Promise<{ giftCards: TileCreditIssuedGiftCard[] }>;
+  getConfig(): Promise<TileCreditPublicConfig>;
+  redeem(input: TileCreditRedeemInput): Promise<TileCreditRedeemResult>;
+}
+
+// ---------------------------------------------------------------------------
 // Errors
 // ---------------------------------------------------------------------------
 
@@ -361,6 +509,13 @@ export interface ShopifyCartAPI {
     cartId: string,
     identity: { email?: string; countryCode?: string; customerAccessToken?: string }
   ): Promise<Cart>;
+  /** Apply one or more gift-card codes to a cart. Idempotent per code.
+   *  Requires `buyerIdentity.countryCode` on the cart — Shopify rejects
+   *  gift cards with `INVALID_PAYMENT` otherwise. Callers should set the
+   *  country first (see `setBuyerIdentity` / shop default via `shop.load`). */
+  applyGiftCardCodes(cartId: string, codes: string[]): Promise<Cart>;
+  /** Remove gift cards by their AppliedGiftCard.id (NOT the raw code). */
+  removeGiftCardCodes(cartId: string, appliedGiftCardIds: string[]): Promise<Cart>;
 }
 
 export interface ShopifyCustomerAPI {
@@ -510,7 +665,41 @@ export interface ShopifyIntegration {
   shop: {
     load(): Promise<{ moneyFormat: string | null; currencyCode: string | null }>;
     moneyFormat(): string | null;
+    /** ISO country code from Storefront `localization.country.isoCode`
+     *  (e.g. `"US"`). Cached after first call. Used as the country
+     *  fallback when applying gift cards. */
+    countryCode(): Promise<string | null>;
   };
   /** Format a Money value using the shop's `moneyFormat` (with symbol fallback). */
   formatMoney(money: Money | null | undefined): string;
+  /**
+   * Tile Credit — customer wallet + gift-card mint + cart apply.
+   * Configure once per customer session; see `TileCreditClient` docs
+   * for the full flow. `null` until `shopify.tileCredit.configure(...)`.
+   */
+  tileCredit: {
+    /** Bind a customer session to Tile Credit. Rebuild the client on
+     *  logout / new customer. Safe to call multiple times — it replaces
+     *  the underlying client instance. */
+    configure(config: TileCreditConfig): TileCreditAPI;
+    /** The active client, or `null` when `configure` hasn't been called. */
+    client(): TileCreditAPI | null;
+    /**
+     * Redeem then apply to a Shopify cart in one call — mints a gift card,
+     * ensures the cart has a `buyerIdentity.countryCode` (belt + suspenders
+     * even if already set), and applies the code. Returns the mint result
+     * AND the updated cart. Docs section 5.7.
+     */
+    redeemAndApplyToCart(opts: {
+      cartId: string;
+      amountCents: number;
+      /** Persist BEFORE the call for crash-safe retries. Auto-generated
+       *  if omitted (loses that guarantee — see docs section 8). */
+      idempotencyKey?: string;
+      reason?: string;
+      /** ISO country to set on the cart if missing. Defaults to the
+       *  shop's `localization.country.isoCode`. */
+      countryFallback?: string;
+    }): Promise<{ redeemed: TileCreditRedeemResult; cart: Cart }>;
+  };
 }

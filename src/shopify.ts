@@ -15,6 +15,7 @@ import { products } from './products';
 import { wishlist } from './wishlist';
 import { isConfigured, setConfig } from './client';
 import { shop, formatMoney } from './money';
+import { configureTileCredit, getTileCreditClient, redeemAndApplyToCart } from './tileCredit';
 import type { ShopifyConfig, ShopifyIntegration } from './types';
 
 export const shopify: ShopifyIntegration = {
@@ -36,4 +37,9 @@ export const shopify: ShopifyIntegration = {
   wishlist,
   shop,
   formatMoney,
+  tileCredit: {
+    configure: configureTileCredit,
+    client: getTileCreditClient,
+    redeemAndApplyToCart,
+  },
 };

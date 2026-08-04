@@ -85,6 +85,52 @@ const { items, count, toggle, has } = useWishlist();
 
 `react` is an **optional** peer dep — install it only if you use the `/react` subpath.
 
+## Tile Credit
+
+Customer wallet + gift-card mint + one-shot apply to a Shopify cart.
+
+```ts
+import {shopify, centsToMoney} from '@apptile/sdk-shopify';
+
+// Configure once per signed-in customer (rebuild on logout / new customer).
+shopify.tileCredit.configure({
+  baseUrl: 'https://tile-credit-1097788179850.us-central1.run.app',
+  customerAccessToken,     // shcat_… or classic Storefront customer token
+  shopDomain: 'yourshop.myshopify.com',
+});
+
+const client = shopify.tileCredit.client()!;
+const wallet = await client.getWallet();
+console.log('balance:', centsToMoney(wallet.balanceCents));
+
+// Redeem 15.00 AND apply the minted gift card to the current cart in one call.
+const {redeemed, cart} = await shopify.tileCredit.redeemAndApplyToCart({
+  cartId,
+  amountCents: 1500,
+});
+```
+
+React hook:
+
+```tsx
+import {useTileCredit} from '@apptile/sdk-shopify/react';
+
+function WalletScreen() {
+  const {wallet, config, redeemAndApply, refresh, loading, error} = useTileCredit({
+    baseUrl: TILE_CREDIT_URL,
+    customerAccessToken: session.token,
+    shopDomain: SHOP_DOMAIN,
+  });
+  // …
+}
+```
+
+Full integration guide (idempotency, error taxonomy, recovery playbook)
+lives in the mobile app repo alongside the wallet screen — this SDK ships
+the client + types only. Every method rejects with a `TileCreditError`
+(`.code`: `'unauthorized' | 'insufficient_balance' | 'shopify_upstream'
+| 'network' | …`). Branch on `.code`, not `.message`.
+
 ## Types
 
 ```ts
@@ -95,6 +141,13 @@ import type {
   WishlistItem, WishlistStorageAdapter,
   ShopifyConfig, ShopifyIntegration,
   ShopifyError,
+  // Tile Credit
+  TileCreditConfig, TileCreditAPI,
+  TileCreditWallet, TileCreditLedgerEntry, TileCreditLedgerPage,
+  TileCreditIssuedGiftCard, TileCreditPublicConfig,
+  TileCreditRedeemInput, TileCreditRedeemResult,
+  TileCreditError, TileCreditErrorCode,
+  AppliedGiftCard,
 } from '@apptile/sdk-shopify';
 ```
 

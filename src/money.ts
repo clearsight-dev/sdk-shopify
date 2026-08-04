@@ -55,6 +55,23 @@ export function formatMoney(money: Money | null | undefined): string {
   return `${symbol}${num.toFixed(2)}`;
 }
 
+/** Shop's IP-localized country (e.g. `"US"`). Fetched once on demand and
+ *  cached — used as the fallback countryCode for gift-card apply. */
+let cachedCountryCode: string | null = null;
+async function loadCountryCode(): Promise<string | null> {
+  if (cachedCountryCode) return cachedCountryCode;
+  try {
+    const data = await request<{ localization: { country: { isoCode: string | null } } }>(
+      // Inlined so this file doesn't create a queries.ts dep cycle.
+      `query ShopLocalization { localization { country { isoCode } } }`,
+    );
+    cachedCountryCode = data.localization?.country?.isoCode ?? null;
+    return cachedCountryCode;
+  } catch {
+    return null;
+  }
+}
+
 /** Fetch shop-level money settings and cache them for synchronous formatting. */
 export const shop = {
   async load(): Promise<{ moneyFormat: string | null; currencyCode: string | null }> {
@@ -71,4 +88,5 @@ export const shop = {
     }
   },
   moneyFormat: getMoneyFormat,
+  countryCode: loadCountryCode,
 };

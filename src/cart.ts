@@ -7,6 +7,8 @@ import {
   CART_CREATE_MUTATION,
   CART_DISCOUNT_CODES_UPDATE_MUTATION,
   CART_GET_QUERY,
+  CART_GIFT_CARD_CODES_REMOVE_MUTATION,
+  CART_GIFT_CARD_CODES_UPDATE_MUTATION,
   CART_LINES_ADD_MUTATION,
   CART_LINES_REMOVE_MUTATION,
   CART_LINES_UPDATE_MUTATION,
@@ -26,6 +28,8 @@ interface CartUpdPayload    { cartLinesUpdate: { cart: any; userErrors: UserErro
 interface CartRmPayload     { cartLinesRemove: { cart: any; userErrors: UserError[] } }
 interface CartDiscPayload   { cartDiscountCodesUpdate: { cart: any; userErrors: UserError[] } }
 interface CartBuyPayload    { cartBuyerIdentityUpdate: { cart: any; userErrors: UserError[] } }
+interface CartGcAddPayload  { cartGiftCardCodesUpdate: { cart: any; userErrors: UserError[] } }
+interface CartGcRmPayload   { cartGiftCardCodesRemove: { cart: any; userErrors: UserError[] } }
 
 /** GraphQL returns `lines.nodes`; we hoist to `lines` (an array). */
 function normalize(c: any): Cart {
@@ -41,6 +45,7 @@ function normalize(c: any): Cart {
     })),
     cost: c.cost,
     discountCodes: c.discountCodes ?? [],
+    appliedGiftCards: c.appliedGiftCards ?? [],
     createdAt: c.createdAt,
     updatedAt: c.updatedAt,
   };
@@ -100,5 +105,23 @@ export const cart: ShopifyCartAPI = {
     });
     assertNoUserErrors('cartBuyerIdentityUpdate', data.cartBuyerIdentityUpdate.userErrors);
     return normalize(data.cartBuyerIdentityUpdate.cart);
+  },
+
+  async applyGiftCardCodes(cartId: string, codes: string[]): Promise<Cart> {
+    const data = await request<CartGcAddPayload>(CART_GIFT_CARD_CODES_UPDATE_MUTATION, {
+      cartId,
+      giftCardCodes: codes,
+    });
+    assertNoUserErrors('cartGiftCardCodesUpdate', data.cartGiftCardCodesUpdate.userErrors);
+    return normalize(data.cartGiftCardCodesUpdate.cart);
+  },
+
+  async removeGiftCardCodes(cartId: string, appliedGiftCardIds: string[]): Promise<Cart> {
+    const data = await request<CartGcRmPayload>(CART_GIFT_CARD_CODES_REMOVE_MUTATION, {
+      cartId,
+      appliedGiftCardIds,
+    });
+    assertNoUserErrors('cartGiftCardCodesRemove', data.cartGiftCardCodesRemove.userErrors);
+    return normalize(data.cartGiftCardCodesRemove.cart);
   },
 };

@@ -96,6 +96,13 @@ export const CART_FRAGMENT = /* GraphQL */ `
       totalTaxAmount { ...MoneyFields }
     }
     discountCodes { code applicable }
+    appliedGiftCards {
+      id
+      lastCharacters
+      presentmentAmountUsed { ...MoneyFields }
+      balance { ...MoneyFields }
+      amountUsed { ...MoneyFields }
+    }
     createdAt
     updatedAt
     lines(first: 250) {
@@ -276,6 +283,40 @@ export const CART_BUYER_IDENTITY_UPDATE_MUTATION = /* GraphQL */ `
     cartBuyerIdentityUpdate(cartId: $cartId, buyerIdentity: $buyerIdentity) {
       cart { ...CartFields }
       userErrors { field message code }
+    }
+  }
+`;
+
+// Gift cards are a payment tender in Shopify (not a discount), so they stack
+// past `combinesWith` rules. Apply requires `buyerIdentity.countryCode` on
+// the cart — otherwise Shopify returns INVALID_PAYMENT. See tile-credit
+// integration guide §5 for the full flow.
+export const CART_GIFT_CARD_CODES_UPDATE_MUTATION = /* GraphQL */ `
+  ${CART_FRAGMENT}
+  mutation CartGiftCardCodesUpdate($cartId: ID!, $giftCardCodes: [String!]!) {
+    cartGiftCardCodesUpdate(cartId: $cartId, giftCardCodes: $giftCardCodes) {
+      cart { ...CartFields }
+      userErrors { field message code }
+    }
+  }
+`;
+
+export const CART_GIFT_CARD_CODES_REMOVE_MUTATION = /* GraphQL */ `
+  ${CART_FRAGMENT}
+  mutation CartGiftCardCodesRemove($cartId: ID!, $appliedGiftCardIds: [ID!]!) {
+    cartGiftCardCodesRemove(cartId: $cartId, appliedGiftCardIds: $appliedGiftCardIds) {
+      cart { ...CartFields }
+      userErrors { field message code }
+    }
+  }
+`;
+
+/** Shop's IP-localized country (e.g. `"US"`). We use this as the fallback
+ *  countryCode when applying a gift card so the cart has a payment tender. */
+export const SHOP_LOCALIZATION_QUERY = /* GraphQL */ `
+  query ShopLocalization {
+    localization {
+      country { isoCode name }
     }
   }
 `;
