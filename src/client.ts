@@ -1,28 +1,20 @@
-/**
- * Minimal GraphQL client for the Shopify Storefront API.
- *
- * Zero deps — `fetch` only (universal: RN, web, Node 18+). Holds the
- * config and provides a typed `request<T>(operation, variables)` method.
- */
 import { ShopifyConfig, ShopifyError, UserError } from './types';
 
 interface InternalState {
   config: ShopifyConfig | null;
-  /** `shop.moneyFormat` Liquid template (e.g. `"Rs. {{amount}}"`), fetched at init. */
+  /** `shop.moneyFormat` Liquid template (e.g. `"Rs. {{amount}}"`). */
   moneyFormat: string | null;
-  /** `shop.paymentSettings.currencyCode` (e.g. `"INR"`). */
   currencyCode: string | null;
 }
 
 const state: InternalState = { config: null, moneyFormat: null, currencyCode: null };
 
-/** Cache the shop's money format + currency (called once after init). */
 export function setShopInfo(info: { moneyFormat?: string | null; currencyCode?: string | null }): void {
   if (info.moneyFormat) state.moneyFormat = info.moneyFormat;
   if (info.currencyCode) state.currencyCode = info.currencyCode;
 }
 
-/** The shop's `moneyFormat` Liquid template, or null until the shop query resolves. */
+/** Null until the shop query resolves. */
 export function getMoneyFormat(): string | null {
   return state.moneyFormat;
 }
@@ -60,11 +52,9 @@ interface GraphQLResponse<T> {
 }
 
 /**
- * Strip duplicate `fragment Name on Type { ... }` blocks from an
- * operation. Fragments are composed via template literals, and a
- * sub-fragment included by two parents would otherwise be emitted
- * twice — Shopify rejects the document with "Fragment name X must be
- * unique." We keep the first definition and drop subsequent duplicates.
+ * Fragments are composed via template literals, so one included by two parents is
+ * emitted twice — Shopify rejects that with "Fragment name X must be unique."
+ * Keeps the first definition of each name.
  */
 function deduplicateFragments(operation: string): string {
   const seen = new Set<string>();
@@ -76,10 +66,8 @@ function deduplicateFragments(operation: string): string {
       result += operation.slice(i);
       break;
     }
-    // copy everything up to the fragment keyword
     result += operation.slice(i, idx);
 
-    // parse the fragment name and locate the matching closing brace
     const afterKeyword = idx + 'fragment '.length;
     const nameMatch = operation.slice(afterKeyword).match(/^([A-Za-z_][A-Za-z0-9_]*)/);
     if (!nameMatch) {
@@ -110,10 +98,6 @@ function deduplicateFragments(operation: string): string {
   return result;
 }
 
-/**
- * Execute a GraphQL operation against the Storefront API.
- * Throws ShopifyError on transport errors, GraphQL errors, or null data.
- */
 export async function request<T>(operation: string, variables?: Record<string, unknown>): Promise<T> {
   const c = getConfig();
   const query = deduplicateFragments(operation);

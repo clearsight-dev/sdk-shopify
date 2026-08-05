@@ -1,6 +1,3 @@
-/**
- * Real Shopify customer via Storefront API.
- */
 import { request, assertNoUserErrors } from './client';
 import {
   CUSTOMER_ACCESS_TOKEN_CREATE_MUTATION,
@@ -73,7 +70,6 @@ function normalizeOrder(o: any): Order {
 
 export const customer: ShopifyCustomerAPI = {
   async signup(input): Promise<{ customer: Customer; accessToken: CustomerAccessToken }> {
-    // 1. Create the customer
     const created = await request<CreatePayload>(CUSTOMER_CREATE_MUTATION, {
       input: {
         email: input.email,
@@ -88,7 +84,7 @@ export const customer: ShopifyCustomerAPI = {
       throw new Error('customerCreate returned no customer');
     }
 
-    // 2. Mint an access token (signup doesn't auto-login)
+    // Signup does not auto-login, so mint a token.
     const accessToken = await this.login({ email: input.email, password: input.password });
     return { customer: created.customerCreate.customer, accessToken };
   },
@@ -109,7 +105,7 @@ export const customer: ShopifyCustomerAPI = {
       customerAccessToken: accessToken,
     });
     if (data.customerAccessTokenDelete.userErrors?.length > 0) {
-      // logout should succeed silently — log but don't throw
+      // Logout should succeed regardless.
       // eslint-disable-next-line no-console
       console.warn('[shopify.customer.logout]', data.customerAccessTokenDelete.userErrors);
     }

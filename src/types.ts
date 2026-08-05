@@ -1,33 +1,19 @@
-/**
- * Shopify integration — public types.
- *
- * Mirror Shopify's Storefront API GraphQL types but with the bits we
- * actually use (and friendlier names).
- *
- * Storefront API reference:
- *   https://shopify.dev/docs/api/storefront
- */
-
-// ---------------------------------------------------------------------------
 // Setup
-// ---------------------------------------------------------------------------
 
 export interface ShopifyConfig {
-  /** e.g. `mystore.myshopify.com` (without protocol). */
+  /** e.g. `mystore.myshopify.com`, without protocol. */
   storeDomain: string;
-  /** Public Storefront API token (safe to ship in client code). */
+  /** Public Storefront API token — safe to ship in client code. */
   storefrontAccessToken: string;
-  /** API version, e.g. `2024-10`. Defaults to a sane recent version. */
+  /** e.g. `2024-10`. */
   apiVersion?: string;
-  /** Country code for IP-localized prices (default `US`). */
+  /** For IP-localized prices. Default `US`. */
   country?: string;
-  /** BCP-47 language for localized product copy (default `EN`). */
+  /** BCP-47. Default `EN`. */
   language?: string;
 }
 
-// ---------------------------------------------------------------------------
 // Money / images
-// ---------------------------------------------------------------------------
 
 export interface Money {
   /** Decimal string, e.g. `"19.99"`. */
@@ -43,9 +29,25 @@ export interface Image {
   height: number | null;
 }
 
-// ---------------------------------------------------------------------------
+export type ProductMediaKind = 'image' | 'video' | 'external-video' | 'model-3d';
+
+/**
+ * One media item with its URLs resolved, so a gallery does not have to know Shopify's
+ * `MediaImage | Video | ExternalVideo | Model3d` union.
+ */
+export interface ProductMedia {
+  id: string;
+  kind: ProductMediaKind;
+  alt: string | null;
+  /** Still frame — Shopify provides one for videos too, so it doubles as a poster. */
+  posterUrl: string | null;
+  /** Playable file for `Video`; null for images and external video. */
+  videoUrl: string | null;
+  /** YouTube/Vimeo embed for `ExternalVideo`; null otherwise. */
+  embeddedUrl: string | null;
+}
+
 // Products & variants
-// ---------------------------------------------------------------------------
 
 export interface ProductOption {
   id: string;
@@ -70,6 +72,33 @@ export interface ProductVariant {
   image: Image | null;
 }
 
+/** A pre-order/deferred-payment plan the store has enrolled a variant in. */
+export interface SellingPlan {
+  id: string;
+  name: string;
+  /** What is still owed after the deposit, when the plan defers part of the payment. */
+  remainingBalance: string | null;
+  currencyCode: string | null;
+}
+
+/** A variant resolved on its own, carrying enough of its parent product to render a card. */
+export interface StandaloneVariant extends ProductVariant {
+  product: {
+    id: string;
+    title: string;
+    handle: string;
+    featuredImage: Image | null;
+    hasVideo: boolean;
+  };
+  /** Present only when the store has enrolled this variant for pre-order. */
+  sellingPlan: SellingPlan | null;
+}
+
+export interface ShopifyVariantsAPI {
+  /** Anything unreadable — deleted, or invisible to the token — is dropped, not returned as a hole. */
+  byIds(ids: string[], opts?: { batchSize?: number }): Promise<StandaloneVariant[]>;
+}
+
 export interface Product {
   id: string;            // GID
   handle: string;        // url-safe slug
@@ -87,14 +116,23 @@ export interface Product {
   variants: ProductVariant[];
   images: Image[];
   featuredImage: Image | null;
-  /** Updated/published timestamps as ISO 8601. */
+  /** Null unless the product is published to the Online Store channel, so needs a fallback. */
+  onlineStoreUrl: string | null;
+  /** Every media item's `mediaContentType`, in Shopify's order. The media itself is not fetched. */
+  mediaContentTypes: string[];
+  hasVideo: boolean;
+  /**
+   * Media with URLs resolved, in gallery order (videos → images → 3D models) rather than Shopify's.
+   * **Populated only by `products.list`, `byHandle` and `byId`** — the card paths fetch content
+   * types without the URLs, so this is `[]` there while `hasVideo` still holds.
+   */
+  media: ProductMedia[];
+  /** ISO 8601. */
   updatedAt: string;
   createdAt: string;
 }
 
-// ---------------------------------------------------------------------------
 // Collections
-// ---------------------------------------------------------------------------
 
 export interface Collection {
   id: string;
@@ -107,9 +145,7 @@ export interface Collection {
   productsCount?: number;
 }
 
-// ---------------------------------------------------------------------------
 // Cart
-// ---------------------------------------------------------------------------
 
 export interface CartCost {
   subtotalAmount: Money;
@@ -121,6 +157,9 @@ export interface CartLine {
   id: string;            // line GID
   quantity: number;
   merchandise: ProductVariant;
+  attributes: CartLineAttribute[];
+  /** Needed to render a name and link back to the PDP — `merchandise.title` is only the option value. */
+  product: { id: string; title: string; handle: string } | null;
   cost: {
     totalAmount: Money;
     amountPerQuantity: Money;
@@ -161,21 +200,67 @@ export interface Cart {
   updatedAt: string;
 }
 
+export interface CartLineAttribute {
+  key: string;
+  value: string;
+}
+
 export interface CartLineInput {
   merchandiseId: string; // ProductVariant GID
   quantity: number;
-  attributes?: { key: string; value: string }[];
+  attributes?: CartLineAttribute[];
+  /** SellingPlan GID. Passing it is what makes checkout authorise rather than capture. */
+  sellingPlanId?: string;
 }
 
 export interface CartLineUpdateInput {
   /** Existing CartLine.id */
   id: string;
   quantity: number;
+  attributes?: CartLineAttribute[];
 }
 
-// ---------------------------------------------------------------------------
+/**
+ * A policy layer over cart writes — vetoes or decorates a line before it is sent, and hears what
+ * landed and what left. Written for stock reservation, but a gift-with-purchase or bundling rule
+ * fits the same shape. Advisory only: a `before*` hook that throws counts as approval.
+ */
+export interface CartLineGuard {
+  /**
+   * Return the input, optionally decorated, to proceed; `null` to cancel. A decorated add is not
+   * merged into an existing line for the same variant, so it yields a line per add.
+   */
+  beforeAdd?(input: CartLineInput): MaybePromise<CartLineInput | null>;
+  /** Only increases are offered — a decrease is reported through `onReleased` instead. */
+  beforeIncrease?(line: CartLine, nextQuantity: number): MaybePromise<CartLineUpdateInput | null>;
+  /** Reporting only; cannot affect the cart. */
+  onLanded?(event: CartLineLandedEvent): void;
+  /** Units the cart no longer holds — one place for a guard to give reserved stock back. */
+  onReleased?(event: CartLineReleasedEvent): void;
+}
+
+export interface CartLineLandedEvent {
+  variantId: string;
+  quantity: number;
+  /** Null when the line could not be identified in the returned cart. */
+  line: CartLine | null;
+  cart: Cart;
+}
+
+export interface CartLineReleasedEvent {
+  variantId: string;
+  /** How many units left the cart. For a removal, the whole line. */
+  quantity: number;
+  /** `rejected` means the guard approved the write and Shopify refused it, so nothing was held. */
+  reason: 'decreased' | 'removed' | 'rejected';
+  /** The line as it was before the write. Null for a rejected add, which never became one. */
+  line: CartLine | null;
+  cart: Cart | null;
+}
+
+export type MaybePromise<T> = T | Promise<T>;
+
 // Customer
-// ---------------------------------------------------------------------------
 
 export interface Address {
   id?: string;
@@ -206,9 +291,7 @@ export interface CustomerAccessToken {
   expiresAt: string;
 }
 
-// ---------------------------------------------------------------------------
 // Orders
-// ---------------------------------------------------------------------------
 
 export interface OrderLineItem {
   title: string;
@@ -238,9 +321,7 @@ export interface Order {
   lineItems: OrderLineItem[];
 }
 
-// ---------------------------------------------------------------------------
 // Blogs / Articles
-// ---------------------------------------------------------------------------
 
 export interface Blog {
   id: string;
@@ -269,9 +350,7 @@ export interface Article {
   blog: Blog;
 }
 
-// ---------------------------------------------------------------------------
 // Pagination
-// ---------------------------------------------------------------------------
 
 export interface PageInfo {
   hasNextPage: boolean;
@@ -283,22 +362,18 @@ export interface PageInfo {
 export interface Connection<T> {
   nodes: T[];
   pageInfo: PageInfo;
-  /**
-   * Available filter facets for the current query — populated ONLY by
-   * `collections.products` (Storefront returns the facets valid for the
-   * collection given the applied `filters`). Each value's `input` is a JSON
-   * string you pass straight back in `ListOptions.filters`.
-   */
+  /** Facets valid for the current query. Populated ONLY by `collections.products`. */
   filters?: Filter[];
+  /** Populated ONLY by `collections.products`, so a screen can title itself from the same request. */
+  collection?: { handle: string; title: string };
+  /** Every match, not just the loaded window. Populated ONLY by `products.search`. */
+  totalCount?: number;
 }
 
-/**
- * A Storefront `ProductFilter` input. In practice you never build this by hand:
- * take a `FilterValue.input` string, `JSON.parse` it, and pass the objects here.
- */
+/** Never built by hand: `JSON.parse` a `FilterValue.input` string and pass the object here. */
 export type ProductFilter = Record<string, unknown>;
 
-/** One value inside a filter facet (e.g. "In stock", "$0–$50", "Color: Blue"). */
+/** One value inside a facet, e.g. "In stock", "$0–$50", "Color: Blue". */
 export interface FilterValue {
   id: string;
   label: string;
@@ -307,7 +382,7 @@ export interface FilterValue {
   input: string;
 }
 
-/** A filter facet returned by Storefront (Availability, Price, Product type, …). */
+/** A facet returned by Storefront: Availability, Price, Product type, … */
 export interface Filter {
   id: string;
   label: string;
@@ -322,7 +397,7 @@ export interface ListOptions {
   query?: string;        // Storefront search syntax
   sortKey?: string;      // e.g. 'TITLE', 'PRICE', 'CREATED'
   reverse?: boolean;
-  /** Storefront ProductFilter inputs (from FilterValue.input). Collection only. */
+  /** Honoured by `collections.products` and `products.search`; ignored by `products.list`. */
   filters?: ProductFilter[];
 }
 
@@ -482,7 +557,6 @@ export interface TileCreditAPI {
 
 // ---------------------------------------------------------------------------
 // Errors
-// ---------------------------------------------------------------------------
 
 export interface UserError {
   field: string[] | null;
@@ -499,14 +573,27 @@ export class ShopifyError extends Error {
   }
 }
 
-// ---------------------------------------------------------------------------
 // Top-level facade — namespace-shaped API surface
-// ---------------------------------------------------------------------------
 
 export interface ShopifyProductsAPI {
   list(opts?: ListOptions): Promise<Connection<Product>>;
   byHandle(handle: string): Promise<Product | null>;
   byId(id: string): Promise<Product | null>;
+  /**
+   * Resolves product GIDs in the order given, batched to stay under Shopify's query cost cap.
+   * Anything that does not resolve is dropped rather than returned as a hole.
+   */
+  byIds(ids: string[], opts?: { batchSize?: number; keepMissing?: false }): Promise<Product[]>;
+  /** As above, but keeps a positional `null` so the result lines up index-for-index with `ids`. */
+  byIds(
+    ids: string[],
+    opts: { batchSize?: number; keepMissing: true }
+  ): Promise<(Product | null)[]>;
+  /**
+   * Uses the `search` root rather than `products(query:)`, so the result also carries `totalCount`
+   * and `filters`. `sortKey` is `SearchSortKeys` — only `RELEVANCE` or `PRICE`, anything else
+   * throws; use `list({ query })` for the full `ProductSortKeys` set.
+   */
   search(query: string, opts?: Omit<ListOptions, 'query'>): Promise<Connection<Product>>;
   recommended(productId: string): Promise<Product[]>;
 }
@@ -518,15 +605,13 @@ export interface ShopifyCollectionsAPI {
 }
 
 export interface ShopifyCartAPI {
-  /** Create a new cart. Returns it with a fresh checkoutUrl. */
   create(input?: { lines?: CartLineInput[]; discountCodes?: string[] }): Promise<Cart>;
-  /** Fetch an existing cart by id. Returns null if it expired. */
+  /** Null if the cart expired. */
   get(cartId: string): Promise<Cart | null>;
   addLines(cartId: string, lines: CartLineInput[]): Promise<Cart>;
   updateLines(cartId: string, lines: CartLineUpdateInput[]): Promise<Cart>;
   removeLines(cartId: string, lineIds: string[]): Promise<Cart>;
   applyDiscountCodes(cartId: string, codes: string[]): Promise<Cart>;
-  /** Persist buyer identity (email, country, customerAccessToken). */
   setBuyerIdentity(
     cartId: string,
     identity: { email?: string; countryCode?: string; customerAccessToken?: string }
@@ -567,16 +652,11 @@ export interface ShopifyBlogsAPI {
   articleByHandle(blogHandle: string, articleHandle: string): Promise<Article | null>;
 }
 
-// ---------------------------------------------------------------------------
 // Wishlist (local-storage backed)
-// ---------------------------------------------------------------------------
 
 /**
- * Minimal storage contract the wishlist uses. Matches `window.localStorage`
- * signatures so it works on web out of the box. RN consumers pass
- * AsyncStorage; server-side consumers pass an in-memory shim.
- *
- * Async methods are supported — `refresh()` awaits `getItem`/`setItem`.
+ * Matches `window.localStorage` so web works out of the box; RN passes AsyncStorage. Async
+ * implementations are fine — every call site awaits.
  */
 export interface WishlistStorageAdapter {
   getItem(key: string): string | null | Promise<string | null>;
@@ -584,13 +664,7 @@ export interface WishlistStorageAdapter {
   removeItem(key: string): void | Promise<void>;
 }
 
-/**
- * A single wishlist entry. Persisted to storage with the small `basic`
- * snapshot for offline-first rendering; `product` is hydrated by
- * `refresh()` and is `null` if the product was deleted upstream.
- */
 export interface WishlistItem {
-  /** Shopify product GID (e.g. `gid://shopify/Product/123`). */
   productId: string;
   /** Snapshot stored so the UI can render before the network round-trip. */
   basic: {
@@ -599,39 +673,35 @@ export interface WishlistItem {
     image?: string;
     price?: Money;
   };
-  /** ms epoch — when the user added this item. */
+  /** ms epoch. */
   addedAt: number;
   /**
-   * Hydrated product from the Storefront API. Populated by `init()` /
-   * `refresh()`. `undefined` = not fetched yet, `null` = product was
-   * deleted upstream (the wishlist entry is auto-purged unless
-   * `keepDeleted: true` is passed to `refresh()`).
+   * Hydrated by `init()` / `refresh()`. `undefined` = not fetched yet, `null` = no longer resolves
+   * upstream (the entry is purged unless `keepDeleted` is set).
    */
   product?: Product | null;
 }
 
 export interface WishlistInitOptions {
-  /** Persistence backend. Defaults to `window.localStorage` on web, no-op elsewhere. */
+  /** Defaults to `window.localStorage` on web, no-op elsewhere. */
   storage?: WishlistStorageAdapter;
-  /** Storage key. Defaults to `tile:shopify:wishlist:v1`. */
+  /** Defaults to `tile:shopify:wishlist:v1`. */
   storageKey?: string;
-  /**
-   * Max product IDs per Storefront `nodes` request when hydrating.
-   * Default 100 — Shopify's query cost ceiling per call caps in this range.
-   */
+  /** Product IDs per hydration request. Default 100, near Shopify's query cost ceiling. */
   batchSize?: number;
-  /**
-   * Whether to fetch products immediately on init. Default `true`.
-   * Set false for lazy hydration (call `refresh()` on your own schedule).
-   */
+  /** Default `true`. False for lazy hydration — call `refresh()` on your own schedule. */
   hydrateOnInit?: boolean;
+  /**
+   * Forwarded to the hydration `refresh()`. Worth setting for a shopper-facing wishlist: `null`
+   * covers a merely *temporarily* unpublished product, which the default loses forever.
+   */
+  keepDeleted?: boolean;
 }
 
 export interface WishlistRefreshOptions {
   /**
-   * If true, deleted products stay in the list with `product: null` — the
-   * UI can then show a "no longer available" state. Default `false`:
-   * deleted entries are removed from storage.
+   * Keeps entries whose product no longer resolves, as `product: null`, so the UI can show a "no
+   * longer available" state. Default `false`: they are dropped from storage.
    */
   keepDeleted?: boolean;
 }
@@ -639,51 +709,42 @@ export interface WishlistRefreshOptions {
 export type WishlistChangeListener = (items: WishlistItem[]) => void;
 
 export interface ShopifyWishlistAPI {
-  /** Initialize the wishlist from storage; optionally hydrates products. */
   init(opts?: WishlistInitOptions): Promise<WishlistItem[]>;
-  /** Whether `init()` has completed. */
   isReady(): boolean;
-  /** Add an entry. Accepts a `Product` (snapshot extracted automatically) or a raw id + optional snapshot. */
+  /** A `Product` has its snapshot extracted automatically; a raw id can carry one. */
   add(product: Product): Promise<WishlistItem>;
   add(productId: string, basic?: WishlistItem['basic']): Promise<WishlistItem>;
-  /** Remove by product id. Returns true if the item was present. */
+  /** True if the item was present. */
   remove(productId: string): Promise<boolean>;
-  /** Add if absent, remove if present. Returns the resulting membership. */
+  /** Returns the resulting membership. */
   toggle(product: Product): Promise<boolean>;
   toggle(productId: string, basic?: WishlistItem['basic']): Promise<boolean>;
-  /** O(1) membership check. */
   has(productId: string): boolean;
-  /** Current items — newest first. */
+  /** Newest first. */
   list(): WishlistItem[];
-  /** Item count. */
   count(): number;
-  /** Empty the wishlist. */
   clear(): Promise<void>;
-  /**
-   * Re-fetch every product from the Storefront API in batches, updating
-   * each entry's `product` field. Deleted products (null upstream) are
-   * either purged or kept depending on `opts.keepDeleted`. Handles any
-   * count — 250, 1000, more — by chunking to `batchSize`.
-   */
+  /** Re-fetches every product in `batchSize` chunks, so any count is fine. */
   refresh(opts?: WishlistRefreshOptions): Promise<WishlistItem[]>;
-  /** Subscribe to list changes. Returns an unsubscribe function. */
+  /** Returns an unsubscribe function. */
   onChange(listener: WishlistChangeListener): () => void;
 }
 
 export interface ShopifyIntegration {
-  /** Initialize with store credentials. Must be called before any other method. */
+  /** Must be called before any other method. */
   init(config: ShopifyConfig): Promise<void>;
   isReady(): boolean;
-  /** Whether this is the mock build (true) or real Storefront-API build (false). */
+  /** True for the mock build, false for the real Storefront-API one. */
   readonly isMock: boolean;
 
   products: ShopifyProductsAPI;
+  variants: ShopifyVariantsAPI;
   collections: ShopifyCollectionsAPI;
   cart: ShopifyCartAPI;
   customer: ShopifyCustomerAPI;
   blogs: ShopifyBlogsAPI;
   wishlist: ShopifyWishlistAPI;
-  /** Shop-level settings (money format / currency), loaded at init. */
+  /** Money format and currency, loaded at init. */
   shop: {
     load(): Promise<{ moneyFormat: string | null; currencyCode: string | null }>;
     moneyFormat(): string | null;
@@ -692,7 +753,6 @@ export interface ShopifyIntegration {
      *  fallback when applying gift cards. */
     countryCode(): Promise<string | null>;
   };
-  /** Format a Money value using the shop's `moneyFormat` (with symbol fallback). */
   formatMoney(money: Money | null | undefined): string;
   /**
    * Tile Credit — customer wallet + gift-card mint + cart apply.

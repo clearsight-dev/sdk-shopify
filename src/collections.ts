@@ -1,7 +1,5 @@
-/**
- * Real Shopify collections via Storefront API.
- */
 import { request } from './client';
+import { normalizeProduct } from './products';
 import {
   COLLECTIONS_LIST_QUERY,
   COLLECTION_BY_HANDLE_QUERY,
@@ -22,32 +20,11 @@ interface CollectionsRaw {
 }
 interface CollectionRaw { collection: Collection | null }
 interface CollectionProductsRaw {
-  collection: { products: { nodes: any[]; pageInfo: PageInfo; filters?: Filter[] } } | null;
-}
-
-function normalizeProduct(p: any): Product {
-  return {
-    id: p.id,
-    handle: p.handle,
-    title: p.title,
-    description: p.description,
-    descriptionHtml: p.descriptionHtml,
-    vendor: p.vendor,
-    productType: p.productType,
-    tags: p.tags ?? [],
-    totalInventory: p.totalInventory ?? null,
-    availableForSale: p.availableForSale,
-    priceRange: { min: p.priceRange.minVariantPrice, max: p.priceRange.maxVariantPrice },
-    compareAtPriceRange: p.compareAtPriceRange?.minVariantPrice
-      ? { min: p.compareAtPriceRange.minVariantPrice, max: p.compareAtPriceRange.maxVariantPrice }
-      : null,
-    options: p.options ?? [],
-    variants: p.variants?.nodes ?? [],
-    images: p.images?.nodes ?? [],
-    featuredImage: p.featuredImage ?? null,
-    updatedAt: p.updatedAt,
-    createdAt: p.createdAt,
-  };
+  collection: {
+    handle: string;
+    title: string;
+    products: { nodes: any[]; pageInfo: PageInfo; filters?: Filter[] };
+  } | null;
 }
 
 export const collections: ShopifyCollectionsAPI = {
@@ -83,6 +60,7 @@ export const collections: ShopifyCollectionsAPI = {
       nodes: data.collection.products.nodes.map(normalizeProduct),
       pageInfo: data.collection.products.pageInfo,
       filters: data.collection.products.filters ?? [],
+      collection: { handle: data.collection.handle, title: data.collection.title },
     };
   },
 };
