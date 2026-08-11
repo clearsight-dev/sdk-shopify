@@ -2,6 +2,28 @@ export { shopify, shopify as default } from './shopify';
 export { formatMoney, applyMoneyFormat, shop } from './money';
 export { getMoneyFormat, getCurrencyCode } from './client';
 export {
+  DEFAULT_MESSAGES,
+  message,
+  getMessages,
+  setMessages,
+  patchMessages,
+  setMessageResolver,
+  limitExceededMessage,
+} from './messages';
+export {
+  setCartPolicy,
+  getCartPolicy,
+  maxLineItems,
+  projectedLineCount,
+  wouldExceedLineLimit,
+} from './cartPolicy';
+export {
+  classifyAuthFailure,
+  isOutOfStockError,
+  isUserErrorRejection,
+  userErrorsOf,
+} from './errors';
+export {
   TileCreditClient,
   configureTileCredit,
   getTileCreditClient,
@@ -22,9 +44,17 @@ export {
   useShopify,
   useCart,
   useWishlist,
+  useCustomer,
+  useCheckout,
+  useShopifyMessage,
   useTileCredit,
   type ShopifyProviderProps,
   type ShopifyEvent,
+  type ShopifyEventType,
+  type CartState,
+  type WishlistState,
+  type CustomerState,
+  type CheckoutState,
   type UseTileCreditOptions,
   type UseTileCreditState,
 } from './react';
