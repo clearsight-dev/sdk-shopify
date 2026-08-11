@@ -11,6 +11,54 @@ export interface ShopifyConfig {
   country?: string;
   /** BCP-47. Default `EN`. */
   language?: string;
+  /**
+   * Copy for the alerts the editor's Settings panel configures. Unset keys fall
+   * back to `translate`, then to the SDK defaults — see `messages.ts`.
+   */
+  messages?: AlertMessages;
+  /**
+   * Resolves an i18n key, e.g. the Translations workspace's
+   * `toast.added_to_cart`. Consulted only for keys `messages` does not set.
+   */
+  translate?: MessageResolver;
+  /** Cart rules the SDK enforces before it writes. */
+  cart?: CartPolicy;
+}
+
+// Alerts — the Settings panel's "Alerts & Toasts"
+
+/**
+ * One key per configurable alert. These are the contract with the editor: the
+ * Settings panel writes this shape, so the field order here mirrors the panel's
+ * Cart / Wishlist / Login / Checkout groups.
+ */
+export type AlertMessageKey =
+  | 'cart.added'
+  | 'cart.removed'
+  | 'cart.limitExceeded'
+  | 'cart.outOfStock'
+  | 'wishlist.added'
+  | 'wishlist.removed'
+  | 'wishlist.empty'
+  | 'auth.loginSuccess'
+  | 'auth.loginFailed'
+  | 'auth.loggedOut'
+  | 'auth.resetLinkSent'
+  | 'checkout.orderPlaced'
+  | 'checkout.paymentFailed';
+
+export type AlertMessages = Partial<Record<AlertMessageKey, string>>;
+
+/** `(key, fallback) => string`. Returning `''` or throwing keeps the fallback. */
+export type MessageResolver = (key: string, fallback: string) => string;
+
+export interface CartPolicy {
+  /**
+   * Most DISTINCT lines a cart may hold — the panel's "Cart Line Item Maximum
+   * Limit". Counts lines, not units, so quantity 30 of one variant is one line.
+   * Omit for no limit.
+   */
+  maxLineItems?: number;
 }
 
 // Money / images
@@ -260,7 +308,43 @@ export interface CartLineReleasedEvent {
 
 export type MaybePromise<T> = T | Promise<T>;
 
+/**
+ * Why a cart write did not land. `guard` is a `cartGuard` veto, `limit` the
+ * `maxLineItems` policy, `outOfStock` Shopify refusing an unsellable line.
+ * `no-cart` means there was nothing to write to.
+ */
+export type CartRejectionReason = 'guard' | 'limit' | 'outOfStock' | 'no-cart';
+
+/**
+ * The outcome of a cart write. Returned instead of a bare boolean so a caller
+ * can tell a guard veto from a limit refusal — both used to read as `false` —
+ * and can show `message` without owning a copy table.
+ *
+ * BREAKING from 0.1.x: `addLine` returned `boolean`. An object is always truthy,
+ * so `if (await addLine(...))` no longer detects a refusal — check `.ok`.
+ */
+export interface CartWriteResult {
+  ok: boolean;
+  /** Absent when `ok`. */
+  reason?: CartRejectionReason;
+  /** Resolved alert copy for the outcome. Absent for a silent guard veto. */
+  message?: string;
+  /** The cart as it stands after the write — unchanged on a refusal. */
+  cart: Cart | null;
+}
+
 // Customer
+
+/**
+ * Why a customer mutation failed, mapped from `customerUserErrors[].code`.
+ * `unknown` covers transport failures and codes with no alert of their own.
+ */
+export type AuthFailureReason =
+  | 'invalid-credentials'
+  | 'email-taken'
+  | 'invalid-input'
+  | 'account-disabled'
+  | 'unknown';
 
 export interface Address {
   id?: string;
@@ -754,6 +838,19 @@ export interface ShopifyIntegration {
     countryCode(): Promise<string | null>;
   };
   formatMoney(money: Money | null | undefined): string;
+  /**
+   * Alert copy + cart rules from the editor's Settings panel. `message()` is
+   * what the SDK itself resolves with, exposed so a screen can label its own
+   * UI (an empty-wishlist placeholder, say) from the same source.
+   */
+  alerts: {
+    message(key: AlertMessageKey): string;
+    /** Full swap — a cleared panel field falls back to the default. */
+    setMessages(messages?: AlertMessages | null): void;
+    /** Merge, for a Live Layer publish of a single field. */
+    patchMessages(messages: AlertMessages): void;
+    setPolicy(policy?: CartPolicy | null): void;
+  };
   /**
    * Tile Credit — customer wallet + gift-card mint + cart apply.
    * Configure once per customer session; see `TileCreditClient` docs
