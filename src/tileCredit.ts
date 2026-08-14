@@ -79,6 +79,9 @@ function statusToCode(status: number, bodyMsg?: string): TileCreditErrorCode {
 
 const DEFAULT_TIMEOUT = 20_000;
 
+/** Default tile-credit service base URL when the caller doesn't supply one. */
+export const DEFAULT_TILE_CREDIT_BASE_URL = 'https://tile-credit.apptile.io';
+
 export class TileCreditClient implements TileCreditAPI {
   private readonly baseUrl: string;
   private readonly token: string;
@@ -87,10 +90,10 @@ export class TileCreditClient implements TileCreditAPI {
   private readonly timeoutMs: number;
 
   constructor(config: TileCreditConfig) {
-    if (!config.baseUrl) throw new Error('TileCreditClient: baseUrl is required');
     if (!config.customerAccessToken) throw new Error('TileCreditClient: customerAccessToken is required');
     if (!config.shopDomain) throw new Error('TileCreditClient: shopDomain is required');
-    this.baseUrl = config.baseUrl.replace(/\/+$/, '');
+    // baseUrl is optional — falls back to the hosted tile-credit service.
+    this.baseUrl = (config.baseUrl || DEFAULT_TILE_CREDIT_BASE_URL).replace(/\/+$/, '');
     this.token = config.customerAccessToken;
     this.shopDomain = config.shopDomain.toLowerCase();
     this.signal = config.signal;

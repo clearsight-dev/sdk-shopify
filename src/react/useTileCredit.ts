@@ -9,6 +9,7 @@
  */
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { shopify } from '../shopify';
+import { DEFAULT_TILE_CREDIT_BASE_URL } from '../tileCredit';
 import { useCart } from './ShopifyProvider';
 import type {
   Cart,
@@ -18,8 +19,9 @@ import type {
 } from '../types';
 
 export interface UseTileCreditOptions {
-  /** Cloud Run URL, no trailing slash. */
-  baseUrl: string;
+  /** Tile-credit service URL, no trailing slash. Optional — defaults to the
+   *  hosted service (`https://tile-credit.apptile.io`). */
+  baseUrl?: string;
   /** `shcat_…` or classic Storefront customer token. `null` when signed out. */
   customerAccessToken: string | null;
   /** `{shop}.myshopify.com`. */
@@ -47,7 +49,7 @@ export interface UseTileCreditState {
 }
 
 export function useTileCredit(opts: UseTileCreditOptions): UseTileCreditState {
-  const { baseUrl = 'https://tile-credit.apptile.io', customerAccessToken, shopDomain, autoLoad = true } = opts;
+  const { baseUrl = DEFAULT_TILE_CREDIT_BASE_URL, customerAccessToken, shopDomain, autoLoad = true } = opts;
   const cartState = useCart();
 
   const [wallet, setWallet] = useState<TileCreditWallet | null>(null);

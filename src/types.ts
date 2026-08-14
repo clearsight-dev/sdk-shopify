@@ -598,7 +598,7 @@ export class TileCreditError extends Error {
 
 export interface TileCreditConfig {
   /** Cloud Run URL, no trailing slash. */
-  baseUrl: string;
+  baseUrl?: string;
   /** `shcat_…` (Customer Accounts API) OR classic Storefront customer token. */
   customerAccessToken: string;
   /** `{shop}.myshopify.com` — case-insensitive; lower-cased internally. */
