@@ -47,7 +47,7 @@ export interface UseTileCreditState {
 }
 
 export function useTileCredit(opts: UseTileCreditOptions): UseTileCreditState {
-  const { baseUrl, customerAccessToken, shopDomain, autoLoad = true } = opts;
+  const { baseUrl = 'https://tile-credit.apptile.io', customerAccessToken, shopDomain, autoLoad = true } = opts;
   const cartState = useCart();
 
   const [wallet, setWallet] = useState<TileCreditWallet | null>(null);
