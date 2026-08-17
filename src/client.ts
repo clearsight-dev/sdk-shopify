@@ -98,9 +98,54 @@ function deduplicateFragments(operation: string): string {
   return result;
 }
 
+
+/**
+ * Applies the configured market to every operation via `@inContext`.
+ *
+ * Without it Shopify localizes by the **buyer's IP**, so `config.country` — documented as "for
+ * IP-localized prices" and set by every app — reached the API nowhere. The visible symptom is a cart
+ * in the shopper's local currency while the catalogue is in the shop's: a $149 product became a
+ * `14600.0 INR` cart line, rendered `$14,600.00` because the shop's money format is a dollar
+ * template. Prices, carts and checkout have to agree on one market, and this is the only place all
+ * three pass through.
+ *
+ * Injected here rather than written into each document so a new query cannot forget it.
+ *
+ * Three shapes have to be handled: a named operation (`query Foo($x: ID!) {`), an anonymous one
+ * (`query {`), and shorthand (`{ cart(...) }`), which becomes `query @inContext(...) { … }`. A
+ * `fragment` must never be touched — directives are not valid there, and the documents in this SDK
+ * lead with their fragments.
+ */
+function withContext(operation: string): string {
+  const c = getConfig();
+  const country = (c.country || '').trim().toUpperCase();
+  const language = (c.language || '').trim().toUpperCase();
+  if (!country && !language) return operation;
+  // Already carries one — a caller that set its own market wins.
+  if (/@inContext\b/.test(operation)) return operation;
+
+  const args = [
+    country ? `country: ${country}` : null,
+    language ? `language: ${language}` : null,
+  ].filter(Boolean).join(', ');
+  const directive = `@inContext(${args})`;
+
+  // The operation definition, skipping any leading fragments.
+  const opMatch = operation.match(/(^|\n)[ \t]*(query|mutation)\b[ \t]*([A-Za-z_][A-Za-z0-9_]*)?[ \t]*(\([\s\S]*?\))?/);
+  if (opMatch) {
+    const insertAt = opMatch.index! + opMatch[0].length;
+    return `${operation.slice(0, insertAt)} ${directive}${operation.slice(insertAt)}`;
+  }
+
+  // Shorthand: no keyword at all, so give it one.
+  const braceAt = operation.indexOf('{');
+  if (braceAt === -1) return operation;
+  return `${operation.slice(0, braceAt)}query ${directive} ${operation.slice(braceAt)}`;
+}
+
 export async function request<T>(operation: string, variables?: Record<string, unknown>): Promise<T> {
   const c = getConfig();
-  const query = deduplicateFragments(operation);
+  const query = withContext(deduplicateFragments(operation));
   const res = await fetch(endpoint(), {
     method: 'POST',
     headers: {

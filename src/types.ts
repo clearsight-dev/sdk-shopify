@@ -199,6 +199,15 @@ export interface CartCost {
   subtotalAmount: Money;
   totalAmount: Money;
   totalTaxAmount: Money | null;
+  /**
+   * What checkout will actually charge NOW, which is not always the total: a deferred-payment
+   * product (a pre-order deposit, a subscription's first charge) leaves the rest due later. Equal to
+   * `totalAmount` on an ordinary cart.
+   *
+   * Optional rather than required even though Shopify declares it non-null, so a caller that reads
+   * it is forced to handle the cart that was fetched before this field was added to the fragment.
+   */
+  checkoutChargeAmount?: Money | null;
 }
 
 export interface CartLine {
@@ -238,6 +247,16 @@ export interface Cart {
   /** Shopify-hosted checkout URL — open in a webview to complete purchase. */
   checkoutUrl: string;
   totalQuantity: number;
+  /**
+   * The shopper's order note, carried through to the order. Null when none has been set — Shopify
+   * reports that as `''`, normalized here so "no note" is one value rather than two.
+   */
+  note: string | null;
+  /**
+   * The market and contact this cart is priced for. **`countryCode` is what fixes its currency**, and
+   * it is set when the cart is created — `@inContext` on a later read does not move it.
+   */
+  buyerIdentity: { countryCode: string | null; email: string | null; phone: string | null };
   lines: CartLine[];
   cost: CartCost;
   discountCodes: CartDiscountCode[];
@@ -707,6 +726,11 @@ export interface ShopifyCartAPI {
   applyGiftCardCodes(cartId: string, codes: string[]): Promise<Cart>;
   /** Remove gift cards by their AppliedGiftCard.id (NOT the raw code). */
   removeGiftCardCodes(cartId: string, appliedGiftCardIds: string[]): Promise<Cart>;
+  /**
+   * Set the shopper's order note. `null` clears it — on the wire that is `''`, because Shopify's
+   * argument is non-null and a cart with no note reads back as `''` rather than null.
+   */
+  updateNote(cartId: string, note: string | null): Promise<Cart>;
 }
 
 export interface ShopifyCustomerAPI {

@@ -1,10 +1,16 @@
 import type { Money } from './types';
-import { request, getMoneyFormat, setShopInfo } from './client';
+import { request, getMoneyFormat, getCurrencyCode, setShopInfo } from './client';
 import { SHOP_QUERY } from './queries';
 
 const SYMBOLS: Record<string, string> = {
   USD: '$', EUR: '€', GBP: '£', INR: '₹', JPY: '¥', CAD: '$', AUD: '$',
 };
+
+/**
+ * Symbols more than one currency uses. On a money that is not the shop's own, `$` alone repeats the
+ * very mistake the template path makes — so these carry their ISO code as well.
+ */
+const AMBIGUOUS_SYMBOLS = new Set(['$', '¥']);
 
 function group(intPart: string, sep: string): string {
   return intPart.replace(/\B(?=(\d{3})+(?!\d))/g, sep);
@@ -32,15 +38,32 @@ export function applyMoneyFormat(template: string, amount: number): string {
   return template.replace(/\{\{\s*([a-z_]+)\s*\}\}/gi, (_m, token) => renderAmount(amount, token));
 }
 
-/** Falls back to a leading currency symbol until the shop's template has loaded. */
+/**
+ * Falls back to a leading currency symbol until the shop's template has loaded — and for any money
+ * that is not in the shop's own currency.
+ *
+ * **The shop's `moneyFormat` hardcodes the shop's currency**: a USD store's is `${{amount}}`, with
+ * no token for the code. Applying it to a `Money` that carries another currency prints `$14,600.00`
+ * for `14600.0 INR` — a rupee amount wearing a dollar sign, which is worse than an unformatted
+ * number because it looks right. A cart's market is fixed when the cart is created, so a customer
+ * whose address puts them in another market really does get one of these.
+ */
 export function formatMoney(money: Money | null | undefined): string {
   if (!money) return '';
   const num = Number(money.amount);
   const template = getMoneyFormat();
-  if (template && !Number.isNaN(num)) return applyMoneyFormat(template, num);
+  const shopCurrency = getCurrencyCode();
+  // No code on either side means nothing to disagree about — the template is still the shop's own
+  // formatting, and is what renders before `shop.load()` resolves.
+  const isShopCurrency = !shopCurrency || !money.currencyCode || money.currencyCode === shopCurrency;
+  if (template && isShopCurrency && !Number.isNaN(num)) return applyMoneyFormat(template, num);
+
   const symbol = SYMBOLS[money.currencyCode] ?? `${money.currencyCode} `;
-  if (Number.isNaN(num)) return `${symbol}${money.amount}`;
-  return `${symbol}${num.toFixed(2)}`;
+  const suffix =
+    !isShopCurrency && AMBIGUOUS_SYMBOLS.has(symbol) ? ` ${money.currencyCode}` : '';
+  if (Number.isNaN(num)) return `${symbol}${money.amount}${suffix}`;
+  // Grouped the way the template would have grouped it — `14600.00` is hard to read as a price.
+  return `${symbol}${renderAmount(num, 'amount')}${suffix}`;
 }
 
 /** Shop's IP-localized country (e.g. `"US"`). Fetched once on demand and

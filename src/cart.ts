@@ -9,6 +9,7 @@ import {
   CART_LINES_ADD_MUTATION,
   CART_LINES_REMOVE_MUTATION,
   CART_LINES_UPDATE_MUTATION,
+  CART_NOTE_UPDATE_MUTATION,
 } from './queries';
 import type {
   Cart,
@@ -27,12 +28,21 @@ interface CartDiscPayload   { cartDiscountCodesUpdate: { cart: any; userErrors: 
 interface CartBuyPayload    { cartBuyerIdentityUpdate: { cart: any; userErrors: UserError[] } }
 interface CartGcAddPayload  { cartGiftCardCodesUpdate: { cart: any; userErrors: UserError[] } }
 interface CartGcRmPayload   { cartGiftCardCodesRemove: { cart: any; userErrors: UserError[] } }
+interface CartNotePayload   { cartNoteUpdate: { cart: any; userErrors: UserError[] } }
 
 function normalize(c: any): Cart {
   return {
     id: c.id,
     checkoutUrl: c.checkoutUrl,
     totalQuantity: c.totalQuantity,
+    // Shopify reports "no note" as an empty string; collapsed to null so callers have one falsy
+    // value to test rather than two.
+    note: c.note ? c.note : null,
+    buyerIdentity: {
+      countryCode: c.buyerIdentity?.countryCode ?? null,
+      email: c.buyerIdentity?.email ?? null,
+      phone: c.buyerIdentity?.phone ?? null,
+    },
     lines: (c.lines?.nodes ?? []).map((line: any) => ({
       id: line.id,
       quantity: line.quantity,
@@ -112,6 +122,20 @@ export const cart: ShopifyCartAPI = {
     });
     assertNoUserErrors('cartGiftCardCodesUpdate', data.cartGiftCardCodesUpdate.userErrors);
     return normalize(data.cartGiftCardCodesUpdate.cart);
+  },
+
+  /**
+   * The shopper's order note — the free-text box on the cart, read by the merchant on the order.
+   *
+   * Its own mutation rather than a cart attribute: attributes are key/value metadata for the app's
+   * own bookkeeping (Cart Hold's expiry stamp is one), while the note is content the shopper wrote.
+   */
+  async updateNote(cartId: string, note: string | null): Promise<Cart> {
+    // `?? ''` is load-bearing: the argument is `String!`, so a null variable fails the whole
+    // mutation rather than clearing the note.
+    const data = await request<CartNotePayload>(CART_NOTE_UPDATE_MUTATION, { cartId, note: note ?? '' });
+    assertNoUserErrors('cartNoteUpdate', data.cartNoteUpdate.userErrors);
+    return normalize(data.cartNoteUpdate.cart);
   },
 
   async removeGiftCardCodes(cartId: string, appliedGiftCardIds: string[]): Promise<Cart> {

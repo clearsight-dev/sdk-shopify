@@ -113,10 +113,13 @@ export const CART_FRAGMENT = /* GraphQL */ `
     id
     checkoutUrl
     totalQuantity
+    note
+    buyerIdentity { countryCode email phone }
     cost {
       subtotalAmount { ...MoneyFields }
       totalAmount { ...MoneyFields }
       totalTaxAmount { ...MoneyFields }
+      checkoutChargeAmount { ...MoneyFields }
     }
     discountCodes { code applicable }
     appliedGiftCards {
@@ -333,6 +336,25 @@ export const CART_DISCOUNT_CODES_UPDATE_MUTATION = /* GraphQL */ `
   ${CART_FRAGMENT}
   mutation CartDiscountCodesUpdate($cartId: ID!, $discountCodes: [String!]) {
     cartDiscountCodesUpdate(cartId: $cartId, discountCodes: $discountCodes) {
+      cart { ...CartFields }
+      userErrors { field message code }
+    }
+  }
+`;
+
+/**
+ * The shopper's order note. It rides the cart to the order, where the merchant reads it beside the
+ * line items — so it is content, not a cart attribute, and Shopify gives it its own mutation.
+ *
+ * **`note` is `String!`, not `String`.** Declaring the variable nullable is rejected outright with
+ * `Nullability mismatch on variable $note and argument note` — the whole mutation fails, so this is
+ * not a case that only shows up when clearing. Clearing is the empty string, which is also what a
+ * cart with no note reads back as.
+ */
+export const CART_NOTE_UPDATE_MUTATION = /* GraphQL */ `
+  ${CART_FRAGMENT}
+  mutation CartNoteUpdate($cartId: ID!, $note: String!) {
+    cartNoteUpdate(cartId: $cartId, note: $note) {
       cart { ...CartFields }
       userErrors { field message code }
     }

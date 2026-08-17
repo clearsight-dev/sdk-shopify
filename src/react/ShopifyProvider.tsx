@@ -86,6 +86,13 @@ interface CartState {
   removeLine:         (lineId: string) => Promise<void>;
   applyDiscountCodes: (codes: string[]) => Promise<void>;
   /**
+   * The shopper's order note, carried to the order. `null` clears it.
+   *
+   * Not debounced here — a note is typed and then committed (on blur, or a Save), and writing per
+   * keystroke would put a mutation on every character. The caller decides when it is done.
+   */
+  updateNote: (note: string | null) => Promise<void>;
+  /**
    * Attributes the order to a buyer and opens checkout signed in. `false` when there is no cart
    * yet. New customer accounts pass their Customer Account API token straight through.
    */
@@ -473,7 +480,10 @@ export function ShopifyProvider({
           const savedId = s ? await Promise.resolve(s.getItem(CART_STORAGE_KEY)) : null;
           let next: Cart | null = null;
           if (savedId) next = await shopify.cart.get(savedId);
+          // A stored cart predates this session, so it may have been created in another market.
+          if (next) next = await pinMarket(next);
           if (!next) {
+            // A cart created now is already in the configured market — `@inContext` saw to that.
             next = await shopify.cart.create();
             if (s) await Promise.resolve(s.setItem(CART_STORAGE_KEY, next.id));
           }
@@ -529,6 +539,37 @@ export function ShopifyProvider({
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  /**
+   * Moves a cart into the configured market when it is not already in it.
+   *
+   * `@inContext` fixes a cart's currency **at creation**, and nothing later moves it — a re-read in
+   * context returns the original currency (verified). So a cart restored from storage, or adopted
+   * from the shopper's other device, keeps whatever market it was born in: this store has 189 markets
+   * enabled, so a customer with an Indian address gets an INR cart while the app browses in USD.
+   * `cartBuyerIdentityUpdate` is the only lever — verified 14600.0 INR → 149.0 USD on one cart.
+   *
+   * **Guarded by a comparison, not a flag.** That mutation REPLACES the buyer identity rather than
+   * merging into it — an email set on the cart comes back null afterwards — so it must not run on a
+   * cart that is already correct. `email` and `phone` are re-sent because they are readable;
+   * a Storefront `customerAccessToken` is not readable back and cannot be preserved, which is why
+   * this only fires when the market genuinely differs.
+   *
+   * Failure is swallowed: a cart in the wrong currency still beats no cart.
+   */
+  const pinMarket = useCallback(async (next: Cart): Promise<Cart> => {
+    const country = config.country;
+    if (!country || !next.buyerIdentity) return next;
+    if ((next.buyerIdentity.countryCode ?? "").toUpperCase() === country.toUpperCase()) return next;
+    try {
+      return await shopify.cart.setBuyerIdentity(next.id, {
+        countryCode: country,
+        email: next.buyerIdentity.email ?? undefined,
+      });
+    } catch {
+      return next;
+    }
+  }, [config.country]);
 
   const persistCart = useCallback(async (next: Cart | null) => {
     setCart(next);
@@ -778,6 +819,19 @@ export function ShopifyProvider({
     }
   }, [cart, persistCart, serialize]);
 
+  const cartUpdateNote = useCallback(async (note: string | null) => {
+    if (!cart?.id) return;
+    setCartLoad(true);
+    try {
+      // Serialized with the line writes: a note landing between an add and its response would be
+      // applied to a cart the provider is about to replace, and the note would vanish.
+      const next = await serialize(() => shopify.cart.updateNote(cart.id, note));
+      await persistCart(next);
+    } finally {
+      setCartLoad(false);
+    }
+  }, [cart, persistCart, serialize]);
+
   const cartRefresh = useCallback(async (): Promise<Cart | null> => {
     if (!cart?.id) return null;
     const next = await shopify.cart.get(cart.id);
@@ -786,10 +840,12 @@ export function ShopifyProvider({
   }, [cart, persistCart]);
 
   const cartAdopt = useCallback(async (cartId: string): Promise<Cart | null> => {
-    const next = await shopify.cart.get(cartId);
+    // Adopted from the shopper's other device or the web store, so its market is not ours to assume.
+    const fetched = await shopify.cart.get(cartId);
+    const next = fetched ? await pinMarket(fetched) : null;
     if (next) await persistCart(next);
     return next;
-  }, [persistCart]);
+  }, [persistCart, pinMarket]);
 
   const cartReset = useCallback(async () => {
     const created = await shopify.cart.create();
@@ -957,6 +1013,7 @@ export function ShopifyProvider({
       updateLine:         cartUpdateLine,
       removeLine:         cartRemoveLine,
       applyDiscountCodes: cartApplyDiscounts,
+      updateNote: cartUpdateNote,
       setBuyerIdentity:   cartSetBuyerIdentity,
       refresh:            cartRefresh,
       adopt:              cartAdopt,
@@ -993,7 +1050,7 @@ export function ShopifyProvider({
     ready, error,
     // A new policy changes `cart.maxLineItems`, so the memo must see it.
     resolvedPolicy,
-    cart, cartLoading, cartAddLine, cartAddLines, cartUpdateLine, cartRemoveLine, cartApplyDiscounts, cartSetBuyerIdentity, cartRefresh, cartAdopt, cartReset,
+    cart, cartLoading, cartAddLine, cartAddLines, cartUpdateLine, cartRemoveLine, cartApplyDiscounts, cartUpdateNote, cartSetBuyerIdentity, cartRefresh, cartAdopt, cartReset,
     wlItems, wlHas, wlAdd, wlRemove, wlToggle, wlClear, wlRefresh,
     customer, token, authLoading, restoring, authLogin, authSignup, authLogout, authRecover, authRefresh,
     checkoutOrderPlaced, checkoutPaymentFailed,
