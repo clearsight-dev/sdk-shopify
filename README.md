@@ -31,11 +31,37 @@ const cart = await shopify.cart.create({ lines: [{ merchandiseId: 'gid://…', q
 |---|---|
 | `shopify.products`    | `list`, `byHandle`, `byId`, `search`, `recommended` |
 | `shopify.collections` | `list`, `byHandle`, `products` |
-| `shopify.cart`        | `create`, `get`, `addLines`, `updateLines`, `removeLines`, `applyDiscountCodes`, `setBuyerIdentity` |
+| `shopify.cart`        | `create`, `get`, `addLines`, `updateLines`, `removeLines`, `applyDiscountCodes`, `setBuyerIdentity`, `updateNote` |
 | `shopify.customer`    | `signup`, `login`, `logout`, `profile`, `updateProfile`, `recoverPassword`, `orders`, `orderById` |
 | `shopify.blogs`       | `list`, `byHandle`, `articles`, `articleByHandle` |
 | `shopify.wishlist`    | `init`, `add`, `remove`, `toggle`, `has`, `list`, `count`, `clear`, `refresh`, `onChange` |
 | `shopify.alerts`      | `message`, `setMessages`, `patchMessages`, `setPolicy` — see [Alerts & Toasts](#alerts--toasts) |
+
+### Cart note
+
+The shopper's order note — the free-text box on the cart, which the merchant reads beside the order. Distinct from cart *attributes*: attributes are the app's own bookkeeping, the note is content the shopper wrote.
+
+```ts
+const cart = await shopify.cart.updateNote(cartId, 'Leave at the back door');
+cart.note;                                           // 'Leave at the back door'
+(await shopify.cart.updateNote(cartId, null)).note;  // null — cleared
+```
+
+`cart.note` is `string | null` and never `''`. Shopify reports "no note" as an empty string, normalized here so there is one falsy value to test rather than two. Passing `null` clears it — on the wire that is `''`, because Shopify's `note` argument is `String!` and declaring the variable nullable is rejected outright.
+
+`cart.create()` takes no note; set it in a follow-up call once the cart exists.
+
+From React:
+
+```tsx
+const { cart, updateNote } = useCart();
+<TextInput
+  defaultValue={cart?.note ?? ''}
+  onBlur={e => updateNote(e.nativeEvent.text || null)}
+/>
+```
+
+The hook's `updateNote` is **not** debounced — a note is typed and then committed, so write it on blur or a Save, not per keystroke. It is serialized against the line writes (a note landing mid-`addLine` would be applied to a cart the provider is about to replace, and would vanish), no-ops when there is no cart yet, and emits no alert event.
 
 ### Wishlist — local-storage backed
 
