@@ -19,3 +19,11 @@ export {
   type UseTileCreditOptions,
   type UseTileCreditState,
 } from "./useTileCredit";
+export {
+  useCollectionProducts,
+  COLLECTION_PAGE_SIZE,
+  type CollectionSort,
+  type UseCollectionProductsOptions,
+  type CollectionProductsState,
+  type UseCollectionProductsResult,
+} from "./useCollectionProducts";

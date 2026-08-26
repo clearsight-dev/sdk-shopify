@@ -48,6 +48,8 @@ export {
   useCheckout,
   useShopifyMessage,
   useTileCredit,
+  useCollectionProducts,
+  COLLECTION_PAGE_SIZE,
   type ShopifyProviderProps,
   type ShopifyEvent,
   type ShopifyEventType,
@@ -57,4 +59,8 @@ export {
   type CheckoutState,
   type UseTileCreditOptions,
   type UseTileCreditState,
+  type CollectionSort,
+  type UseCollectionProductsOptions,
+  type CollectionProductsState,
+  type UseCollectionProductsResult,
 } from './react';
