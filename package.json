@@ -1,6 +1,6 @@
 {
-  "name": "@tiledev/sdk-shopify",
-  "version": "0.2.7",
+  "name": "@apptile/sdk-shopify",
+  "version": "0.3.0",
   "description": "Type-safe Shopify Storefront API client for React Native (web, iOS, Android). Products, collections, cart, customer session, blogs, a local-storage-backed wishlist, and configurable shopper alerts. Zero deps beyond fetch.",
   "license": "MIT",
   "sideEffects": false,
@@ -26,7 +26,7 @@
     "clean": "rm -rf dist",
     "build": "npm run clean && tsc -p tsconfig.json",
     "lint": "tsc --noEmit",
-    "test": "npm run build && node test/alerts.test.mjs && node test/provider.test.mjs"
+    "test": "npm run build && node test/alerts.test.mjs && node test/provider.test.mjs && node test/metafields.test.mjs"
   },
   "keywords": [
     "shopify",

@@ -23,6 +23,16 @@ export interface ShopifyConfig {
   translate?: MessageResolver;
   /** Cart rules the SDK enforces before it writes. */
   cart?: CartPolicy;
+  /**
+   * Product metafields to fetch alongside every product, read back as `product.metafields`.
+   * Each needs a Shopify metafield definition with storefront read access, or it comes back empty.
+   */
+  productMetafields?: MetafieldIdentifier[];
+}
+
+export interface MetafieldIdentifier {
+  namespace: string;
+  key: string;
 }
 
 // Alerts — the Settings panel's "Alerts & Toasts"
@@ -175,6 +185,12 @@ export interface Product {
    * types without the URLs, so this is `[]` there while `hasVideo` still holds.
    */
   media: ProductMedia[];
+  /**
+   * The metafields named by `ShopifyConfig.productMetafields`, keyed `namespace.key` — e.g.
+   * `product.metafields['custom.badge_text']`. Empty when none are configured, and a metafield the
+   * product doesn't carry (or whose definition denies storefront access) is simply absent.
+   */
+  metafields: Record<string, string>;
   /** ISO 8601. */
   updatedAt: string;
   createdAt: string;

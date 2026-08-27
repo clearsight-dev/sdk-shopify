@@ -31,6 +31,11 @@ export {
   centsToMoney,
   moneyToCents,
 } from './tileCredit';
+export {
+  setProductMetafields,
+  getProductMetafields,
+  productMetafield,
+} from './metafields';
 export { TileCreditError } from './types';
 export type * from './types';
 

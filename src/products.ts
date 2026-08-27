@@ -1,12 +1,13 @@
 import { request } from './client';
+import { normalizeMetafields } from './metafields';
 import { ShopifyError } from './types';
 import {
-  NODES_AS_PRODUCTS_QUERY,
-  SEARCH_PRODUCTS_QUERY,
-  PRODUCTS_LIST_QUERY,
-  PRODUCT_BY_HANDLE_QUERY,
-  PRODUCT_BY_ID_QUERY,
-  PRODUCT_RECOMMENDATIONS_QUERY,
+  nodesAsProductsQuery,
+  searchProductsQuery,
+  productsListQuery,
+  productByHandleQuery,
+  productByIdQuery,
+  productRecommendationsQuery,
 } from './queries';
 import type {
   Connection,
@@ -138,7 +139,7 @@ async function byIds(
 
   for (let i = 0; i < ids.length; i += batchSize) {
     const chunk = ids.slice(i, i + batchSize);
-    const data = await request<NodesRaw>(NODES_AS_PRODUCTS_QUERY, { ids: chunk });
+    const data = await request<NodesRaw>(nodesAsProductsQuery(), { ids: chunk });
     const nodes = Array.isArray(data.nodes) ? data.nodes : [];
     for (let j = 0; j < chunk.length; j++) {
       const node = nodes[j];
@@ -184,6 +185,7 @@ export function normalizeProduct(p: any): Product {
     mediaContentTypes: mediaTypes,
     hasVideo: mediaTypes.some((type: string) => VIDEO_CONTENT_TYPES.has(type)),
     media: toMedia(p.media?.nodes ?? []),
+    metafields: normalizeMetafields(p.metafields),
     updatedAt: p.updatedAt,
     createdAt: p.createdAt,
   };
@@ -191,7 +193,7 @@ export function normalizeProduct(p: any): Product {
 
 export const products: ShopifyProductsAPI = {
   async list(opts?: ListOptions): Promise<Connection<Product>> {
-    const data = await request<ProductsRaw>(PRODUCTS_LIST_QUERY, {
+    const data = await request<ProductsRaw>(productsListQuery(), {
       first: opts?.first ?? 20,
       after: opts?.after,
       query: opts?.query,
@@ -205,19 +207,19 @@ export const products: ShopifyProductsAPI = {
   },
 
   async byHandle(handle: string): Promise<Product | null> {
-    const data = await request<ProductRaw>(PRODUCT_BY_HANDLE_QUERY, { handle });
+    const data = await request<ProductRaw>(productByHandleQuery(), { handle });
     return data.product ? normalizeProduct(data.product) : null;
   },
 
   async byId(id: string): Promise<Product | null> {
-    const data = await request<ProductRaw>(PRODUCT_BY_ID_QUERY, { id });
+    const data = await request<ProductRaw>(productByIdQuery(), { id });
     return data.product ? normalizeProduct(data.product) : null;
   },
 
   byIds: byIds as ShopifyProductsAPI['byIds'],
 
   async search(query: string, opts?: Omit<ListOptions, 'query'>): Promise<Connection<Product>> {
-    const data = await request<SearchRaw>(SEARCH_PRODUCTS_QUERY, {
+    const data = await request<SearchRaw>(searchProductsQuery(), {
       query,
       first: opts?.first ?? 20,
       after: opts?.after,
@@ -236,7 +238,7 @@ export const products: ShopifyProductsAPI = {
   },
 
   async recommended(productId: string): Promise<Product[]> {
-    const data = await request<RecommendedRaw>(PRODUCT_RECOMMENDATIONS_QUERY, { productId });
+    const data = await request<RecommendedRaw>(productRecommendationsQuery(), { productId });
     return (data.productRecommendations ?? []).map(normalizeProduct);
   },
 };

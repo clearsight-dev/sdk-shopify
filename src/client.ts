@@ -1,4 +1,5 @@
 import { ShopifyConfig, ShopifyError, UserError } from './types';
+import { setProductMetafields } from './metafields';
 
 interface InternalState {
   config: ShopifyConfig | null;
@@ -29,6 +30,7 @@ export function setConfig(config: ShopifyConfig): void {
   if (!config.storeDomain) throw new Error('shopify.init: storeDomain is required');
   if (!config.storefrontAccessToken) throw new Error('shopify.init: storefrontAccessToken is required');
   state.config = config;
+  setProductMetafields(config.productMetafields);
 }
 
 export function getConfig(): ShopifyConfig {

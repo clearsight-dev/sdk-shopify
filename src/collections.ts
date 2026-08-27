@@ -3,7 +3,7 @@ import { normalizeProduct } from './products';
 import {
   COLLECTIONS_LIST_QUERY,
   COLLECTION_BY_HANDLE_QUERY,
-  COLLECTION_PRODUCTS_QUERY,
+  collectionProductsQuery,
 } from './queries';
 import type {
   Collection,
@@ -45,7 +45,7 @@ export const collections: ShopifyCollectionsAPI = {
   },
 
   async products(handle: string, opts?: ListOptions): Promise<Connection<Product>> {
-    const data = await request<CollectionProductsRaw>(COLLECTION_PRODUCTS_QUERY, {
+    const data = await request<CollectionProductsRaw>(collectionProductsQuery(), {
       handle,
       first: opts?.first ?? 20,
       after: opts?.after,

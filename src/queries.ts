@@ -1,3 +1,5 @@
+import { memoizeQuery, metafieldSelection } from './metafields';
+
 export const MONEY_FRAGMENT = /* GraphQL */ `
   fragment MoneyFields on MoneyV2 {
     amount
@@ -30,10 +32,16 @@ export const VARIANT_FRAGMENT = /* GraphQL */ `
   }
 `;
 
-/** Every product field except media, which is where the card and gallery selections diverge. */
-const PRODUCT_CORE_FRAGMENT = /* GraphQL */ `
+/**
+ * Every product field except media, which is where the card and gallery selections diverge.
+ *
+ * Built on demand rather than held as a const: the metafield selection depends on what the app
+ * configured, which happens after this module is imported.
+ */
+const productCoreFragment = () => /* GraphQL */ `
   ${VARIANT_FRAGMENT}
   fragment ProductCoreFields on Product {
+    ${metafieldSelection()}
     id
     handle
     title
@@ -67,16 +75,16 @@ const PRODUCT_CORE_FRAGMENT = /* GraphQL */ `
  * reduced to content types, which is all a grid asks of it (the play badge), rather than every
  * product in the grid carrying video sources and preview images. `ProductFields` has both.
  */
-export const PRODUCT_CARD_FRAGMENT = /* GraphQL */ `
-  ${PRODUCT_CORE_FRAGMENT}
+export const productCardFragment = () => /* GraphQL */ `
+  ${productCoreFragment()}
   fragment ProductCardFields on Product {
     ...ProductCoreFields
     media(first: 250) { nodes { mediaContentType } }
   }
 `;
 
-export const PRODUCT_FRAGMENT = /* GraphQL */ `
-  ${PRODUCT_CORE_FRAGMENT}
+export const productFragment = () => /* GraphQL */ `
+  ${productCoreFragment()}
   fragment ProductFields on Product {
     ...ProductCoreFields
     # Videos are appended after images, so a small window misses them entirely.
@@ -182,36 +190,36 @@ export const CUSTOMER_FRAGMENT = /* GraphQL */ `
 
 // Operations
 
-export const PRODUCTS_LIST_QUERY = /* GraphQL */ `
-  ${PRODUCT_FRAGMENT}
+export const productsListQuery = memoizeQuery(() => /* GraphQL */ `
+  ${productFragment()}
   query Products($first: Int!, $after: String, $query: String, $sortKey: ProductSortKeys, $reverse: Boolean) {
     products(first: $first, after: $after, query: $query, sortKey: $sortKey, reverse: $reverse) {
       nodes { ...ProductFields }
       pageInfo { hasNextPage hasPreviousPage startCursor endCursor }
     }
   }
-`;
+`);
 
-export const PRODUCT_BY_HANDLE_QUERY = /* GraphQL */ `
-  ${PRODUCT_FRAGMENT}
+export const productByHandleQuery = memoizeQuery(() => /* GraphQL */ `
+  ${productFragment()}
   query ProductByHandle($handle: String!) {
     product(handle: $handle) { ...ProductFields }
   }
-`;
+`);
 
-export const PRODUCT_BY_ID_QUERY = /* GraphQL */ `
-  ${PRODUCT_FRAGMENT}
+export const productByIdQuery = memoizeQuery(() => /* GraphQL */ `
+  ${productFragment()}
   query ProductById($id: ID!) {
     product(id: $id) { ...ProductFields }
   }
-`;
+`);
 
-export const PRODUCT_RECOMMENDATIONS_QUERY = /* GraphQL */ `
-  ${PRODUCT_CARD_FRAGMENT}
+export const productRecommendationsQuery = memoizeQuery(() => /* GraphQL */ `
+  ${productCardFragment()}
   query Recommended($productId: ID!) {
     productRecommendations(productId: $productId) { ...ProductCardFields }
   }
-`;
+`);
 
 export const COLLECTIONS_LIST_QUERY = /* GraphQL */ `
   ${COLLECTION_FRAGMENT}
@@ -230,8 +238,8 @@ export const COLLECTION_BY_HANDLE_QUERY = /* GraphQL */ `
   }
 `;
 
-export const COLLECTION_PRODUCTS_QUERY = /* GraphQL */ `
-  ${PRODUCT_CARD_FRAGMENT}
+export const collectionProductsQuery = memoizeQuery(() => /* GraphQL */ `
+  ${productCardFragment()}
   query CollectionProducts($handle: String!, $first: Int!, $after: String, $sortKey: ProductCollectionSortKeys, $reverse: Boolean, $filters: [ProductFilter!]) {
     collection(handle: $handle) {
       handle
@@ -248,10 +256,10 @@ export const COLLECTION_PRODUCTS_QUERY = /* GraphQL */ `
       }
     }
   }
-`;
+`);
 
-export const SEARCH_PRODUCTS_QUERY = /* GraphQL */ `
-  ${PRODUCT_CARD_FRAGMENT}
+export const searchProductsQuery = memoizeQuery(() => /* GraphQL */ `
+  ${productCardFragment()}
   query SearchProducts(
     $query: String!
     $first: Int!
@@ -283,7 +291,7 @@ export const SEARCH_PRODUCTS_QUERY = /* GraphQL */ `
       }
     }
   }
-`;
+`);
 
 export const CART_CREATE_MUTATION = /* GraphQL */ `
   ${CART_FRAGMENT}
@@ -600,15 +608,15 @@ export const BLOG_ARTICLE_BY_HANDLE_QUERY = /* GraphQL */ `
 // Wishlist — batch product hydration by ID
 
 /** Deleted or access-denied products come back as `null`, position-preserved. */
-export const NODES_AS_PRODUCTS_QUERY = /* GraphQL */ `
-  ${PRODUCT_CARD_FRAGMENT}
+export const nodesAsProductsQuery = memoizeQuery(() => /* GraphQL */ `
+  ${productCardFragment()}
   query WishlistNodes($ids: [ID!]!) {
     nodes(ids: $ids) {
       __typename
       ... on Product { ...ProductCardFields }
     }
   }
-`;
+`);
 
 export const SHOP_QUERY = /* GraphQL */ `
   query ShopInfo {

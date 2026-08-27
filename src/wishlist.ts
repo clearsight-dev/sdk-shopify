@@ -2,7 +2,7 @@
 // Init rehydrates from it instantly, then background-refreshes the full products.
 import { request } from './client';
 import { normalizeProduct } from './products';
-import { NODES_AS_PRODUCTS_QUERY } from './queries';
+import { nodesAsProductsQuery } from './queries';
 import type {
   Product,
   ShopifyWishlistAPI,
@@ -111,7 +111,7 @@ async function fetchProductsByIds(ids: string[]): Promise<Array<Product | null>>
   const out: Array<Product | null> = [];
   for (let i = 0; i < ids.length; i += state.batchSize) {
     const chunk = ids.slice(i, i + state.batchSize);
-    const data = await request<NodesResponse>(NODES_AS_PRODUCTS_QUERY, { ids: chunk });
+    const data = await request<NodesResponse>(nodesAsProductsQuery(), { ids: chunk });
     const nodes = Array.isArray(data.nodes) ? data.nodes : [];
     for (let j = 0; j < chunk.length; j++) {
       const node = nodes[j];
