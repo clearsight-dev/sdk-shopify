@@ -1,4 +1,4 @@
-# @apptile/sdk-shopify
+# @tiledev/sdk-shopify
 
 Type-safe Shopify Storefront API client. Zero deps beyond `fetch`.
 
@@ -7,13 +7,13 @@ Works in any JavaScript runtime — Node, browsers, React Native, Cloudflare Wor
 Optional React helpers (provider + hooks) ship under a subpath so you only pay for `react` if you use them.
 
 ```bash
-npm i @apptile/sdk-shopify
+npm i @tiledev/sdk-shopify
 ```
 
 ## Pure SDK (framework-agnostic)
 
 ```ts
-import { shopify } from '@apptile/sdk-shopify';
+import { shopify } from '@tiledev/sdk-shopify';
 
 await shopify.init({
   storeDomain: 'my-store.myshopify.com',
@@ -80,7 +80,7 @@ shopify.wishlist.onChange(items => …);  // subscribe
 ## Optional React helper
 
 ```ts
-import { ShopifyProvider, useShopify, useCart, useWishlist } from '@apptile/sdk-shopify/react';
+import { ShopifyProvider, useShopify, useCart, useWishlist } from '@tiledev/sdk-shopify/react';
 ```
 
 Wrap your app once — one provider gives you SDK readiness + cart state + wishlist state:
@@ -203,7 +203,7 @@ const { reportOrderPlaced, reportPaymentFailed } = useCheckout();
 Customer wallet + gift-card mint + one-shot apply to a Shopify cart.
 
 ```ts
-import {shopify, centsToMoney} from '@apptile/sdk-shopify';
+import {shopify, centsToMoney} from '@tiledev/sdk-shopify';
 
 // Configure once per signed-in customer (rebuild on logout / new customer).
 shopify.tileCredit.configure({
@@ -226,7 +226,7 @@ const {redeemed, cart} = await shopify.tileCredit.redeemAndApplyToCart({
 React hook:
 
 ```tsx
-import {useTileCredit} from '@apptile/sdk-shopify/react';
+import {useTileCredit} from '@tiledev/sdk-shopify/react';
 
 function WalletScreen() {
   const {wallet, config, redeemAndApply, refresh, loading, error} = useTileCredit({
@@ -261,7 +261,7 @@ import type {
   TileCreditRedeemInput, TileCreditRedeemResult,
   TileCreditError, TileCreditErrorCode,
   AppliedGiftCard,
-} from '@apptile/sdk-shopify';
+} from '@tiledev/sdk-shopify';
 ```
 
 ## License

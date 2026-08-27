@@ -35,10 +35,10 @@ export { TileCreditError } from './types';
 export type * from './types';
 
 // React helpers re-exported from the ROOT entry so consumers can write
-//   import { useShopify, useTileCredit } from '@apptile/sdk-shopify'
+//   import { useShopify, useTileCredit } from '@tiledev/sdk-shopify'
 // without paying for the `/react` subpath — the tile-packet-bundler only
 // builds a single per-package bundle per platform, so requests to
-// `@apptile/sdk-shopify/react` return no bundle on web preview.
+// `@tiledev/sdk-shopify/react` return no bundle on web preview.
 export {
   ShopifyProvider,
   useShopify,
