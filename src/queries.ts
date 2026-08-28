@@ -122,6 +122,7 @@ export const CART_FRAGMENT = /* GraphQL */ `
     checkoutUrl
     totalQuantity
     note
+    attributes { key value }
     buyerIdentity { countryCode email phone }
     cost {
       subtotalAmount { ...MoneyFields }
@@ -359,6 +360,16 @@ export const CART_DISCOUNT_CODES_UPDATE_MUTATION = /* GraphQL */ `
  * not a case that only shows up when clearing. Clearing is the empty string, which is also what a
  * cart with no note reads back as.
  */
+export const CART_ATTRIBUTES_UPDATE_MUTATION = /* GraphQL */ `
+  ${CART_FRAGMENT}
+  mutation CartAttributesUpdate($cartId: ID!, $attributes: [AttributeInput!]!) {
+    cartAttributesUpdate(cartId: $cartId, attributes: $attributes) {
+      cart { ...CartFields }
+      userErrors { field message code }
+    }
+  }
+`;
+
 export const CART_NOTE_UPDATE_MUTATION = /* GraphQL */ `
   ${CART_FRAGMENT}
   mutation CartNoteUpdate($cartId: ID!, $note: String!) {

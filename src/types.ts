@@ -269,6 +269,12 @@ export interface Cart {
    */
   note: string | null;
   /**
+   * Cart-level metadata, carried onto the order as `customAttributes`. Distinct from a line's
+   * `attributes`: these describe the cart rather than one item, and are what a discount function
+   * or an order webhook can key on. Empty when none have been set.
+   */
+  attributes: CartAttribute[];
+  /**
    * The market and contact this cart is priced for. **`countryCode` is what fixes its currency**, and
    * it is set when the cart is created — `@inContext` on a later read does not move it.
    */
@@ -283,10 +289,21 @@ export interface Cart {
   updatedAt: string;
 }
 
-export interface CartLineAttribute {
+/**
+ * A key/value pair on a cart or on one of its lines.
+ *
+ * Cart-level pairs ride through to the order as its `customAttributes`, which is where a Shopify
+ * Function or an order webhook reads them. That makes them load-bearing rather than decorative:
+ * an app-only discount that gates on one is simply not applied when it is missing, and the
+ * shopper sees the code rejected with no indication why.
+ */
+export interface CartAttribute {
   key: string;
   value: string;
 }
+
+/** The same pair, named for its line-scoped use. Kept so existing imports keep resolving. */
+export type CartLineAttribute = CartAttribute;
 
 export interface CartLineInput {
   merchandiseId: string; // ProductVariant GID
@@ -724,7 +741,23 @@ export interface ShopifyCollectionsAPI {
 }
 
 export interface ShopifyCartAPI {
-  create(input?: { lines?: CartLineInput[]; discountCodes?: string[] }): Promise<Cart>;
+  /**
+   * `attributes` and `buyerIdentity` are accepted HERE and not only afterwards because both are
+   * read at moments a later write cannot reach: a discount function runs against the cart as it
+   * stands, and `buyerIdentity.countryCode` fixes the cart's currency at creation and does not
+   * move again.
+   */
+  create(input?: {
+    lines?: CartLineInput[];
+    discountCodes?: string[];
+    attributes?: CartAttribute[];
+    buyerIdentity?: {
+      email?: string;
+      phone?: string;
+      countryCode?: string;
+      customerAccessToken?: string;
+    };
+  }): Promise<Cart>;
   /** Null if the cart expired. */
   get(cartId: string): Promise<Cart | null>;
   addLines(cartId: string, lines: CartLineInput[]): Promise<Cart>;
@@ -747,6 +780,11 @@ export interface ShopifyCartAPI {
    * argument is non-null and a cart with no note reads back as `''` rather than null.
    */
   updateNote(cartId: string, note: string | null): Promise<Cart>;
+  /**
+   * Set the cart's attributes. Shopify REPLACES the whole set rather than merging, so pass every
+   * pair that should survive, not just the one being changed.
+   */
+  updateAttributes(cartId: string, attributes: CartAttribute[]): Promise<Cart>;
 }
 
 export interface ShopifyCustomerAPI {

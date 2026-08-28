@@ -1,5 +1,6 @@
 import { request, assertNoUserErrors } from './client';
 import {
+  CART_ATTRIBUTES_UPDATE_MUTATION,
   CART_BUYER_IDENTITY_UPDATE_MUTATION,
   CART_CREATE_MUTATION,
   CART_DISCOUNT_CODES_UPDATE_MUTATION,
@@ -29,6 +30,7 @@ interface CartBuyPayload    { cartBuyerIdentityUpdate: { cart: any; userErrors: 
 interface CartGcAddPayload  { cartGiftCardCodesUpdate: { cart: any; userErrors: UserError[] } }
 interface CartGcRmPayload   { cartGiftCardCodesRemove: { cart: any; userErrors: UserError[] } }
 interface CartNotePayload   { cartNoteUpdate: { cart: any; userErrors: UserError[] } }
+interface CartAttrPayload   { cartAttributesUpdate: { cart: any; userErrors: UserError[] } }
 
 function normalize(c: any): Cart {
   return {
@@ -38,6 +40,7 @@ function normalize(c: any): Cart {
     // Shopify reports "no note" as an empty string; collapsed to null so callers have one falsy
     // value to test rather than two.
     note: c.note ? c.note : null,
+    attributes: c.attributes ?? [],
     buyerIdentity: {
       countryCode: c.buyerIdentity?.countryCode ?? null,
       email: c.buyerIdentity?.email ?? null,
@@ -61,9 +64,19 @@ function normalize(c: any): Cart {
 
 export const cart: ShopifyCartAPI = {
   async create(input): Promise<Cart> {
+    /**
+     * Built key by key rather than spreading `input`, so an unknown field cannot reach Shopify and
+     * fail the whole mutation — but every key `CartInput` accepts and a caller can set belongs
+     * here. It once carried only `lines` and `discountCodes`, and the two it dropped were both
+     * ones no later write can substitute for: an attribute a discount function needs at pricing
+     * time, and the `countryCode` that fixes the cart's currency. Neither failure surfaced as an
+     * error — the cart came back fine, just without them.
+     */
     const payload = {
       lines: input?.lines,
       discountCodes: input?.discountCodes,
+      attributes: input?.attributes,
+      buyerIdentity: input?.buyerIdentity,
     };
     const data = await request<CartCreatePayload>(CART_CREATE_MUTATION, { input: payload });
     assertNoUserErrors('cartCreate', data.cartCreate.userErrors);
@@ -136,6 +149,14 @@ export const cart: ShopifyCartAPI = {
     const data = await request<CartNotePayload>(CART_NOTE_UPDATE_MUTATION, { cartId, note: note ?? '' });
     assertNoUserErrors('cartNoteUpdate', data.cartNoteUpdate.userErrors);
     return normalize(data.cartNoteUpdate.cart);
+  },
+
+  async updateAttributes(cartId: string, attributes): Promise<Cart> {
+    // Shopify replaces the set wholesale, so this is a write of the final list, not a merge into
+    // the existing one. Callers holding a cart should send its current attributes plus theirs.
+    const data = await request<CartAttrPayload>(CART_ATTRIBUTES_UPDATE_MUTATION, { cartId, attributes });
+    assertNoUserErrors('cartAttributesUpdate', data.cartAttributesUpdate.userErrors);
+    return normalize(data.cartAttributesUpdate.cart);
   },
 
   async removeGiftCardCodes(cartId: string, appliedGiftCardIds: string[]): Promise<Cart> {

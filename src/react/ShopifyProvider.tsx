@@ -18,6 +18,7 @@ import type {
   AlertMessages,
   Cart,
   CartLine,
+  CartAttribute,
   CartLineAttribute,
   CartLineGuard,
   CartLineInput,
@@ -276,6 +277,16 @@ export interface ShopifyProviderProps {
   translate?: MessageResolver;
   /** Cart rules. Live-updatable for the same reason. */
   cartPolicy?: CartPolicy;
+  /**
+   * Attributes stamped on every cart this provider creates, and backfilled onto a stored cart that
+   * predates them. They reach the order as its `customAttributes`.
+   *
+   * On the provider because the cart is created here — during hydration, on the first add, and on
+   * reset — with no screen involved, so a caller has nowhere else to set them. A host that needs
+   * the order to identify the app it came from (an app-only discount function, an order webhook)
+   * sets it here or the cart goes out anonymous.
+   */
+  cartAttributes?: CartAttribute[];
 }
 
 function defaultStorage(): WishlistStorageAdapter | null {
@@ -295,6 +306,7 @@ export function ShopifyProvider({
   messages,
   translate,
   cartPolicy,
+  cartAttributes,
 }: ShopifyProviderProps) {
   const [ready, setReady]           = useState(false);
   const [error, setError]           = useState<string | null>(null);
@@ -481,10 +493,10 @@ export function ShopifyProvider({
           let next: Cart | null = null;
           if (savedId) next = await shopify.cart.get(savedId);
           // A stored cart predates this session, so it may have been created in another market.
-          if (next) next = await pinMarket(next);
+          if (next) next = await applyCartAttributes(await pinMarket(next));
           if (!next) {
             // A cart created now is already in the configured market — `@inContext` saw to that.
-            next = await shopify.cart.create();
+            next = await shopify.cart.create({ attributes: cartAttrsRef.current });
             if (s) await Promise.resolve(s.setItem(CART_STORAGE_KEY, next.id));
           }
           if (mounted) setCart(next);
@@ -557,6 +569,36 @@ export function ShopifyProvider({
    *
    * Failure is swallowed: a cart in the wrong currency still beats no cart.
    */
+  /**
+   * In a ref so the cart callbacks keep their identity when the host passes a new array each
+   * render — the same reason `cartGuard` is held this way.
+   */
+  const cartAttrsRef = useRef<CartAttribute[] | undefined>(cartAttributes);
+  cartAttrsRef.current = cartAttributes;
+
+  /**
+   * Backfills the configured attributes onto a cart that is missing them.
+   *
+   * A stored cart outlives the build that made it, so a shopper who had a cart before these were
+   * configured would otherwise keep an attribute-less cart indefinitely — and cart ids persist for
+   * weeks. Existing pairs win: only keys the cart does not already carry are added, so a value the
+   * cart set for itself is never overwritten by a default.
+   *
+   * Failure is swallowed, as in `pinMarket`: a cart missing an attribute still beats no cart.
+   */
+  const applyCartAttributes = useCallback(async (next: Cart): Promise<Cart> => {
+    const wanted = cartAttrsRef.current;
+    if (!wanted?.length) return next;
+    const have = new Set((next.attributes ?? []).map((a) => a.key));
+    const missing = wanted.filter((a) => !have.has(a.key));
+    if (!missing.length) return next;
+    try {
+      return await shopify.cart.updateAttributes(next.id, [...(next.attributes ?? []), ...missing]);
+    } catch {
+      return next;
+    }
+  }, []);
+
   const pinMarket = useCallback(async (next: Cart): Promise<Cart> => {
     const country = config.country;
     if (!country || !next.buyerIdentity) return next;
@@ -581,7 +623,7 @@ export function ShopifyProvider({
 
   const ensureCartId = useCallback(async (): Promise<string> => {
     if (cart?.id) return cart.id;
-    const created = await shopify.cart.create();
+    const created = await shopify.cart.create({ attributes: cartAttrsRef.current });
     await persistCart(created);
     return created.id;
   }, [cart, persistCart]);
@@ -842,13 +884,13 @@ export function ShopifyProvider({
   const cartAdopt = useCallback(async (cartId: string): Promise<Cart | null> => {
     // Adopted from the shopper's other device or the web store, so its market is not ours to assume.
     const fetched = await shopify.cart.get(cartId);
-    const next = fetched ? await pinMarket(fetched) : null;
+    const next = fetched ? await applyCartAttributes(await pinMarket(fetched)) : null;
     if (next) await persistCart(next);
     return next;
-  }, [persistCart, pinMarket]);
+  }, [persistCart, pinMarket, applyCartAttributes]);
 
   const cartReset = useCallback(async () => {
-    const created = await shopify.cart.create();
+    const created = await shopify.cart.create({ attributes: cartAttrsRef.current });
     await persistCart(created);
   }, [persistCart]);
 
