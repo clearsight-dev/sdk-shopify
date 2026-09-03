@@ -1,5 +1,5 @@
 {
-  "name": "@apptile/sdk-shopify",
+  "name": "@tiledev/sdk-shopify",
   "version": "0.4.0",
   "description": "Type-safe Shopify Storefront API client for React Native (web, iOS, Android). Products, collections, cart, customer session, blogs, a local-storage-backed wishlist, and configurable shopper alerts. Zero deps beyond fetch.",
   "license": "MIT",
