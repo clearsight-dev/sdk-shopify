@@ -341,9 +341,20 @@ export const CART_LINES_REMOVE_MUTATION = /* GraphQL */ `
   }
 `;
 
+/**
+ * The cart's discount codes — the whole set, not an addition: this REPLACES whatever the cart
+ * carries, so a caller adding one has to send the existing ones back alongside it.
+ *
+ * **`discountCodes` is `[String!]!`, not `[String!]`.** Same trap as `$note` below, and it bit
+ * harder because it is less obviously a required field: a nullable variable is rejected outright
+ * with `Nullability mismatch on variable $discountCodes and argument discountCodes
+ * ([String!] / [String!]!)`, and Shopify refuses the document before reading its variables — so
+ * EVERY code failed, valid or not, on every app built on this SDK. Clearing the set is `[]`, which
+ * is a value rather than a null, so nothing is lost by requiring it.
+ */
 export const CART_DISCOUNT_CODES_UPDATE_MUTATION = /* GraphQL */ `
   ${CART_FRAGMENT}
-  mutation CartDiscountCodesUpdate($cartId: ID!, $discountCodes: [String!]) {
+  mutation CartDiscountCodesUpdate($cartId: ID!, $discountCodes: [String!]!) {
     cartDiscountCodesUpdate(cartId: $cartId, discountCodes: $discountCodes) {
       cart { ...CartFields }
       userErrors { field message code }
