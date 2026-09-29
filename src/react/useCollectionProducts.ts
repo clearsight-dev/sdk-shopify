@@ -10,6 +10,9 @@
  *
  * Every response is checked against the request that is current (`requestId`), so a page resolving
  * after the sort or filters changed cannot merge into the new list.
+ *
+ * It also holds the shopper's filter selection (`setFilters`), as the `FilterValue.input` strings a
+ * filter sheet works with. The hook parses them into `ProductFilter`s itself, so no app repeats that.
  */
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { shopify } from '../shopify';
@@ -29,7 +32,11 @@ export interface UseCollectionProductsOptions {
   handle: string | null | undefined;
   /** Storefront sort. Omit for the merchant's own collection order. */
   sort?: CollectionSort;
-  /** Shopify's own product filters — a `FilterValue.input` parsed and handed back, never hand-built. */
+  /**
+   * Filters the app always applies, e.g. in stock only. Shopify's own product filters: a
+   * `FilterValue.input` parsed and handed back, never hand-built. The shopper's selection
+   * (`setFilters`) is applied on top.
+   */
   filters?: ProductFilter[];
   pageSize?: number;
   /**
@@ -55,7 +62,34 @@ export interface CollectionProductsState {
 
 export interface UseCollectionProductsResult extends CollectionProductsState {
   loadMore: () => void;
+  /** Re-reads from the first page. The name for an error state's button. */
   retry: () => void;
+  /** Re-reads from the first page, like `retry`. The name for pull-to-refresh. */
+  refresh: () => void;
+  /**
+   * The shopper's filter selection: the `input` strings of the `availableFilters` values they picked,
+   * as a filter sheet holds them. It belongs to the collection it was made on, so a new `handle`
+   * starts with none.
+   */
+  selectedFilters: string[];
+  /** Replace the selection. An input that isn't a Shopify filter (unparseable JSON) is dropped. */
+  setFilters: (inputs: string[]) => void;
+  clearFilters: () => void;
+  /** True while the shopper has at least one filter selected. */
+  filterActive: boolean;
+}
+
+/** One stable empty selection, so a screen's memo on `selectedFilters` holds across renders. */
+const NO_INPUTS: string[] = [];
+
+/** A `FilterValue.input` as the `ProductFilter` it encodes, or null when it isn't one. */
+function parseFilterInput(input: string): ProductFilter | null {
+  try {
+    const value: unknown = JSON.parse(input);
+    return value && typeof value === 'object' && !Array.isArray(value) ? (value as ProductFilter) : null;
+  } catch {
+    return null;
+  }
 }
 
 const IDLE: CollectionProductsState = {
@@ -81,6 +115,21 @@ export function useCollectionProducts({
   const [attempt, setAttempt] = useState(0);
 
   /**
+   * Stored with the handle it was made on. Read against another handle it is empty: facets belong to
+   * a collection, and resetting it in an effect instead would first fetch the new collection with the
+   * old filters.
+   */
+  const [selection, setSelection] = useState<{ handle: string | null | undefined; inputs: string[] }>({
+    handle,
+    inputs: NO_INPUTS,
+  });
+  const selectedFilters = selection.handle === handle ? selection.inputs : NO_INPUTS;
+  const allFilters: ProductFilter[] = [
+    ...(filters ?? []),
+    ...selectedFilters.map(parseFilterInput).filter((f): f is ProductFilter => f !== null),
+  ];
+
+  /**
    * Identifies the request the state belongs to. Bumped on every fresh read; an append carries the
    * value it started with, so a response whose counter has moved on is dropped rather than merged.
    */
@@ -93,7 +142,7 @@ export function useCollectionProducts({
    * effect depends on their serialisation rather than their identity — otherwise every keystroke
    * elsewhere on the screen would refetch.
    */
-  const filterKey = filters?.length ? JSON.stringify(filters) : '';
+  const filterKey = allFilters.length ? JSON.stringify(allFilters) : '';
   const sortKey = sort ? `${sort.key}:${sort.reverse ? 'desc' : 'asc'}` : '';
 
   useEffect(() => {
@@ -114,7 +163,7 @@ export function useCollectionProducts({
         first: pageSize,
         sortKey: sort?.key,
         reverse: sort?.reverse ?? false,
-        filters: filters?.length ? filters : undefined,
+        filters: allFilters.length ? allFilters : undefined,
       })
       .then((page) => {
         if (requestId.current !== id) return;
@@ -162,7 +211,7 @@ export function useCollectionProducts({
         after,
         sortKey: sort?.key,
         reverse: sort?.reverse ?? false,
-        filters: filters?.length ? filters : undefined,
+        filters: allFilters.length ? allFilters : undefined,
       })
       .then((page) => {
         if (requestId.current !== id) return;
@@ -189,9 +238,24 @@ export function useCollectionProducts({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [state.loading, state.loadingMore, state.hasMore, handle, sortKey, filterKey, pageSize]);
 
+  const setFilters = useCallback(
+    (inputs: string[]) => {
+      const valid = Array.from(new Set(inputs)).filter((input) => parseFilterInput(input) !== null);
+      setSelection({ handle, inputs: valid.length ? valid : NO_INPUTS });
+    },
+    [handle],
+  );
+  const clearFilters = useCallback(() => setSelection({ handle, inputs: NO_INPUTS }), [handle]);
+  const retry = useCallback(() => setAttempt((n) => n + 1), []);
+
   return {
     ...state,
     loadMore,
-    retry: () => setAttempt((n) => n + 1),
+    retry,
+    refresh: retry,
+    selectedFilters,
+    setFilters,
+    clearFilters,
+    filterActive: selectedFilters.length > 0,
   };
 }

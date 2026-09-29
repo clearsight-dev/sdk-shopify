@@ -185,12 +185,17 @@ scenario.addFails = null;
 console.log('wishlist alerts');
 await runAct(async () => { await api.wishlist.add('gid://product/1'); });
 check('wishlist add emits', () => { assert.equal(take()[0].type, 'wishlist:add'); });
+check('wishlist.ids lists the product, with has() agreeing', () => {
+  assert.deepEqual(api.wishlist.ids, ['gid://product/1']);
+  assert.equal(api.wishlist.has('gid://product/1'), true);
+});
 await runAct(async () => { await api.wishlist.remove('gid://product/1'); });
 check('wishlist remove emits — the hole this fixes', () => {
   const [e] = take();
   assert.equal(e.type, 'wishlist:remove');
   assert.equal(e.message, 'Removed from wishlist');
 });
+check('wishlist.ids drops a removed product', () => { assert.deepEqual(api.wishlist.ids, []); });
 await runAct(async () => { await api.wishlist.remove('gid://product/nope'); });
 check('removing something absent emits nothing', () => { assert.equal(take().length, 0); });
 

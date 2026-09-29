@@ -107,11 +107,34 @@ Then read from the context:
 ```tsx
 const { ready, error, cart, wishlist, customer, checkout } = useShopify();
 const { addLine, itemCount, cart } = useCart();
-const { items, count, toggle, has } = useWishlist();
+const { items, ids, count, toggle, has } = useWishlist(); // ids: product ids, e.g. a grid's favourites
 const { loggedIn, login, logout } = useCustomer();
 ```
 
 `react` is an **optional** peer dep — install it only if you use the `/react` subpath.
+
+### Collection feed with filters
+
+`useCollectionProducts` pages one collection by cursor and holds the shopper's filter selection:
+
+```tsx
+const feed = useCollectionProducts({ handle: 'new-arrivals', pageSize: 12 });
+
+feed.products;          // appended page by page; feed.loadMore() when the list nears its end
+feed.availableFilters;  // Shopify's facets for this collection, values carry an `input` string
+feed.setFilters(inputs); // the `input` strings the shopper picked; the hook parses and refetches
+feed.selectedFilters;   // those inputs, for the sheet's checkboxes
+feed.filterActive;      // at least one selected
+feed.clearFilters();
+feed.refresh();         // pull-to-refresh (retry is the same call, for an error state)
+```
+
+- Pass `filters` for anything the app always applies (e.g. in stock only). The shopper's selection
+  goes on top.
+- A selection belongs to its collection: a new `handle` starts with none, and its first read never
+  carries the old filters.
+- An input that isn't a Shopify filter (unparseable JSON) is dropped rather than sent.
+- Scrolling, navigation and the sheet's open state stay in the app; the hook only knows Shopify.
 
 ## Alerts & Toasts
 

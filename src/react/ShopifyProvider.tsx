@@ -117,6 +117,8 @@ interface CartState {
 
 interface WishlistState {
   items:        WishlistItem[];
+  /** The wishlisted product ids, in `items` order. The same array until the wishlist changes. */
+  ids:          string[];
   count:        number;
   has:          (productId: string) => boolean;
   /** Alias for `has`. */
@@ -1006,6 +1008,7 @@ export function ShopifyProvider({
   const wlClear   = useCallback(async ()                    => { await shopify.wishlist.clear(); },    []);
   const wlRefresh = useCallback(async ()                    => { await shopify.wishlist.refresh({ keepDeleted: wishlistKeepDeleted }); },  [wishlistKeepDeleted]);
   const wlHas     = useCallback((id: string)                => shopify.wishlist.has(id),               []);
+  const wlIds     = useMemo(() => wlItems.map((item) => item.productId), [wlItems]);
 
   // ── Customer session ────────────────────────────────────────────────────────
   // Wraps `shopify.customer` with token persistence and the four Login alerts.
@@ -1170,6 +1173,7 @@ export function ShopifyProvider({
     },
     wishlist: {
       items:        wlItems,
+      ids:          wlIds,
       count:        wlItems.length,
       has:          wlHas,
       isWishlisted: wlHas,
@@ -1201,7 +1205,7 @@ export function ShopifyProvider({
     // A new policy changes `cart.maxLineItems`, so the memo must see it.
     resolvedPolicy,
     cart, cartLoading, cartAddLine, cartAddLines, cartUpdateLine, cartRemoveLine, cartApplyDiscounts, cartUpdateNote, cartSetBuyerIdentity, cartRefresh, cartAdopt, cartReset,
-    wlItems, wlHas, wlAdd, wlRemove, wlToggle, wlClear, wlRefresh,
+    wlItems, wlIds, wlHas, wlAdd, wlRemove, wlToggle, wlClear, wlRefresh,
     customer, token, authLoading, restoring, authLogin, authSignup, authLogout, authRecover, authRefresh,
     checkoutStarted, checkoutOrderPlaced, checkoutPaymentFailed,
   ]);
