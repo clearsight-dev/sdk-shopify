@@ -134,6 +134,10 @@ feed.refresh();         // pull-to-refresh (retry is the same call, for an error
 - A selection belongs to its collection: a new `handle` starts with none, and its first read never
   carries the old filters.
 - An input that isn't a Shopify filter (unparseable JSON) is dropped rather than sent.
+- **Price** is the one facet whose input the app builds. `priceRange(facet)` reads a
+  `PRICE_RANGE` facet's bounds, and `priceFilterInput(min, max, range)` encodes the shopper's range
+  (`{"price":{"min":20,"max":100}}`), or returns null when it wouldn't narrow anything. Pass it to
+  `setFilters` with the other inputs; `parsePriceFilterInput` reads one back to pre-fill fields.
 - Scrolling, navigation and the sheet's open state stay in the app; the hook only knows Shopify.
 
 ## Alerts & Toasts

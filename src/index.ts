@@ -3,6 +3,13 @@ export { formatMoney, applyMoneyFormat, shop } from './money';
 export { getMoneyFormat, getCurrencyCode } from './client';
 export { toLineSnapshot } from './cart';
 export {
+  priceRange,
+  priceFilterInput,
+  parsePriceFilterInput,
+  isPriceFilterInput,
+  type PriceRange,
+} from './filters';
+export {
   DEFAULT_MESSAGES,
   message,
   getMessages,

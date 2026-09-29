@@ -139,4 +139,34 @@ check('refresh re-reads the first page, like retry', () => {
 });
 
 await runAct(async () => { root.unmount(); });
+
+console.log('price filter helpers');
+const { priceRange, priceFilterInput, parsePriceFilterInput, isPriceFilterInput } = await import('../dist/index.js');
+const PRICE = { id: 'filter.v.price', label: 'Price', type: 'PRICE_RANGE',
+                values: [{ id: 'p', label: 'Price', count: 0, input: '{"price":{"min":0,"max":3132.99}}' }] };
+check('priceRange reads the facet bounds; any other facet is null', () => {
+  assert.deepEqual(priceRange(PRICE), { min: 0, max: 3132.99 });
+  assert.equal(priceRange({ id: 'x', label: 'x', type: 'LIST', values: [] }), null);
+});
+check('priceFilterInput builds Shopify\'s shape and round-trips', () => {
+  const input = priceFilterInput(20, 100, priceRange(PRICE));
+  assert.equal(input, '{"price":{"min":20,"max":100}}');
+  assert.deepEqual(parsePriceFilterInput(input), { min: 20, max: 100 });
+  assert.equal(isPriceFilterInput(input), true);
+  assert.equal(isPriceFilterInput(IN_STOCK), false);
+});
+check('bounds at or past the range are dropped; nothing left means no filter', () => {
+  const range = priceRange(PRICE);
+  assert.equal(priceFilterInput(0, 3132.99, range), null);
+  assert.equal(priceFilterInput(null, undefined, range), null);
+  assert.equal(priceFilterInput(50, 9999, range), '{"price":{"min":50}}');
+  assert.equal(priceFilterInput(undefined, 80, range), '{"price":{"max":80}}');
+});
+check('reversed bounds are swapped, a negative min is 0, junk is ignored', () => {
+  assert.equal(priceFilterInput(100, 20), '{"price":{"min":20,"max":100}}');
+  assert.equal(priceFilterInput(-5, 40), '{"price":{"min":0,"max":40}}');
+  assert.equal(priceFilterInput('abc', NaN), null);
+  assert.equal(parsePriceFilterInput('not json'), null);
+});
+
 console.log(`\n${pass} checks passed`);
