@@ -145,6 +145,7 @@ export const CART_FRAGMENT = /* GraphQL */ `
         id
         quantity
         attributes { key value }
+        sellingPlanAllocation { sellingPlan { id } }
         cost {
           totalAmount { ...MoneyFields }
           amountPerQuantity { ...MoneyFields }

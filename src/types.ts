@@ -231,6 +231,8 @@ export interface CartLine {
   quantity: number;
   merchandise: ProductVariant;
   attributes: CartLineAttribute[];
+  /** SellingPlan GID the line was added under; null for a one-off purchase. */
+  sellingPlanId: string | null;
   /** Needed to render a name and link back to the PDP — `merchandise.title` is only the option value. */
   product: { id: string; title: string; handle: string } | null;
   cost: {
@@ -310,8 +312,16 @@ export interface CartLineInput {
   quantity: number;
   attributes?: CartLineAttribute[];
   /** SellingPlan GID. Passing it is what makes checkout authorise rather than capture. */
-  sellingPlanId?: string;
+  sellingPlanId?: string | null;
 }
+
+/** What a cart line needs to be re-created on a new cart — see `toLineSnapshot`. */
+export type CartLineSnapshot = {
+  merchandiseId: string;
+  quantity: number;
+  sellingPlanId: string | null;
+  attributes: { key: string; value: string }[];
+};
 
 export interface CartLineUpdateInput {
   /** Existing CartLine.id */

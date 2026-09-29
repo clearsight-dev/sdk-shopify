@@ -1,6 +1,7 @@
 export { shopify, shopify as default } from './shopify';
 export { formatMoney, applyMoneyFormat, shop } from './money';
 export { getMoneyFormat, getCurrencyCode } from './client';
+export { toLineSnapshot } from './cart';
 export {
   DEFAULT_MESSAGES,
   message,
