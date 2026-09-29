@@ -15,6 +15,7 @@ import {
 import type {
   Cart,
   CartLineInput,
+  CartLineSnapshot,
   CartLineUpdateInput,
   ShopifyCartAPI,
   UserError,
@@ -50,6 +51,7 @@ function normalize(c: any): Cart {
       id: line.id,
       quantity: line.quantity,
       attributes: line.attributes ?? [],
+      sellingPlanId: line.sellingPlanAllocation?.sellingPlan?.id ?? null,
       merchandise: line.merchandise,
       product: line.merchandise?.product ?? null,
       cost: line.cost,
@@ -60,6 +62,22 @@ function normalize(c: any): Cart {
     createdAt: c.createdAt,
     updatedAt: c.updatedAt,
   };
+}
+
+/**
+ * The lines of `cart` in the shape a new cart can be created from. Shopify has no copy-cart API
+ * and an expired cart cannot be read, so this is the only way its lines outlive it. Attributes are
+ * copied verbatim: other apps' tags ride on them.
+ */
+export function toLineSnapshot(cart: Cart): CartLineSnapshot[] {
+  return cart.lines
+    .filter((line) => !!line.merchandise?.id)
+    .map((line) => ({
+      merchandiseId: line.merchandise.id,
+      quantity: line.quantity,
+      sellingPlanId: line.sellingPlanId ?? null,
+      attributes: line.attributes.map(({ key, value }) => ({ key, value })),
+    }));
 }
 
 export const cart: ShopifyCartAPI = {

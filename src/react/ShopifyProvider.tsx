@@ -9,6 +9,7 @@ import {
   useState,
 } from "react";
 import { shopify } from "../shopify";
+import { toLineSnapshot } from "../cart";
 import { wouldExceedLineLimit, maxLineItems } from "../cartPolicy";
 import { classifyAuthFailure, isOutOfStockError, isUserErrorRejection } from "../errors";
 import { limitExceededMessage, message, setMessageResolver } from "../messages";
@@ -22,6 +23,7 @@ import type {
   CartLineAttribute,
   CartLineGuard,
   CartLineInput,
+  CartLineSnapshot,
   CartLineUpdateInput,
   CartPolicy,
   CartWriteResult,
@@ -166,6 +168,12 @@ interface CustomerState {
  * piece of work; this is the seam it will emit through.
  */
 interface CheckoutState {
+  /**
+   * Call as checkout opens for the shared cart. A checked-out cart reads back null exactly like an
+   * expired one, so without this a missed `reportOrderPlaced` would refill the cart on next launch
+   * with what was just bought. Any later add, update or remove clears it.
+   */
+  reportCheckoutStarted: () => Promise<void>;
   /** Emits `checkout:orderPlaced`, then resets the cart so the next visit starts clean. */
   reportOrderPlaced: (details?: { orderId?: string; orderNumber?: string | number }) => Promise<void>;
   /** Emits `checkout:paymentFailed`. Leaves the cart alone so the shopper can retry. */
@@ -188,6 +196,84 @@ const ShopifyContext = createContext<ShopifyContextType | undefined>(undefined);
 
 const CART_STORAGE_KEY = "shopify:cart-id:v1";
 const CUSTOMER_TOKEN_KEY = "shopify:customer-token:v1";
+const CART_LINES_KEY = "shopify:cart-lines:v1";
+const CHECKOUT_STARTED_KEY = "shopify:checkout-started-cart-id:v1";
+
+// Best-effort: the cart write that triggered it has already landed.
+async function saveLineSnapshot(s: WishlistStorageAdapter | null, next: Cart | null): Promise<void> {
+  if (!s) return;
+  try {
+    if (next) await Promise.resolve(s.setItem(CART_LINES_KEY, JSON.stringify(toLineSnapshot(next))));
+    else await Promise.resolve(s.removeItem(CART_LINES_KEY));
+  } catch (snapshotError) {
+    console.warn("[ShopifyProvider] cart line snapshot write failed", snapshotError);
+  }
+}
+
+async function readCheckoutStarted(s: WishlistStorageAdapter | null): Promise<string | null> {
+  if (!s) return null;
+  try {
+    return await Promise.resolve(s.getItem(CHECKOUT_STARTED_KEY));
+  } catch {
+    return null;
+  }
+}
+
+async function clearCheckoutStarted(s: WishlistStorageAdapter | null): Promise<void> {
+  if (!s) return;
+  try {
+    await Promise.resolve(s.removeItem(CHECKOUT_STARTED_KEY));
+  } catch (markError) {
+    console.warn("[ShopifyProvider] checkout mark clear failed", markError);
+  }
+}
+
+async function loadLineSnapshot(s: WishlistStorageAdapter | null): Promise<CartLineSnapshot[]> {
+  if (!s) return [];
+  try {
+    const raw = await Promise.resolve(s.getItem(CART_LINES_KEY));
+    const parsed: unknown = raw ? JSON.parse(raw) : [];
+    if (!Array.isArray(parsed)) return [];
+    return parsed.filter(
+      (line): line is CartLineSnapshot =>
+        typeof line?.merchandiseId === "string" && typeof line?.quantity === "number" && line.quantity > 0,
+    );
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * A new cart holding the lines of one that expired. One `cartCreate` when every line is still
+ * sellable; a single refusal fails that whole create, so it is redone as an empty cart plus one add
+ * per line, skipping the refused ones. Not a shopper add, so no guard runs and nothing is toasted.
+ */
+async function createFromSnapshot(lines: CartLineSnapshot[], attributes?: CartAttribute[]): Promise<Cart> {
+  const inputs: CartLineInput[] = lines.map((line) => ({
+    merchandiseId: line.merchandiseId,
+    quantity: line.quantity,
+    attributes: line.attributes ?? [],
+    ...(line.sellingPlanId ? { sellingPlanId: line.sellingPlanId } : {}),
+  }));
+  if (inputs.length === 0) return shopify.cart.create({ attributes });
+  try {
+    return await shopify.cart.create({ attributes, lines: inputs });
+  } catch (createError) {
+    if (!isLineRejection(createError)) throw createError;
+  }
+  let next = await shopify.cart.create({ attributes });
+  for (const input of inputs) {
+    try {
+      next = await shopify.cart.addLines(next.id, [input]);
+    } catch (lineError) {
+      if (isLineRejection(lineError)) continue;
+      // A partly restored cart beats failing startup; the snapshot is rewritten from what landed.
+      console.warn("[ShopifyProvider] cart restore stopped early", lineError);
+      break;
+    }
+  }
+  return next;
+}
 
 /**
  * Everything the host may want to tell the shopper about. One event per alert the
@@ -495,10 +581,14 @@ export function ShopifyProvider({
           // A stored cart predates this session, so it may have been created in another market.
           if (next) next = await applyCartAttributes(await pinMarket(next));
           if (!next) {
+            const checkedOut = !!savedId && savedId === (await readCheckoutStarted(s));
             // A cart created now is already in the configured market — `@inContext` saw to that.
-            next = await shopify.cart.create({ attributes: cartAttrsRef.current });
+            next = checkedOut
+              ? await shopify.cart.create({ attributes: cartAttrsRef.current })
+              : await createFromSnapshot(await loadLineSnapshot(s), cartAttrsRef.current);
             if (s) await Promise.resolve(s.setItem(CART_STORAGE_KEY, next.id));
           }
+          await saveLineSnapshot(s, next);
           if (mounted) setCart(next);
         } finally {
           if (mounted) setCartLoad(false);
@@ -619,6 +709,7 @@ export function ShopifyProvider({
     if (!s) return;
     if (next) await Promise.resolve(s.setItem(CART_STORAGE_KEY, next.id));
     else await Promise.resolve(s.removeItem(CART_STORAGE_KEY));
+    await saveLineSnapshot(s, next);
   }, []);
 
   const ensureCartId = useCallback(async (): Promise<string> => {
@@ -670,6 +761,7 @@ export function ShopifyProvider({
         throw addError;
       }
       await persistCart(next);
+      await clearCheckoutStarted(storageRef.current);
       emit("cart:add");
       announceLanded(approved, next);
       return { ok: true, cart: next };
@@ -739,6 +831,7 @@ export function ShopifyProvider({
       }
       if (next) {
         await persistCart(next);
+        await clearCheckoutStarted(storageRef.current);
         emit("cart:add");
         const settled = next;
         landed.forEach((input) => announceLanded(input, settled));
@@ -799,6 +892,7 @@ export function ShopifyProvider({
         throw updateError;
       }
       await persistCart(next);
+      await clearCheckoutStarted(storageRef.current);
       // A quantity change is not one of the panel's alerts — emitted as a state
       // signal so a host can refresh a badge, with no copy attached.
       emit("cart:update");
@@ -829,6 +923,7 @@ export function ShopifyProvider({
     try {
       const next = await serialize(() => shopify.cart.removeLines(cart.id, [lineId]));
       await persistCart(next);
+      await clearCheckoutStarted(storageRef.current);
       // The panel's "Removed From Cart" alert. Previously nothing fired here, so
       // the configured copy had no trigger at all.
       emit("cart:remove");
@@ -1039,6 +1134,18 @@ export function ShopifyProvider({
     }
   }, [emit, cartReset]);
 
+  // Read from storage rather than `cart` so the callback keeps one identity across cart changes.
+  const checkoutStarted = useCallback(async (): Promise<void> => {
+    const s = storageRef.current;
+    if (!s) return;
+    try {
+      const cartId = await Promise.resolve(s.getItem(CART_STORAGE_KEY));
+      if (cartId) await Promise.resolve(s.setItem(CHECKOUT_STARTED_KEY, cartId));
+    } catch (markError) {
+      console.warn("[ShopifyProvider] checkout mark write failed", markError);
+    }
+  }, []);
+
   const checkoutPaymentFailed = useCallback((paymentError?: unknown): void => {
     emit("checkout:paymentFailed", paymentError);
   }, [emit]);
@@ -1085,6 +1192,7 @@ export function ShopifyProvider({
       refresh:         authRefresh,
     },
     checkout: {
+      reportCheckoutStarted: checkoutStarted,
       reportOrderPlaced:   checkoutOrderPlaced,
       reportPaymentFailed: checkoutPaymentFailed,
     },
@@ -1095,7 +1203,7 @@ export function ShopifyProvider({
     cart, cartLoading, cartAddLine, cartAddLines, cartUpdateLine, cartRemoveLine, cartApplyDiscounts, cartUpdateNote, cartSetBuyerIdentity, cartRefresh, cartAdopt, cartReset,
     wlItems, wlHas, wlAdd, wlRemove, wlToggle, wlClear, wlRefresh,
     customer, token, authLoading, restoring, authLogin, authSignup, authLogout, authRecover, authRefresh,
-    checkoutOrderPlaced, checkoutPaymentFailed,
+    checkoutStarted, checkoutOrderPlaced, checkoutPaymentFailed,
   ]);
 
   return <ShopifyContext.Provider value={value}>{children}</ShopifyContext.Provider>;
