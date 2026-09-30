@@ -1,5 +1,6 @@
 import { ShopifyConfig, ShopifyError, UserError } from './types';
 import { setProductMetafields } from './metafields';
+import { configureRequestCache, readThrough } from './requestCache';
 
 interface InternalState {
   config: ShopifyConfig | null;
@@ -31,6 +32,8 @@ export function setConfig(config: ShopifyConfig): void {
   if (!config.storefrontAccessToken) throw new Error('shopify.init: storefrontAccessToken is required');
   state.config = config;
   setProductMetafields(config.productMetafields);
+  // A new store, token or market would never match an old key anyway; this frees the memory.
+  configureRequestCache(config.cache);
 }
 
 export function getConfig(): ShopifyConfig {
@@ -145,29 +148,52 @@ function withContext(operation: string): string {
   return `${operation.slice(0, braceAt)}query ${directive} ${operation.slice(braceAt)}`;
 }
 
-export async function request<T>(operation: string, variables?: Record<string, unknown>): Promise<T> {
+export interface RequestOptions {
+  /** Skip a recent cached answer and go to the network (pull-to-refresh). */
+  fresh?: boolean;
+}
+
+/**
+ * One Storefront call. Identical queries share one network request, and catalogue reads reuse a
+ * recent answer (see `requestCache.ts`); mutations always go to the network.
+ */
+export async function request<T>(
+  operation: string,
+  variables?: Record<string, unknown>,
+  options?: RequestOptions,
+): Promise<T> {
   const c = getConfig();
   const query = withContext(deduplicateFragments(operation));
-  const res = await fetch(endpoint(), {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'X-Shopify-Storefront-Access-Token': c.storefrontAccessToken,
-      'Accept': 'application/json',
-      'Accept-Language': c.language || 'en',
-    },
-    body: JSON.stringify({ query, variables: variables ?? {} }),
+  const url = endpoint();
+  const text = await readThrough(`${url}\n${c.storefrontAccessToken}`, query, variables, options?.fresh === true, async () => {
+    const res = await fetch(url, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Shopify-Storefront-Access-Token': c.storefrontAccessToken,
+        'Accept': 'application/json',
+        'Accept-Language': c.language || 'en',
+      },
+      body: JSON.stringify({ query, variables: variables ?? {} }),
+    });
+    if (!res.ok) {
+      let bodyText = '';
+      try { bodyText = await res.text(); } catch { /* ignore */ }
+      throw new ShopifyError(
+        `Shopify Storefront API HTTP ${res.status}: ${res.statusText}${bodyText ? ` — ${bodyText.slice(0, 200)}` : ''}`
+      );
+    }
+    // Real responses have text(); some test mocks of fetch only implement json().
+    return typeof res.text === 'function' ? res.text() : JSON.stringify(await res.json());
   });
 
-  if (!res.ok) {
-    let bodyText = '';
-    try { bodyText = await res.text(); } catch { /* ignore */ }
-    throw new ShopifyError(
-      `Shopify Storefront API HTTP ${res.status}: ${res.statusText}${bodyText ? ` — ${bodyText.slice(0, 200)}` : ''}`
-    );
+  // Parsed per caller: callers sharing one response each get their own objects.
+  let json: GraphQLResponse<T>;
+  try {
+    json = JSON.parse(text) as GraphQLResponse<T>;
+  } catch {
+    throw new ShopifyError('Shopify Storefront API returned a response that is not JSON');
   }
-
-  const json = (await res.json()) as GraphQLResponse<T>;
   if (json.errors && json.errors.length > 0) {
     throw new ShopifyError(
       `GraphQL error: ${json.errors.map((e) => e.message).join('; ')}`

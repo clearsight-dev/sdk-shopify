@@ -66,7 +66,9 @@ const render = async () => {
   await runAct(async () => {
     root.render(React.createElement(
       ShopifyProvider,
-      { config: { storeDomain: 'shop.myshopify.com', storefrontAccessToken: 't' } },
+      // cache: false — these checks read the request each change sends; reuse is tested in
+      // request-cache.test.mjs.
+      { config: { storeDomain: 'shop.myshopify.com', storefrontAccessToken: 't', cache: false } },
       React.createElement(Probe),
     ));
   });

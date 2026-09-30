@@ -52,7 +52,7 @@ export const collections: ShopifyCollectionsAPI = {
       sortKey: opts?.sortKey,
       reverse: opts?.reverse ?? false,
       filters: opts?.filters,
-    });
+    }, { fresh: opts?.fresh });
     if (!data.collection) {
       return { nodes: [], pageInfo: { hasNextPage: false, hasPreviousPage: false, startCursor: null, endCursor: null }, filters: [] };
     }

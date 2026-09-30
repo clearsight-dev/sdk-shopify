@@ -140,6 +140,31 @@ feed.refresh();         // pull-to-refresh (retry is the same call, for an error
   `setFilters` with the other inputs; `parsePriceFilterInput` reads one back to pre-fill fields.
 - Scrolling, navigation and the sheet's open state stay in the app; the hook only knows Shopify.
 
+### One network call per identical read
+
+Every Storefront read goes through one `request()`, which now shares work:
+
+- **In flight:** identical queries fired together share one call. Six grids on the same collection
+  make one request, not six. This covers every query, including cart and customer ones.
+  Mutations are never shared.
+- **Recent answers:** catalogue reads are reused from memory for a short time (`DEFAULT_CACHE_TTL_MS`):
+  shop info 30 min, collections and blogs 10 min, recommendations 5 min, collection pages, products
+  and wishlist items 1 min, search 30 s. Cart, customer, orders and variant stock are never reused.
+- Each caller gets its own parsed copy, so mutating a result can't change another caller's.
+  Failed calls and GraphQL errors are never kept.
+- The key includes the store, token, market (`@inContext`), metafields and variables, so markets
+  and stores never mix. Memory only: nothing is persisted, and `init` starts it empty.
+
+```ts
+shopify.init({ ...config, cache: { ttl: { CollectionProducts: 0 }, maxEntries: 50 } }); // tune
+shopify.init({ ...config, cache: false });  // no reuse; in-flight sharing stays
+shopify.collections.products(handle, { fresh: true }); // skip a recent answer
+clearRequestCache();                                     // forget everything
+```
+
+`useCollectionProducts`' `refresh()` and `retry()` read fresh; other grids on the same collection
+keep what they have.
+
 ## Alerts & Toasts
 
 The editor's Settings panel configures the copy for 13 shopper-facing alerts. The

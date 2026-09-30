@@ -136,6 +136,11 @@ export function useCollectionProducts({
   const requestId = useRef(0);
   /** The cursor for the next page, held in a ref so `loadMore` does not need a fresh callback. */
   const cursor = useRef<string | null>(null);
+  /**
+   * Set by `refresh`/`retry` so the next first-page read skips the SDK's recent-answer cache: a
+   * shopper who pulls to refresh wants the network, not the copy another screen fetched a moment ago.
+   */
+  const freshNext = useRef(false);
 
   /**
    * The filter array and sort object are rebuilt on every render of the screen that owns them, so the
@@ -156,6 +161,8 @@ export function useCollectionProducts({
 
     const id = (requestId.current += 1);
     cursor.current = null;
+    const fresh = freshNext.current;
+    freshNext.current = false;
     setState({ ...IDLE, loading: true });
 
     shopify.collections
@@ -164,6 +171,7 @@ export function useCollectionProducts({
         sortKey: sort?.key,
         reverse: sort?.reverse ?? false,
         filters: allFilters.length ? allFilters : undefined,
+        fresh,
       })
       .then((page) => {
         if (requestId.current !== id) return;
@@ -246,7 +254,10 @@ export function useCollectionProducts({
     [handle],
   );
   const clearFilters = useCallback(() => setSelection({ handle, inputs: NO_INPUTS }), [handle]);
-  const retry = useCallback(() => setAttempt((n) => n + 1), []);
+  const retry = useCallback(() => {
+    freshNext.current = true;
+    setAttempt((n) => n + 1);
+  }, []);
 
   return {
     ...state,

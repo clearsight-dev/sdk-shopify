@@ -1,6 +1,7 @@
 export { shopify, shopify as default } from './shopify';
 export { formatMoney, applyMoneyFormat, shop } from './money';
 export { getMoneyFormat, getCurrencyCode } from './client';
+export { clearRequestCache, DEFAULT_CACHE_TTL_MS, type RequestCacheOptions } from './requestCache';
 export { toLineSnapshot } from './cart';
 export {
   priceRange,

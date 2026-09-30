@@ -1,3 +1,4 @@
+import type { RequestCacheOptions } from './requestCache';
 // Setup
 
 export interface ShopifyConfig {
@@ -28,6 +29,12 @@ export interface ShopifyConfig {
    * Each needs a Shopify metafield definition with storefront read access, or it comes back empty.
    */
   productMetafields?: MetafieldIdentifier[];
+  /**
+   * Reuse of recent catalogue answers (memory only). Identical requests in flight are always shared.
+   * `false` turns reuse off; `{ ttl: { CollectionProducts: 0 } }` changes one operation's time.
+   * Defaults: `DEFAULT_CACHE_TTL_MS`.
+   */
+  cache?: false | RequestCacheOptions;
 }
 
 export interface MetafieldIdentifier {
@@ -545,6 +552,8 @@ export interface ListOptions {
   reverse?: boolean;
   /** Honoured by `collections.products` and `products.search`; ignored by `products.list`. */
   filters?: ProductFilter[];
+  /** Skip a recent cached answer and read from the network (pull-to-refresh). */
+  fresh?: boolean;
 }
 
 // ---------------------------------------------------------------------------
