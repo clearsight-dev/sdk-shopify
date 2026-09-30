@@ -14,6 +14,7 @@ import type {
   PageInfo,
   Product,
   ShopifyCollectionsAPI,
+  ImageOptions,
 } from './types';
 
 interface CollectionsRaw {
@@ -36,12 +37,12 @@ export const collections: ShopifyCollectionsAPI = {
       query: opts?.query,
       sortKey: opts?.sortKey,
       reverse: opts?.reverse ?? false,
-    });
+    }, { imageTransform: opts?.imageTransform });
     return data.collections;
   },
 
-  async byHandle(handle: string): Promise<Collection | null> {
-    const data = await request<CollectionRaw>(COLLECTION_BY_HANDLE_QUERY, { handle });
+  async byHandle(handle: string, opts?: ImageOptions): Promise<Collection | null> {
+    const data = await request<CollectionRaw>(COLLECTION_BY_HANDLE_QUERY, { handle }, { imageTransform: opts?.imageTransform });
     return data.collection;
   },
 
@@ -53,7 +54,7 @@ export const collections: ShopifyCollectionsAPI = {
       sortKey: opts?.sortKey,
       reverse: opts?.reverse ?? false,
       filters: opts?.filters,
-    }, { fresh: opts?.fresh });
+    }, { fresh: opts?.fresh, imageTransform: opts?.imageTransform });
     if (!data.collection) {
       return { nodes: [], pageInfo: { hasNextPage: false, hasPreviousPage: false, startCursor: null, endCursor: null }, filters: [] };
     }

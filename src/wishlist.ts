@@ -1,6 +1,6 @@
 // Storage layout: one JSON array of `{ productId, basic, addedAt }` under `storageKey`.
 // Init rehydrates from it instantly, then background-refreshes the full products.
-import { request } from './client';
+import { request, getConfig } from './client';
 import { normalizeProduct } from './products';
 import { rememberProducts } from './productStore';
 import { nodesAsProductsQuery } from './queries';
@@ -112,7 +112,7 @@ async function fetchProductsByIds(ids: string[]): Promise<Array<Product | null>>
   const out: Array<Product | null> = [];
   for (let i = 0; i < ids.length; i += state.batchSize) {
     const chunk = ids.slice(i, i + state.batchSize);
-    const data = await request<NodesResponse>(nodesAsProductsQuery(), { ids: chunk });
+    const data = await request<NodesResponse>(nodesAsProductsQuery(), { ids: chunk }, { imageTransform: getConfig().imageTransforms?.wishlist });
     const nodes = Array.isArray(data.nodes) ? data.nodes : [];
     for (let j = 0; j < chunk.length; j++) {
       const node = nodes[j];

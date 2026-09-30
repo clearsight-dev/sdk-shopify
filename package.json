@@ -26,7 +26,7 @@
     "clean": "rm -rf dist",
     "build": "npm run clean && tsc -p tsconfig.json",
     "lint": "tsc --noEmit",
-    "test": "npm run build && node test/alerts.test.mjs && node test/provider.test.mjs && node test/cart-snapshot.test.mjs && node test/collection-filters.test.mjs && node test/request-cache.test.mjs && node test/product-store.test.mjs"
+    "test": "npm run build && node test/alerts.test.mjs && node test/provider.test.mjs && node test/cart-snapshot.test.mjs && node test/collection-filters.test.mjs && node test/request-cache.test.mjs && node test/product-store.test.mjs && node test/image-transform.test.mjs"
   },
   "keywords": [
     "shopify",

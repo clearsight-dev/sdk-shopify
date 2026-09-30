@@ -9,7 +9,8 @@ export const MONEY_FRAGMENT = /* GraphQL */ `
 
 export const IMAGE_FRAGMENT = /* GraphQL */ `
   fragment ImageFields on Image {
-    url
+    # A null $imageTransform (the default) returns the original; request() declares the variable.
+    url(transform: $imageTransform)
     altText
     width
     height
@@ -92,8 +93,8 @@ export const productFragment = () => /* GraphQL */ `
       nodes {
         mediaContentType
         alt
-        previewImage { url }
-        ... on MediaImage { id image { url altText } }
+        previewImage { url(transform: $imageTransform) }
+        ... on MediaImage { id image { url(transform: $imageTransform) altText } }
         # mimeType tells the usable mp4s from the HLS/DASH manifests Shopify also returns.
         ... on Video { id sources { url mimeType width height } }
         ... on ExternalVideo { id embeddedUrl host }

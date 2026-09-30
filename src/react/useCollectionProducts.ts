@@ -8,7 +8,7 @@
  */
 import { shopify } from '../shopify';
 import { useProductFeed, type ProductFeedResult, type ProductFeedState } from './useProductFeed';
-import type { ProductFilter } from '../types';
+import type { ImageTransform, ProductFilter } from '../types';
 
 /** How a collection is ordered. `key` is a Storefront `ProductCollectionSortKeys` value. */
 export interface CollectionSort {
@@ -30,6 +30,8 @@ export interface UseCollectionProductsOptions {
    */
   filters?: ProductFilter[];
   pageSize?: number;
+  /** Resize/convert the products' images on Shopify's CDN, e.g. `{ maxWidth: 330, scale: 2 }`. */
+  imageTransform?: ImageTransform;
   /**
    * Called with any transport error (first page or paging) so the host app can log it — the hook has
    * no logger of its own. Optional; when omitted the error only surfaces as `error` / a stopped feed.
@@ -45,12 +47,14 @@ export function useCollectionProducts({
   sort,
   filters,
   pageSize = COLLECTION_PAGE_SIZE,
+  imageTransform,
   onError,
 }: UseCollectionProductsOptions): UseCollectionProductsResult {
   const sortKey = sort ? `${sort.key}:${sort.reverse ? 'desc' : 'asc'}` : '';
   return useProductFeed({
     id: handle ? `collection:${handle}` : null,
-    paramsKey: `${sortKey}|${pageSize}`,
+    // The transform is part of the key: a page cached at one image size is not another's.
+    paramsKey: `${sortKey}|${pageSize}|${imageTransform ? JSON.stringify(imageTransform) : ''}`,
     fixedFilters: filters,
     fetch: async ({ after, filters: applied, fresh }) => {
       const page = await shopify.collections.products(handle as string, {
@@ -60,6 +64,7 @@ export function useCollectionProducts({
         reverse: sort?.reverse ?? false,
         filters: applied,
         fresh,
+        imageTransform,
       });
       return {
         nodes: page.nodes,

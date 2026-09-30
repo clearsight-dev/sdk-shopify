@@ -17,6 +17,7 @@ import type {
   PageInfo,
   ShopifyCustomerAPI,
   UserError,
+  ImageOptions,
 } from './types';
 
 interface CreatePayload {
@@ -143,7 +144,7 @@ export const customer: ShopifyCustomerAPI = {
       accessToken,
       first: opts?.first ?? 20,
       after: opts?.after,
-    });
+    }, { imageTransform: opts?.imageTransform });
     if (!data.customer) {
       return { nodes: [], pageInfo: { hasNextPage: false, hasPreviousPage: false, startCursor: null, endCursor: null } };
     }
@@ -153,9 +154,9 @@ export const customer: ShopifyCustomerAPI = {
     };
   },
 
-  async orderById(accessToken: string, orderId: string): Promise<Order | null> {
+  async orderById(accessToken: string, orderId: string, opts?: ImageOptions): Promise<Order | null> {
     // Storefront API does not expose an order-by-id query; fetch list and filter.
-    const list = await this.orders(accessToken, { first: 250 });
+    const list = await this.orders(accessToken, { first: 250, imageTransform: opts?.imageTransform });
     return list.nodes.find((o) => o.id === orderId) ?? null;
   },
 };

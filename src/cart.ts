@@ -1,4 +1,4 @@
-import { request, assertNoUserErrors } from './client';
+import { request, assertNoUserErrors, getConfig } from './client';
 import {
   CART_ATTRIBUTES_UPDATE_MUTATION,
   CART_BUYER_IDENTITY_UPDATE_MUTATION,
@@ -19,6 +19,8 @@ import type {
   CartLineUpdateInput,
   ShopifyCartAPI,
   UserError,
+  ImageOptions,
+  ImageTransform,
 } from './types';
 
 interface CartCreatePayload { cartCreate: { cart: any; userErrors: UserError[] } }
@@ -80,8 +82,13 @@ export function toLineSnapshot(cart: Cart): CartLineSnapshot[] {
     }));
 }
 
+/** A cart's line-image transform: the call's own, else the provider-wide `imageTransforms.cart`. */
+function cartImages(opts?: ImageOptions): { imageTransform?: ImageTransform } {
+  return { imageTransform: opts?.imageTransform ?? getConfig().imageTransforms?.cart };
+}
+
 export const cart: ShopifyCartAPI = {
-  async create(input): Promise<Cart> {
+  async create(input, opts?: ImageOptions): Promise<Cart> {
     /**
      * Built key by key rather than spreading `input`, so an unknown field cannot reach Shopify and
      * fail the whole mutation — but every key `CartInput` accepts and a caller can set belongs
@@ -96,44 +103,44 @@ export const cart: ShopifyCartAPI = {
       attributes: input?.attributes,
       buyerIdentity: input?.buyerIdentity,
     };
-    const data = await request<CartCreatePayload>(CART_CREATE_MUTATION, { input: payload });
+    const data = await request<CartCreatePayload>(CART_CREATE_MUTATION, { input: payload }, cartImages(opts));
     assertNoUserErrors('cartCreate', data.cartCreate.userErrors);
     return normalize(data.cartCreate.cart);
   },
 
-  async get(cartId: string): Promise<Cart | null> {
-    const data = await request<CartGetPayload>(CART_GET_QUERY, { id: cartId });
+  async get(cartId: string, opts?: ImageOptions): Promise<Cart | null> {
+    const data = await request<CartGetPayload>(CART_GET_QUERY, { id: cartId }, cartImages(opts));
     return data.cart ? normalize(data.cart) : null;
   },
 
-  async addLines(cartId: string, lines: CartLineInput[]): Promise<Cart> {
-    const data = await request<CartAddPayload>(CART_LINES_ADD_MUTATION, { cartId, lines });
+  async addLines(cartId: string, lines: CartLineInput[], opts?: ImageOptions): Promise<Cart> {
+    const data = await request<CartAddPayload>(CART_LINES_ADD_MUTATION, { cartId, lines }, cartImages(opts));
     assertNoUserErrors('cartLinesAdd', data.cartLinesAdd.userErrors);
     return normalize(data.cartLinesAdd.cart);
   },
 
-  async updateLines(cartId: string, lines: CartLineUpdateInput[]): Promise<Cart> {
-    const data = await request<CartUpdPayload>(CART_LINES_UPDATE_MUTATION, { cartId, lines });
+  async updateLines(cartId: string, lines: CartLineUpdateInput[], opts?: ImageOptions): Promise<Cart> {
+    const data = await request<CartUpdPayload>(CART_LINES_UPDATE_MUTATION, { cartId, lines }, cartImages(opts));
     assertNoUserErrors('cartLinesUpdate', data.cartLinesUpdate.userErrors);
     return normalize(data.cartLinesUpdate.cart);
   },
 
-  async removeLines(cartId: string, lineIds: string[]): Promise<Cart> {
-    const data = await request<CartRmPayload>(CART_LINES_REMOVE_MUTATION, { cartId, lineIds });
+  async removeLines(cartId: string, lineIds: string[], opts?: ImageOptions): Promise<Cart> {
+    const data = await request<CartRmPayload>(CART_LINES_REMOVE_MUTATION, { cartId, lineIds }, cartImages(opts));
     assertNoUserErrors('cartLinesRemove', data.cartLinesRemove.userErrors);
     return normalize(data.cartLinesRemove.cart);
   },
 
-  async applyDiscountCodes(cartId: string, codes: string[]): Promise<Cart> {
+  async applyDiscountCodes(cartId: string, codes: string[], opts?: ImageOptions): Promise<Cart> {
     const data = await request<CartDiscPayload>(CART_DISCOUNT_CODES_UPDATE_MUTATION, {
       cartId,
       discountCodes: codes,
-    });
+    }, cartImages(opts));
     assertNoUserErrors('cartDiscountCodesUpdate', data.cartDiscountCodesUpdate.userErrors);
     return normalize(data.cartDiscountCodesUpdate.cart);
   },
 
-  async setBuyerIdentity(cartId, identity): Promise<Cart> {
+  async setBuyerIdentity(cartId, identity, opts?: ImageOptions): Promise<Cart> {
     const data = await request<CartBuyPayload>(CART_BUYER_IDENTITY_UPDATE_MUTATION, {
       cartId,
       buyerIdentity: {
@@ -141,16 +148,16 @@ export const cart: ShopifyCartAPI = {
         countryCode: identity.countryCode,
         customerAccessToken: identity.customerAccessToken,
       },
-    });
+    }, cartImages(opts));
     assertNoUserErrors('cartBuyerIdentityUpdate', data.cartBuyerIdentityUpdate.userErrors);
     return normalize(data.cartBuyerIdentityUpdate.cart);
   },
 
-  async applyGiftCardCodes(cartId: string, codes: string[]): Promise<Cart> {
+  async applyGiftCardCodes(cartId: string, codes: string[], opts?: ImageOptions): Promise<Cart> {
     const data = await request<CartGcAddPayload>(CART_GIFT_CARD_CODES_UPDATE_MUTATION, {
       cartId,
       giftCardCodes: codes,
-    });
+    }, cartImages(opts));
     assertNoUserErrors('cartGiftCardCodesUpdate', data.cartGiftCardCodesUpdate.userErrors);
     return normalize(data.cartGiftCardCodesUpdate.cart);
   },
@@ -161,27 +168,27 @@ export const cart: ShopifyCartAPI = {
    * Its own mutation rather than a cart attribute: attributes are key/value metadata for the app's
    * own bookkeeping (Cart Hold's expiry stamp is one), while the note is content the shopper wrote.
    */
-  async updateNote(cartId: string, note: string | null): Promise<Cart> {
+  async updateNote(cartId: string, note: string | null, opts?: ImageOptions): Promise<Cart> {
     // `?? ''` is load-bearing: the argument is `String!`, so a null variable fails the whole
     // mutation rather than clearing the note.
-    const data = await request<CartNotePayload>(CART_NOTE_UPDATE_MUTATION, { cartId, note: note ?? '' });
+    const data = await request<CartNotePayload>(CART_NOTE_UPDATE_MUTATION, { cartId, note: note ?? '' }, cartImages(opts));
     assertNoUserErrors('cartNoteUpdate', data.cartNoteUpdate.userErrors);
     return normalize(data.cartNoteUpdate.cart);
   },
 
-  async updateAttributes(cartId: string, attributes): Promise<Cart> {
+  async updateAttributes(cartId: string, attributes, opts?: ImageOptions): Promise<Cart> {
     // Shopify replaces the set wholesale, so this is a write of the final list, not a merge into
     // the existing one. Callers holding a cart should send its current attributes plus theirs.
-    const data = await request<CartAttrPayload>(CART_ATTRIBUTES_UPDATE_MUTATION, { cartId, attributes });
+    const data = await request<CartAttrPayload>(CART_ATTRIBUTES_UPDATE_MUTATION, { cartId, attributes }, cartImages(opts));
     assertNoUserErrors('cartAttributesUpdate', data.cartAttributesUpdate.userErrors);
     return normalize(data.cartAttributesUpdate.cart);
   },
 
-  async removeGiftCardCodes(cartId: string, appliedGiftCardIds: string[]): Promise<Cart> {
+  async removeGiftCardCodes(cartId: string, appliedGiftCardIds: string[], opts?: ImageOptions): Promise<Cart> {
     const data = await request<CartGcRmPayload>(CART_GIFT_CARD_CODES_REMOVE_MUTATION, {
       cartId,
       appliedGiftCardIds,
-    });
+    }, cartImages(opts));
     assertNoUserErrors('cartGiftCardCodesRemove', data.cartGiftCardCodesRemove.userErrors);
     return normalize(data.cartGiftCardCodesRemove.cart);
   },

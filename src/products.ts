@@ -1,7 +1,7 @@
 import { request } from './client';
 import { rememberProducts } from './productStore';
 import { normalizeMetafields } from './metafields';
-import { ShopifyError } from './types';
+import { ShopifyError, ImageOptions } from './types';
 import {
   nodesAsProductsQuery,
   searchProductsQuery,
@@ -123,15 +123,15 @@ function toSearchSortKey(sortKey: string | undefined): string | undefined {
 // read, `keepMissing` leaves a positional `null`.
 async function byIds(
   ids: string[],
-  opts?: { batchSize?: number; keepMissing?: false }
+  opts?: { batchSize?: number; keepMissing?: false } & ImageOptions
 ): Promise<Product[]>;
 async function byIds(
   ids: string[],
-  opts: { batchSize?: number; keepMissing: true }
+  opts: { batchSize?: number; keepMissing: true } & ImageOptions
 ): Promise<(Product | null)[]>;
 async function byIds(
   ids: string[],
-  opts?: { batchSize?: number; keepMissing?: boolean }
+  opts?: { batchSize?: number; keepMissing?: boolean } & ImageOptions
 ): Promise<(Product | null)[]> {
   if (!ids.length) return [];
   // 100 keeps a batch under Shopify's per-call query cost ceiling for this fragment.
@@ -140,7 +140,7 @@ async function byIds(
 
   for (let i = 0; i < ids.length; i += batchSize) {
     const chunk = ids.slice(i, i + batchSize);
-    const data = await request<NodesRaw>(nodesAsProductsQuery(), { ids: chunk });
+    const data = await request<NodesRaw>(nodesAsProductsQuery(), { ids: chunk }, { imageTransform: opts?.imageTransform });
     const nodes = Array.isArray(data.nodes) ? data.nodes : [];
     for (let j = 0; j < chunk.length; j++) {
       const node = nodes[j];
@@ -201,21 +201,21 @@ export const products: ShopifyProductsAPI = {
       query: opts?.query,
       sortKey: opts?.sortKey,
       reverse: opts?.reverse ?? false,
-    });
+    }, { imageTransform: opts?.imageTransform });
     const nodes = data.products.nodes.map(normalizeProduct);
     rememberProducts(nodes, 'base');
     return { nodes, pageInfo: data.products.pageInfo };
   },
 
-  async byHandle(handle: string, opts?: { fresh?: boolean }): Promise<Product | null> {
-    const data = await request<ProductRaw>(productByHandleQuery(), { handle }, { fresh: opts?.fresh });
+  async byHandle(handle: string, opts?: { fresh?: boolean } & ImageOptions): Promise<Product | null> {
+    const data = await request<ProductRaw>(productByHandleQuery(), { handle }, { fresh: opts?.fresh, imageTransform: opts?.imageTransform });
     const product = data.product ? normalizeProduct(data.product) : null;
     rememberProducts([product], 'full');
     return product;
   },
 
-  async byId(id: string, opts?: { fresh?: boolean }): Promise<Product | null> {
-    const data = await request<ProductRaw>(productByIdQuery(), { id }, { fresh: opts?.fresh });
+  async byId(id: string, opts?: { fresh?: boolean } & ImageOptions): Promise<Product | null> {
+    const data = await request<ProductRaw>(productByIdQuery(), { id }, { fresh: opts?.fresh, imageTransform: opts?.imageTransform });
     const product = data.product ? normalizeProduct(data.product) : null;
     rememberProducts([product], 'full');
     return product;
@@ -231,7 +231,7 @@ export const products: ShopifyProductsAPI = {
       productFilters: opts?.filters,
       sortKey: toSearchSortKey(opts?.sortKey),
       reverse: opts?.reverse,
-    }, { fresh: opts?.fresh });
+    }, { fresh: opts?.fresh, imageTransform: opts?.imageTransform });
     // `types: [PRODUCT]` still yields a union: a non-Product arrives as an empty object
     // rather than being dropped, and would map to a card with no title and no price.
     const nodes = (data.search.nodes ?? []).filter((node) => node && 'id' in node).map(normalizeProduct);
@@ -244,8 +244,8 @@ export const products: ShopifyProductsAPI = {
     };
   },
 
-  async recommended(productId: string): Promise<Product[]> {
-    const data = await request<RecommendedRaw>(productRecommendationsQuery(), { productId });
+  async recommended(productId: string, opts?: ImageOptions): Promise<Product[]> {
+    const data = await request<RecommendedRaw>(productRecommendationsQuery(), { productId }, { imageTransform: opts?.imageTransform });
     const list = (data.productRecommendations ?? []).map(normalizeProduct);
     rememberProducts(list, 'base');
     return list;

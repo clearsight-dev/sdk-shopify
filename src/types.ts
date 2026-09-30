@@ -35,6 +35,36 @@ export interface ShopifyConfig {
    * Defaults: `DEFAULT_CACHE_TTL_MS`.
    */
   cache?: false | RequestCacheOptions;
+  /**
+   * Image transforms for the reads `ShopifyProvider` makes itself, which no app call can pass one to:
+   * the cart it keeps (line thumbnails) and the wishlist it rehydrates. Omitted: original URLs.
+   * A transform passed to a call directly (`cart.get(id, { imageTransform })`) wins.
+   */
+  imageTransforms?: { cart?: ImageTransform; wishlist?: ImageTransform };
+}
+
+/**
+ * Shopify's server-side image transform (`Image.url(transform:)`): resize, crop and convert on the
+ * CDN, so a grid downloads the size it shows. Every call that returns images takes one as
+ * `imageTransform`; omitted, URLs are the originals, exactly as before. `width`/`height` on an image
+ * stay the original's dimensions either way.
+ */
+export interface ImageTransform {
+  /** Largest width in px. Never upscales past the original. */
+  maxWidth?: number;
+  /** Largest height in px. Never upscales past the original. */
+  maxHeight?: number;
+  /** Where to crop when both bounds are set and the aspect differs. */
+  crop?: 'CENTER' | 'TOP' | 'BOTTOM' | 'LEFT' | 'RIGHT';
+  /** Pixel-density multiplier, 1–3: `{ maxWidth: 330, scale: 2 }` is 660 px for a 330 pt slot. */
+  scale?: number;
+  /** Convert, e.g. `'WEBP'` for smaller files. Shopify falls back if it can't. */
+  preferredContentType?: 'WEBP' | 'JPG' | 'PNG';
+}
+
+/** The `imageTransform` option, for calls without a `ListOptions`. */
+export interface ImageOptions {
+  imageTransform?: ImageTransform;
 }
 
 export interface MetafieldIdentifier {
@@ -161,7 +191,7 @@ export interface StandaloneVariant extends ProductVariant {
 
 export interface ShopifyVariantsAPI {
   /** Anything unreadable — deleted, or invisible to the token — is dropped, not returned as a hole. */
-  byIds(ids: string[], opts?: { batchSize?: number }): Promise<StandaloneVariant[]>;
+  byIds(ids: string[], opts?: { batchSize?: number } & ImageOptions): Promise<StandaloneVariant[]>;
 }
 
 export interface Product {
@@ -554,6 +584,8 @@ export interface ListOptions {
   filters?: ProductFilter[];
   /** Skip a recent cached answer and read from the network (pull-to-refresh). */
   fresh?: boolean;
+  /** Resize/convert every image in the answer on Shopify's CDN. Omitted: original URLs. */
+  imageTransform?: ImageTransform;
 }
 
 // ---------------------------------------------------------------------------
@@ -733,17 +765,17 @@ export class ShopifyError extends Error {
 export interface ShopifyProductsAPI {
   list(opts?: ListOptions): Promise<Connection<Product>>;
   /** `fresh` skips a recent cached answer (the product page's background read). */
-  byHandle(handle: string, opts?: { fresh?: boolean }): Promise<Product | null>;
-  byId(id: string, opts?: { fresh?: boolean }): Promise<Product | null>;
+  byHandle(handle: string, opts?: { fresh?: boolean } & ImageOptions): Promise<Product | null>;
+  byId(id: string, opts?: { fresh?: boolean } & ImageOptions): Promise<Product | null>;
   /**
    * Resolves product GIDs in the order given, batched to stay under Shopify's query cost cap.
    * Anything that does not resolve is dropped rather than returned as a hole.
    */
-  byIds(ids: string[], opts?: { batchSize?: number; keepMissing?: false }): Promise<Product[]>;
+  byIds(ids: string[], opts?: { batchSize?: number; keepMissing?: false } & ImageOptions): Promise<Product[]>;
   /** As above, but keeps a positional `null` so the result lines up index-for-index with `ids`. */
   byIds(
     ids: string[],
-    opts: { batchSize?: number; keepMissing: true }
+    opts: { batchSize?: number; keepMissing: true } & ImageOptions
   ): Promise<(Product | null)[]>;
   /**
    * Uses the `search` root rather than `products(query:)`, so the result also carries `totalCount`
@@ -751,12 +783,12 @@ export interface ShopifyProductsAPI {
    * throws; use `list({ query })` for the full `ProductSortKeys` set.
    */
   search(query: string, opts?: Omit<ListOptions, 'query'>): Promise<Connection<Product>>;
-  recommended(productId: string): Promise<Product[]>;
+  recommended(productId: string, opts?: ImageOptions): Promise<Product[]>;
 }
 
 export interface ShopifyCollectionsAPI {
   list(opts?: ListOptions): Promise<Connection<Collection>>;
-  byHandle(handle: string): Promise<Collection | null>;
+  byHandle(handle: string, opts?: ImageOptions): Promise<Collection | null>;
   products(handle: string, opts?: ListOptions): Promise<Connection<Product>>;
 }
 
@@ -777,34 +809,35 @@ export interface ShopifyCartAPI {
       countryCode?: string;
       customerAccessToken?: string;
     };
-  }): Promise<Cart>;
+  }, opts?: ImageOptions): Promise<Cart>;
   /** Null if the cart expired. */
-  get(cartId: string): Promise<Cart | null>;
-  addLines(cartId: string, lines: CartLineInput[]): Promise<Cart>;
-  updateLines(cartId: string, lines: CartLineUpdateInput[]): Promise<Cart>;
-  removeLines(cartId: string, lineIds: string[]): Promise<Cart>;
-  applyDiscountCodes(cartId: string, codes: string[]): Promise<Cart>;
+  get(cartId: string, opts?: ImageOptions): Promise<Cart | null>;
+  addLines(cartId: string, lines: CartLineInput[], opts?: ImageOptions): Promise<Cart>;
+  updateLines(cartId: string, lines: CartLineUpdateInput[], opts?: ImageOptions): Promise<Cart>;
+  removeLines(cartId: string, lineIds: string[], opts?: ImageOptions): Promise<Cart>;
+  applyDiscountCodes(cartId: string, codes: string[], opts?: ImageOptions): Promise<Cart>;
   setBuyerIdentity(
     cartId: string,
-    identity: { email?: string; countryCode?: string; customerAccessToken?: string }
+    identity: { email?: string; countryCode?: string; customerAccessToken?: string },
+    opts?: ImageOptions
   ): Promise<Cart>;
   /** Apply one or more gift-card codes to a cart. Idempotent per code.
    *  Requires `buyerIdentity.countryCode` on the cart — Shopify rejects
    *  gift cards with `INVALID_PAYMENT` otherwise. Callers should set the
    *  country first (see `setBuyerIdentity` / shop default via `shop.load`). */
-  applyGiftCardCodes(cartId: string, codes: string[]): Promise<Cart>;
+  applyGiftCardCodes(cartId: string, codes: string[], opts?: ImageOptions): Promise<Cart>;
   /** Remove gift cards by their AppliedGiftCard.id (NOT the raw code). */
-  removeGiftCardCodes(cartId: string, appliedGiftCardIds: string[]): Promise<Cart>;
+  removeGiftCardCodes(cartId: string, appliedGiftCardIds: string[], opts?: ImageOptions): Promise<Cart>;
   /**
    * Set the shopper's order note. `null` clears it — on the wire that is `''`, because Shopify's
    * argument is non-null and a cart with no note reads back as `''` rather than null.
    */
-  updateNote(cartId: string, note: string | null): Promise<Cart>;
+  updateNote(cartId: string, note: string | null, opts?: ImageOptions): Promise<Cart>;
   /**
    * Set the cart's attributes. Shopify REPLACES the whole set rather than merging, so pass every
    * pair that should survive, not just the one being changed.
    */
-  updateAttributes(cartId: string, attributes: CartAttribute[]): Promise<Cart>;
+  updateAttributes(cartId: string, attributes: CartAttribute[], opts?: ImageOptions): Promise<Cart>;
 }
 
 export interface ShopifyCustomerAPI {
@@ -824,14 +857,14 @@ export interface ShopifyCustomerAPI {
     patch: Partial<Pick<Customer, 'firstName' | 'lastName' | 'phone' | 'acceptsMarketing'>>
   ): Promise<Customer>;
   orders(accessToken: string, opts?: ListOptions): Promise<Connection<Order>>;
-  orderById(accessToken: string, orderId: string): Promise<Order | null>;
+  orderById(accessToken: string, orderId: string, opts?: ImageOptions): Promise<Order | null>;
 }
 
 export interface ShopifyBlogsAPI {
   list(opts?: ListOptions): Promise<Connection<Blog>>;
   byHandle(handle: string): Promise<Blog | null>;
   articles(blogHandle: string, opts?: ListOptions): Promise<Connection<Article>>;
-  articleByHandle(blogHandle: string, articleHandle: string): Promise<Article | null>;
+  articleByHandle(blogHandle: string, articleHandle: string, opts?: ImageOptions): Promise<Article | null>;
 }
 
 // Wishlist (local-storage backed)

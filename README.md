@@ -165,6 +165,32 @@ clearRequestCache();                                     // forget everything
 `useCollectionProducts`' `refresh()` and `retry()` read fresh; other grids on the same collection
 keep what they have.
 
+### Image transforms
+
+Every call that returns images takes an optional `imageTransform`, Shopify's server-side
+`Image.url(transform:)`: the CDN resizes, crops and converts, so each screen downloads the size it
+shows. **Omitted, URLs are the originals, exactly as before.**
+
+```ts
+shopify.collections.products(handle, { first: 12, imageTransform: { maxWidth: 330, scale: 2, preferredContentType: 'WEBP' } });
+shopify.products.byHandle(handle, { imageTransform: { maxWidth: 1080 } });
+useCollectionProducts({ handle, imageTransform: { maxWidth: 330, scale: 2 } });
+useSearch(term, { imageTransform: { maxWidth: 200, scale: 2 } });
+useProduct(handle, { imageTransform: { maxWidth: 1080 } });
+// e.g. …/photo_330x@2x.jpg.webp, …/photo_100x100_crop_center.jpg
+```
+
+- Fields: `maxWidth`, `maxHeight`, `crop` (`CENTER` | `TOP` | `BOTTOM` | `LEFT` | `RIGHT`),
+  `scale` (1–3), `preferredContentType` (`WEBP` | `JPG` | `PNG`). Never upscales past the original.
+  `width`/`height` on an image stay the original's.
+- Applies to every image in the answer: product images, featured image, media, variant images,
+  collection images, cart line images, order line images, article images.
+- **Provider-run reads** (the cart `ShopifyProvider` keeps, the wishlist it rehydrates) take a default
+  from the config: `imageTransforms: { cart: { maxWidth: 160, scale: 2 }, wishlist: … }`. A
+  transform passed to a call directly wins.
+- Each transform is its own cache entry. A product page's first-render `preview` uses the image the
+  grid fetched, so the image on screen is already in the image cache.
+
 ### Cache-first pages: `useProduct`, `useCollectionProducts`, `useSearch`
 
 Each hook renders what this device already knows **on its first render**, then reads the network in

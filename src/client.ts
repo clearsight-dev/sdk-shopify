@@ -1,4 +1,4 @@
-import { ShopifyConfig, ShopifyError, UserError } from './types';
+import { ImageTransform, ShopifyConfig, ShopifyError, UserError } from './types';
 import { setProductMetafields } from './metafields';
 import { configureRequestCache, readThrough } from './requestCache';
 
@@ -163,9 +163,29 @@ function withContext(operation: string): string {
   return `${operation.slice(0, braceAt)}query ${directive} ${operation.slice(braceAt)}`;
 }
 
+/**
+ * Declares `$imageTransform` on an operation whose fragments use it (`ImageFields`, media URLs).
+ * GraphQL requires every operation to declare the variables its fragments use; doing it here means
+ * no query can forget, and any operation that returns images accepts a transform. An operation that
+ * uses no image URL is returned untouched. Runs before `withContext`, while the operation's
+ * argument list still directly follows its name.
+ */
+export function withImageTransform(operation: string): string {
+  if (!/\$imageTransform\b/.test(operation) || /\$imageTransform\s*:/.test(operation)) return operation;
+  const decl = '$imageTransform: ImageTransformInput';
+  const opMatch = operation.match(/(^|\n)([ \t]*(?:query|mutation)\b[ \t]*[A-Za-z_][A-Za-z0-9_]*[ \t]*)(\(([\s\S]*?)\))?/);
+  if (!opMatch) return operation;
+  const at = opMatch.index! + opMatch[1].length;
+  const head = opMatch[2];
+  const replaced = opMatch[3] !== undefined ? `${head}(${opMatch[4].replace(/\s*$/, '')}, ${decl})` : `${head.replace(/\s*$/, '')}(${decl}) `;
+  return operation.slice(0, at) + replaced + operation.slice(at + head.length + (opMatch[3]?.length ?? 0));
+}
+
 export interface RequestOptions {
   /** Skip a recent cached answer and go to the network (pull-to-refresh). */
   fresh?: boolean;
+  /** Resize/convert the answer's images on Shopify's CDN. Omitted or null: original URLs. */
+  imageTransform?: ImageTransform | null;
 }
 
 /**
@@ -178,9 +198,15 @@ export async function request<T>(
   options?: RequestOptions,
 ): Promise<T> {
   const c = getConfig();
-  const query = withContext(deduplicateFragments(operation));
+  const query = withContext(withImageTransform(deduplicateFragments(operation)));
+  // Sent only when set: an absent variable is a null transform, and keeping it out of the variables
+  // keeps the cache key of an untransformed read what it always was.
+  const vars =
+    options?.imageTransform && /\$imageTransform\s*:/.test(query)
+      ? { ...(variables ?? {}), imageTransform: options.imageTransform }
+      : variables;
   const url = endpoint();
-  const text = await readThrough(`${url}\n${c.storefrontAccessToken}`, query, variables, options?.fresh === true, async () => {
+  const text = await readThrough(`${url}\n${c.storefrontAccessToken}`, query, vars, options?.fresh === true, async () => {
     const res = await fetch(url, {
       method: 'POST',
       headers: {
@@ -189,7 +215,7 @@ export async function request<T>(
         'Accept': 'application/json',
         'Accept-Language': c.language || 'en',
       },
-      body: JSON.stringify({ query, variables: variables ?? {} }),
+      body: JSON.stringify({ query, variables: vars ?? {} }),
     });
     if (!res.ok) {
       let bodyText = '';

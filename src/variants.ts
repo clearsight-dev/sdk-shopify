@@ -85,7 +85,7 @@ export const variants: ShopifyVariantsAPI = {
 
     for (let i = 0; i < ids.length; i += batchSize) {
       const chunk = ids.slice(i, i + batchSize);
-      const data = await request<NodesRaw>(NODES_AS_VARIANTS_QUERY, { ids: chunk });
+      const data = await request<NodesRaw>(NODES_AS_VARIANTS_QUERY, { ids: chunk }, { imageTransform: opts?.imageTransform });
       const nodes = Array.isArray(data.nodes) ? data.nodes : [];
       // `nodes(ids:)` answers positionally, with null for anything unreadable. A non-variant GID
       // arrives as an object the inline fragment never populated, so the `__typename` check is

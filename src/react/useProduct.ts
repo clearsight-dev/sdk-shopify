@@ -18,9 +18,15 @@ import { peekProduct, type CachedProduct, type ProductBase } from '../productSto
 import { shopify } from '../shopify';
 import { useShopify } from './ShopifyProvider';
 import { REVALIDATE_AFTER_MS } from './useProductFeed';
-import type { Product } from '../types';
+import type { ImageTransform, Product } from '../types';
 
 export interface UseProductOptions {
+  /**
+   * Resize/convert the full product's images on Shopify's CDN (the gallery). The first-render
+   * `preview.featuredImage` is whatever the grid that showed the product fetched, which is the image
+   * already on screen and in the image cache.
+   */
+  imageTransform?: ImageTransform;
   onError?: (error: unknown, context: { at: string; handle: string }) => void;
 }
 
@@ -75,6 +81,9 @@ export function useProduct(handle: string | null | undefined, options: UseProduc
   const configured = ready || isConfigured();
   const onErrorRef = useRef(options.onError);
   onErrorRef.current = options.onError;
+  const transformKey = options.imageTransform ? JSON.stringify(options.imageTransform) : '';
+  const transformRef = useRef(options.imageTransform);
+  transformRef.current = options.imageTransform;
 
   // First render: whatever the store knows, so the page paints on frame one.
   const [state, setState] = useState<UseProductState>(() =>
@@ -107,7 +116,7 @@ export function useProduct(handle: string | null | undefined, options: UseProduc
     });
 
     shopify.products
-      .byHandle(handle, { fresh })
+      .byHandle(handle, { fresh, imageTransform: transformRef.current })
       .then((product) => {
         if (requestId.current !== id) return;
         if (!product) {
@@ -137,7 +146,9 @@ export function useProduct(handle: string | null | undefined, options: UseProduc
         // Whatever was shown stays; the page can say the fresh read failed.
         setState((current) => ({ ...current, loading: false, refreshing: false, error: true }));
       });
-  }, [configured, handle, attempt]);
+    // Keyed on the transform's serialisation; the object changes identity every render.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [configured, handle, attempt, transformKey]);
 
   const refresh = useCallback(() => {
     freshNext.current = true;

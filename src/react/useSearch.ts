@@ -12,7 +12,7 @@
 import { useEffect, useState } from 'react';
 import { shopify } from '../shopify';
 import { useProductFeed, type ProductFeedResult, type ProductFeedState } from './useProductFeed';
-import type { ProductFilter } from '../types';
+import type { ImageTransform, ProductFilter } from '../types';
 
 /** `key` is a Storefront `SearchSortKeys` value: `RELEVANCE` or `PRICE`. */
 export interface SearchSort {
@@ -30,6 +30,8 @@ export interface UseSearchOptions {
   pageSize?: number;
   /** How long typing must pause before the term is searched. Default 300 ms. */
   debounceMs?: number;
+  /** Resize/convert the results' images on Shopify's CDN. */
+  imageTransform?: ImageTransform;
   onError?: (error: unknown, context: { at: string; query: string }) => void;
 }
 
@@ -41,7 +43,7 @@ export interface UseSearchResult extends ProductFeedResult {
 export type SearchState = ProductFeedState;
 
 export function useSearch(term: string, options: UseSearchOptions = {}): UseSearchResult {
-  const { sort, filters, pageSize = SEARCH_PAGE_SIZE, debounceMs = SEARCH_DEBOUNCE_MS, onError } = options;
+  const { sort, filters, pageSize = SEARCH_PAGE_SIZE, debounceMs = SEARCH_DEBOUNCE_MS, imageTransform, onError } = options;
   const [query, setQuery] = useState(() => term.trim());
 
   useEffect(() => {
@@ -54,7 +56,7 @@ export function useSearch(term: string, options: UseSearchOptions = {}): UseSear
   const sortKey = sort ? `${sort.key}:${sort.reverse ? 'desc' : 'asc'}` : '';
   const feed = useProductFeed({
     id: query ? `search:${query.toLowerCase()}` : null,
-    paramsKey: `${sortKey}|${pageSize}`,
+    paramsKey: `${sortKey}|${pageSize}|${imageTransform ? JSON.stringify(imageTransform) : ''}`,
     fixedFilters: filters,
     fetch: async ({ after, filters: applied, fresh }) => {
       const page = await shopify.products.search(query, {
@@ -64,6 +66,7 @@ export function useSearch(term: string, options: UseSearchOptions = {}): UseSear
         reverse: sort?.reverse,
         filters: applied,
         fresh,
+        imageTransform,
       });
       return {
         nodes: page.nodes,
