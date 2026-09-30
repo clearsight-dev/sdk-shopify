@@ -30,10 +30,25 @@ const DEFAULT_API_VERSION = '2024-10';
 export function setConfig(config: ShopifyConfig): void {
   if (!config.storeDomain) throw new Error('shopify.init: storeDomain is required');
   if (!config.storefrontAccessToken) throw new Error('shopify.init: storefrontAccessToken is required');
+  const changed = !state.config || signature(state.config) !== signature(config);
   state.config = config;
   setProductMetafields(config.productMetafields);
-  // A new store, token or market would never match an old key anyway; this frees the memory.
-  configureRequestCache(config.cache);
+  // Only a real change resets the request cache: `ShopifyProvider` sets the config on its first
+  // render and `init` sets it again, and that second call must not drop requests already started.
+  if (changed) configureRequestCache(config.cache);
+}
+
+/** Everything in a config that changes what a request returns, or how the cache behaves. */
+function signature(c: ShopifyConfig): string {
+  return JSON.stringify([
+    c.storeDomain,
+    c.storefrontAccessToken,
+    c.apiVersion ?? null,
+    c.country ?? null,
+    c.language ?? null,
+    c.productMetafields ?? null,
+    c.cache ?? null,
+  ]);
 }
 
 export function getConfig(): ShopifyConfig {

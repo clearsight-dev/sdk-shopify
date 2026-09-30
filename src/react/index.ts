@@ -27,3 +27,19 @@ export {
   type CollectionProductsState,
   type UseCollectionProductsResult,
 } from "./useCollectionProducts";
+export {
+  useSearch,
+  SEARCH_PAGE_SIZE,
+  SEARCH_DEBOUNCE_MS,
+  type SearchSort,
+  type UseSearchOptions,
+  type UseSearchResult,
+  type SearchState,
+} from "./useSearch";
+export {
+  useProduct,
+  type UseProductOptions,
+  type UseProductState,
+  type UseProductResult,
+} from "./useProduct";
+export { REVALIDATE_AFTER_MS, type ProductFeedState, type ProductFeedResult } from "./useProductFeed";

@@ -1,23 +1,14 @@
 /**
- * useCollectionProducts — one collection's products, cursor-paginated.
+ * useCollectionProducts — one collection's products (a product listing page), cache first.
  *
- * Pages on a cursor (`after: endCursor`) and APPENDS, rather than growing `first` and refetching the
- * whole list each step. Growing `first` breaks on large collections: the Storefront API rejects
- * `first > 250`, so a shopper scrolling deep eventually sends an over-cap request that errors — and a
- * screen that replaces its grid on that error destroys everything already loaded, with a retry that
- * re-sends the same failing request. Cursor paging has no such cap, never re-downloads earlier pages,
- * and — because `loadMore` failing only stops growth — leaves the loaded products in place.
- *
- * Every response is checked against the request that is current (`requestId`), so a page resolving
- * after the sort or filters changed cannot merge into the new list.
- *
- * It also holds the shopper's filter selection (`setFilters`), as the `FilterValue.input` strings a
- * filter sheet works with. The hook parses them into `ProductFilter`s itself, so no app repeats that.
+ * The collection's last first page renders immediately (memory, else the device store, so after a
+ * cold start too), then the network answer replaces it in place. Cursor-paged, appending. The
+ * shopper's filter selection is held here as `FilterValue.input` strings. The engine, and why each
+ * part is shaped the way it is, is `useProductFeed`.
  */
-import { useCallback, useEffect, useRef, useState } from 'react';
 import { shopify } from '../shopify';
-import { useShopify } from './ShopifyProvider';
-import type { Filter, Product, ProductFilter } from '../types';
+import { useProductFeed, type ProductFeedResult, type ProductFeedState } from './useProductFeed';
+import type { ProductFilter } from '../types';
 
 /** How a collection is ordered. `key` is a Storefront `ProductCollectionSortKeys` value. */
 export interface CollectionSort {
@@ -46,61 +37,8 @@ export interface UseCollectionProductsOptions {
   onError?: (error: unknown, context: { at: string; handle: string }) => void;
 }
 
-export interface CollectionProductsState {
-  products: Product[];
-  /** Null until the first read resolves, so a screen can render its own heading first. */
-  title: string | null;
-  /** The facets Shopify offers for this collection under the current filters. */
-  availableFilters: Filter[];
-  /** A first page is in flight: the grid has nothing to show yet. */
-  loading: boolean;
-  /** A later page is in flight: the grid keeps what it has and shows a footer spinner. */
-  loadingMore: boolean;
-  hasMore: boolean;
-  error: boolean;
-}
-
-export interface UseCollectionProductsResult extends CollectionProductsState {
-  loadMore: () => void;
-  /** Re-reads from the first page. The name for an error state's button. */
-  retry: () => void;
-  /** Re-reads from the first page, like `retry`. The name for pull-to-refresh. */
-  refresh: () => void;
-  /**
-   * The shopper's filter selection: the `input` strings of the `availableFilters` values they picked,
-   * as a filter sheet holds them. It belongs to the collection it was made on, so a new `handle`
-   * starts with none.
-   */
-  selectedFilters: string[];
-  /** Replace the selection. An input that isn't a Shopify filter (unparseable JSON) is dropped. */
-  setFilters: (inputs: string[]) => void;
-  clearFilters: () => void;
-  /** True while the shopper has at least one filter selected. */
-  filterActive: boolean;
-}
-
-/** One stable empty selection, so a screen's memo on `selectedFilters` holds across renders. */
-const NO_INPUTS: string[] = [];
-
-/** A `FilterValue.input` as the `ProductFilter` it encodes, or null when it isn't one. */
-function parseFilterInput(input: string): ProductFilter | null {
-  try {
-    const value: unknown = JSON.parse(input);
-    return value && typeof value === 'object' && !Array.isArray(value) ? (value as ProductFilter) : null;
-  } catch {
-    return null;
-  }
-}
-
-const IDLE: CollectionProductsState = {
-  products: [],
-  title: null,
-  availableFilters: [],
-  loading: false,
-  loadingMore: false,
-  hasMore: false,
-  error: false,
-};
+export type CollectionProductsState = ProductFeedState;
+export type UseCollectionProductsResult = ProductFeedResult;
 
 export function useCollectionProducts({
   handle,
@@ -109,164 +47,33 @@ export function useCollectionProducts({
   pageSize = COLLECTION_PAGE_SIZE,
   onError,
 }: UseCollectionProductsOptions): UseCollectionProductsResult {
-  const { ready } = useShopify();
-
-  const [state, setState] = useState<CollectionProductsState>(IDLE);
-  const [attempt, setAttempt] = useState(0);
-
-  /**
-   * Stored with the handle it was made on. Read against another handle it is empty: facets belong to
-   * a collection, and resetting it in an effect instead would first fetch the new collection with the
-   * old filters.
-   */
-  const [selection, setSelection] = useState<{ handle: string | null | undefined; inputs: string[] }>({
-    handle,
-    inputs: NO_INPUTS,
-  });
-  const selectedFilters = selection.handle === handle ? selection.inputs : NO_INPUTS;
-  const allFilters: ProductFilter[] = [
-    ...(filters ?? []),
-    ...selectedFilters.map(parseFilterInput).filter((f): f is ProductFilter => f !== null),
-  ];
-
-  /**
-   * Identifies the request the state belongs to. Bumped on every fresh read; an append carries the
-   * value it started with, so a response whose counter has moved on is dropped rather than merged.
-   */
-  const requestId = useRef(0);
-  /** The cursor for the next page, held in a ref so `loadMore` does not need a fresh callback. */
-  const cursor = useRef<string | null>(null);
-  /**
-   * Set by `refresh`/`retry` so the next first-page read skips the SDK's recent-answer cache: a
-   * shopper who pulls to refresh wants the network, not the copy another screen fetched a moment ago.
-   */
-  const freshNext = useRef(false);
-
-  /**
-   * The filter array and sort object are rebuilt on every render of the screen that owns them, so the
-   * effect depends on their serialisation rather than their identity — otherwise every keystroke
-   * elsewhere on the screen would refetch.
-   */
-  const filterKey = allFilters.length ? JSON.stringify(allFilters) : '';
   const sortKey = sort ? `${sort.key}:${sort.reverse ? 'desc' : 'asc'}` : '';
-
-  useEffect(() => {
-    // A client that is not up yet, or no handle to read, is not a failed load — it is no load.
-    if (!ready || !handle) {
-      requestId.current += 1;
-      cursor.current = null;
-      setState(IDLE);
-      return;
-    }
-
-    const id = (requestId.current += 1);
-    cursor.current = null;
-    const fresh = freshNext.current;
-    freshNext.current = false;
-    setState({ ...IDLE, loading: true });
-
-    shopify.collections
-      .products(handle, {
-        first: pageSize,
-        sortKey: sort?.key,
-        reverse: sort?.reverse ?? false,
-        filters: allFilters.length ? allFilters : undefined,
-        fresh,
-      })
-      .then((page) => {
-        if (requestId.current !== id) return;
-        cursor.current = page.pageInfo.endCursor;
-        setState({
-          products: page.nodes,
-          title: page.collection?.title ?? null,
-          availableFilters: page.filters ?? [],
-          loading: false,
-          loadingMore: false,
-          hasMore: page.pageInfo.hasNextPage,
-          error: false,
-        });
-      })
-      .catch((caught) => {
-        onError?.(caught, { at: 'useCollectionProducts', handle });
-        if (requestId.current !== id) return;
-        // A first-page failure genuinely has nothing to show, so the consumer renders its error state.
-        setState({ ...IDLE, error: true });
-      });
-    // Keyed on the serialised filters and sort; both change identity every render.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [ready, handle, sortKey, filterKey, pageSize, attempt]);
-
-  /**
-   * Guarded on both in-flight flags as well as on `hasMore`: a list's `onEndReached` fires every
-   * time the end stays in view, so an ungated version would run through the collection a page a frame.
-   */
-  const loadMore = useCallback(() => {
-    if (state.loading || state.loadingMore || !state.hasMore || !cursor.current) return;
-
-    const id = requestId.current;
-    const after = cursor.current;
-    // Claim the cursor synchronously. `onEndReached` fires repeatedly and the `loadingMore` guard
-    // reads a `state` snapshot that is stale until the next render, so a second call in the same frame
-    // would otherwise fetch this SAME page again and append it twice — duplicate keys. Nulling the ref
-    // now makes the re-entrant call bail on `!cursor.current`; the fetch restores it, a failure leaves
-    // it null (paging has stopped anyway).
-    cursor.current = null;
-    setState((current) => ({ ...current, loadingMore: true }));
-
-    shopify.collections
-      .products(handle as string, {
+  return useProductFeed({
+    id: handle ? `collection:${handle}` : null,
+    paramsKey: `${sortKey}|${pageSize}`,
+    fixedFilters: filters,
+    fetch: async ({ after, filters: applied, fresh }) => {
+      const page = await shopify.collections.products(handle as string, {
         first: pageSize,
         after,
         sortKey: sort?.key,
         reverse: sort?.reverse ?? false,
-        filters: allFilters.length ? allFilters : undefined,
-      })
-      .then((page) => {
-        if (requestId.current !== id) return;
-        cursor.current = page.pageInfo.endCursor;
-        setState((current) => {
-          // Defensive against any overlap between pages: never append a product already held.
-          const seen = new Set(current.products.map((p) => p.id));
-          const fresh = page.nodes.filter((p) => !seen.has(p.id));
-          return {
-            ...current,
-            products: fresh.length ? [...current.products, ...fresh] : current.products,
-            loadingMore: false,
-            hasMore: page.pageInfo.hasNextPage,
-          };
-        });
-      })
-      .catch((caught) => {
-        onError?.(caught, { at: 'useCollectionProducts.loadMore', handle: handle as string });
-        if (requestId.current !== id) return;
-        // A failed page is not a failed collection: what is on screen stays, and the end simply stops
-        // growing rather than the grid being replaced by an error.
-        setState((current) => ({ ...current, loadingMore: false, hasMore: false }));
+        filters: applied,
+        fresh,
       });
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [state.loading, state.loadingMore, state.hasMore, handle, sortKey, filterKey, pageSize]);
-
-  const setFilters = useCallback(
-    (inputs: string[]) => {
-      const valid = Array.from(new Set(inputs)).filter((input) => parseFilterInput(input) !== null);
-      setSelection({ handle, inputs: valid.length ? valid : NO_INPUTS });
+      return {
+        nodes: page.nodes,
+        pageInfo: page.pageInfo,
+        filters: page.filters ?? [],
+        title: page.collection?.title ?? null,
+      };
     },
-    [handle],
-  );
-  const clearFilters = useCallback(() => setSelection({ handle, inputs: NO_INPUTS }), [handle]);
-  const retry = useCallback(() => {
-    freshNext.current = true;
-    setAttempt((n) => n + 1);
-  }, []);
-
-  return {
-    ...state,
-    loadMore,
-    retry,
-    refresh: retry,
-    selectedFilters,
-    setFilters,
-    clearFilters,
-    filterActive: selectedFilters.length > 0,
-  };
+    onError: onError
+      ? (error, phase) =>
+          onError(error, {
+            at: phase === 'first' ? 'useCollectionProducts' : 'useCollectionProducts.loadMore',
+            handle: handle as string,
+          })
+      : undefined,
+  });
 }

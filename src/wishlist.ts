@@ -2,6 +2,7 @@
 // Init rehydrates from it instantly, then background-refreshes the full products.
 import { request } from './client';
 import { normalizeProduct } from './products';
+import { rememberProducts } from './productStore';
 import { nodesAsProductsQuery } from './queries';
 import type {
   Product,
@@ -122,6 +123,7 @@ async function fetchProductsByIds(ids: string[]): Promise<Array<Product | null>>
       }
     }
   }
+  rememberProducts(out, 'base');
   return out;
 }
 

@@ -732,8 +732,9 @@ export class ShopifyError extends Error {
 
 export interface ShopifyProductsAPI {
   list(opts?: ListOptions): Promise<Connection<Product>>;
-  byHandle(handle: string): Promise<Product | null>;
-  byId(id: string): Promise<Product | null>;
+  /** `fresh` skips a recent cached answer (the product page's background read). */
+  byHandle(handle: string, opts?: { fresh?: boolean }): Promise<Product | null>;
+  byId(id: string, opts?: { fresh?: boolean }): Promise<Product | null>;
   /**
    * Resolves product GIDs in the order given, batched to stay under Shopify's query cost cap.
    * Anything that does not resolve is dropped rather than returned as a hole.

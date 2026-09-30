@@ -1,5 +1,6 @@
 import { request } from './client';
 import { normalizeProduct } from './products';
+import { rememberProducts } from './productStore';
 import {
   COLLECTIONS_LIST_QUERY,
   COLLECTION_BY_HANDLE_QUERY,
@@ -56,8 +57,10 @@ export const collections: ShopifyCollectionsAPI = {
     if (!data.collection) {
       return { nodes: [], pageInfo: { hasNextPage: false, hasPreviousPage: false, startCursor: null, endCursor: null }, filters: [] };
     }
+    const nodes = data.collection.products.nodes.map(normalizeProduct);
+    rememberProducts(nodes, 'base');
     return {
-      nodes: data.collection.products.nodes.map(normalizeProduct),
+      nodes,
       pageInfo: data.collection.products.pageInfo,
       filters: data.collection.products.filters ?? [],
       collection: { handle: data.collection.handle, title: data.collection.title },

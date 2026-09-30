@@ -165,6 +165,41 @@ clearRequestCache();                                     // forget everything
 `useCollectionProducts`' `refresh()` and `retry()` read fresh; other grids on the same collection
 keep what they have.
 
+### Cache-first pages: `useProduct`, `useCollectionProducts`, `useSearch`
+
+Each hook renders what this device already knows **on its first render**, then reads the network in
+the background and updates in place (`refreshing` is true meanwhile; no spinner needed). A copy
+younger than a minute (`REVALIDATE_AFTER_MS`) isn't re-read. `refresh()` always goes to the network.
+
+```tsx
+// Product page: opens with title, image and price from whichever grid or search showed it.
+const { preview, product, level, loading, refreshing, notFound, refresh } = useProduct(handle);
+// preview: the base keys, render now. product: full (variants, media), render the picker when set.
+
+// Listing page / search page: the last first page paints immediately, even after a cold start.
+const feed = useCollectionProducts({ handle, pageSize: 12 });
+const results = useSearch(term, { debounceMs: 300 }); // results.query is the debounced term
+```
+
+- **Every product read records its base keys** (`PRODUCT_BASE_KEYS`: `id`, `handle`, `title`,
+  `featuredImage`, `priceRange`, `compareAtPriceRange`): collections, search, recommendations, lists,
+  `byIds`, the wishlist. `byHandle`/`byId` record the full product. So a product tapped anywhere
+  opens instantly, and a product page seen before opens complete.
+- **Kept on the device** across cold starts, one small key per product, read only when something
+  asks (nothing is loaded in bulk at launch). Caps: 2,500 base entries, 30 full products, 20 first
+  pages; anything older than 7 days is dropped. Keys carry a schema version and the store, market,
+  API version and metafields, so nothing mismatched is ever shown. Catalogue data only: never cart,
+  customer, orders or wallet.
+- **Storage:** on iOS/Android, **MMKV 3** (synchronous, read in microseconds inside a render). List
+  it in the app so its native code is compiled in: `npm i react-native-mmkv@^3` (needs the New
+  Architecture, on by default from RN 0.76 / Expo 52). Without it in the binary the SDK keeps
+  everything in memory only and nothing breaks. On web and the editor preview: `localStorage`.
+- `peekProduct(handleOrId)` reads the store directly (e.g. to prefetch on `onPressIn`);
+  `forgetProduct(id)` drops one (e.g. after `cart:outOfStock`); `clearProductStore()` drops all.
+- `cache: false` in the config turns all of this off, along with the request cache.
+- The provider sets the config on its first render, so these reads start at once instead of waiting
+  for its own startup (cart, wishlist, customer).
+
 ## Alerts & Toasts
 
 The editor's Settings panel configures the copy for 13 shopper-facing alerts. The

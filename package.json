@@ -1,6 +1,6 @@
 {
   "name": "@tiledev/sdk-shopify",
-  "version": "0.6.0",
+  "version": "0.7.0",
   "description": "Type-safe Shopify Storefront API client for React Native (web, iOS, Android). Products, collections, cart, customer session, blogs, a local-storage-backed wishlist, and configurable shopper alerts. Zero deps beyond fetch.",
   "license": "MIT",
   "sideEffects": false,
@@ -26,7 +26,7 @@
     "clean": "rm -rf dist",
     "build": "npm run clean && tsc -p tsconfig.json",
     "lint": "tsc --noEmit",
-    "test": "npm run build && node test/alerts.test.mjs && node test/provider.test.mjs && node test/cart-snapshot.test.mjs && node test/collection-filters.test.mjs && node test/request-cache.test.mjs"
+    "test": "npm run build && node test/alerts.test.mjs && node test/provider.test.mjs && node test/cart-snapshot.test.mjs && node test/collection-filters.test.mjs && node test/request-cache.test.mjs && node test/product-store.test.mjs"
   },
   "keywords": [
     "shopify",
@@ -50,7 +50,8 @@
   },
   "homepage": "https://github.com/clearsight-dev/sdk-shopify#readme",
   "peerDependencies": {
-    "react": ">=17"
+    "react": ">=17",
+    "react-native-mmkv": "^3.0.0"
   },
   "devDependencies": {
     "@types/node": "^20.0.0",
@@ -59,5 +60,10 @@
     "react": "^18.2.0",
     "react-dom": "^18.2.0",
     "typescript": "^5.0.0"
+  },
+  "peerDependenciesMeta": {
+    "react-native-mmkv": {
+      "optional": true
+    }
   }
 }

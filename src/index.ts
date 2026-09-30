@@ -2,6 +2,15 @@ export { shopify, shopify as default } from './shopify';
 export { formatMoney, applyMoneyFormat, shop } from './money';
 export { getMoneyFormat, getCurrencyCode } from './client';
 export { clearRequestCache, DEFAULT_CACHE_TTL_MS, type RequestCacheOptions } from './requestCache';
+export {
+  PRODUCT_BASE_KEYS,
+  peekProduct,
+  forgetProduct,
+  clearProductStore,
+  toProductBase,
+  type ProductBase,
+  type CachedProduct,
+} from './productStore';
 export { toLineSnapshot } from './cart';
 export {
   priceRange,
@@ -64,6 +73,11 @@ export {
   useTileCredit,
   useCollectionProducts,
   COLLECTION_PAGE_SIZE,
+  useSearch,
+  SEARCH_PAGE_SIZE,
+  SEARCH_DEBOUNCE_MS,
+  useProduct,
+  REVALIDATE_AFTER_MS,
   type ShopifyProviderProps,
   type ShopifyEvent,
   type ShopifyEventType,
@@ -77,4 +91,13 @@ export {
   type UseCollectionProductsOptions,
   type CollectionProductsState,
   type UseCollectionProductsResult,
+  type SearchSort,
+  type UseSearchOptions,
+  type UseSearchResult,
+  type SearchState,
+  type UseProductOptions,
+  type UseProductState,
+  type UseProductResult,
+  type ProductFeedState,
+  type ProductFeedResult,
 } from './react';

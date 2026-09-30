@@ -9,6 +9,7 @@ import {
   useState,
 } from "react";
 import { shopify } from "../shopify";
+import { isConfigured, setConfig } from "../client";
 import { toLineSnapshot } from "../cart";
 import { wouldExceedLineLimit, maxLineItems } from "../cartPolicy";
 import { classifyAuthFailure, isOutOfStockError, isUserErrorRejection } from "../errors";
@@ -488,6 +489,20 @@ export function ShopifyProvider({
     policy: resolvedPolicy,
     translate: resolvedTranslate,
   };
+
+  /**
+   * The config, set during the first render rather than waiting for `init` in the effect below:
+   * children's first render can then read the product store (its keys depend on store and
+   * market), so a product page or grid paints from cache on frame one. Children's effects also run
+   * before this provider's, and with the config set their reads can start at once.
+   */
+  if (!isConfigured()) {
+    try {
+      setConfig(config);
+    } catch {
+      // A bad config is reported by `init` below, where it has always been reported.
+    }
+  }
 
   /**
    * Re-applies what the render above already applied. `shopify.init()` sets both

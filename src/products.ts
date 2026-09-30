@@ -1,4 +1,5 @@
 import { request } from './client';
+import { rememberProducts } from './productStore';
 import { normalizeMetafields } from './metafields';
 import { ShopifyError } from './types';
 import {
@@ -148,6 +149,7 @@ async function byIds(
       else if (opts?.keepMissing) out.push(null);
     }
   }
+  rememberProducts(out, 'base');
   return out;
 }
 
@@ -200,20 +202,23 @@ export const products: ShopifyProductsAPI = {
       sortKey: opts?.sortKey,
       reverse: opts?.reverse ?? false,
     });
-    return {
-      nodes: data.products.nodes.map(normalizeProduct),
-      pageInfo: data.products.pageInfo,
-    };
+    const nodes = data.products.nodes.map(normalizeProduct);
+    rememberProducts(nodes, 'base');
+    return { nodes, pageInfo: data.products.pageInfo };
   },
 
-  async byHandle(handle: string): Promise<Product | null> {
-    const data = await request<ProductRaw>(productByHandleQuery(), { handle });
-    return data.product ? normalizeProduct(data.product) : null;
+  async byHandle(handle: string, opts?: { fresh?: boolean }): Promise<Product | null> {
+    const data = await request<ProductRaw>(productByHandleQuery(), { handle }, { fresh: opts?.fresh });
+    const product = data.product ? normalizeProduct(data.product) : null;
+    rememberProducts([product], 'full');
+    return product;
   },
 
-  async byId(id: string): Promise<Product | null> {
-    const data = await request<ProductRaw>(productByIdQuery(), { id });
-    return data.product ? normalizeProduct(data.product) : null;
+  async byId(id: string, opts?: { fresh?: boolean }): Promise<Product | null> {
+    const data = await request<ProductRaw>(productByIdQuery(), { id }, { fresh: opts?.fresh });
+    const product = data.product ? normalizeProduct(data.product) : null;
+    rememberProducts([product], 'full');
+    return product;
   },
 
   byIds: byIds as ShopifyProductsAPI['byIds'],
@@ -226,11 +231,13 @@ export const products: ShopifyProductsAPI = {
       productFilters: opts?.filters,
       sortKey: toSearchSortKey(opts?.sortKey),
       reverse: opts?.reverse,
-    });
+    }, { fresh: opts?.fresh });
+    // `types: [PRODUCT]` still yields a union: a non-Product arrives as an empty object
+    // rather than being dropped, and would map to a card with no title and no price.
+    const nodes = (data.search.nodes ?? []).filter((node) => node && 'id' in node).map(normalizeProduct);
+    rememberProducts(nodes, 'base');
     return {
-      // `types: [PRODUCT]` still yields a union: a non-Product arrives as an empty object
-      // rather than being dropped, and would map to a card with no title and no price.
-      nodes: (data.search.nodes ?? []).filter((node) => node && 'id' in node).map(normalizeProduct),
+      nodes,
       pageInfo: data.search.pageInfo,
       filters: data.search.productFilters ?? [],
       totalCount: data.search.totalCount,
@@ -239,6 +246,8 @@ export const products: ShopifyProductsAPI = {
 
   async recommended(productId: string): Promise<Product[]> {
     const data = await request<RecommendedRaw>(productRecommendationsQuery(), { productId });
-    return (data.productRecommendations ?? []).map(normalizeProduct);
+    const list = (data.productRecommendations ?? []).map(normalizeProduct);
+    rememberProducts(list, 'base');
+    return list;
   },
 };
