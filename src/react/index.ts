@@ -43,3 +43,8 @@ export {
   type UseProductResult,
 } from "./useProduct";
 export { REVALIDATE_AFTER_MS, type ProductFeedState, type ProductFeedResult } from "./useProductFeed";
+export {
+  useAlertSettings,
+  type UseAlertSettingsOptions,
+  type AlertSettingsProps,
+} from "./useAlertSettings";

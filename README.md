@@ -269,6 +269,36 @@ Resolution order per key: `messages` prop → `config.messages` → `translate(k
 rendering blank. `translate` is called with the i18n key where one exists
 (`cart.added` → `toast.added_to_cart`), otherwise the message key itself.
 
+### Reading the panel from the Live Layer
+
+The editor publishes these fields into the app's Live Layer tree. The SDK owns
+where each one lives, so an app only reads two values and passes its toast:
+
+```tsx
+import { ALERT_SETTINGS_PATH, MAX_LINE_ITEMS_SETTING_PATH, useAlertSettings } from '@tiledev/sdk-shopify';
+
+const alerts = useLL(ALERT_SETTINGS_PATH);                 // settings.alerts
+const maxLineItems = useLL(MAX_LINE_ITEMS_SETTING_PATH);   // settings.cart.maxLineItems
+const props = useAlertSettings({ alerts, maxLineItems, show: showToast });
+
+<ShopifyProvider config={config} {...props}>               // messages, cartPolicy, onEvent
+```
+
+| Published value | Result |
+| --- | --- |
+| A string | That alert's copy, cut to 200 characters |
+| `''` (the merchant cleared the field) | That alert is **silenced**: `onEvent` shows nothing |
+| Absent, or not a string | The default copy |
+| `maxLineItems` 1–100 (number or numeric string) | The cart limit |
+| `maxLineItems` anything else | No limit |
+
+Note the one difference from the `messages` prop: there an empty string falls
+back to the default, here it silences. The panel publishes `''` only when the
+merchant clears a field on purpose. Without React, `readAlertSettings(tree)`
+and `readCartPolicy(value)` return the same values, and
+`ALERT_SETTING_FIELDS` is the path table (`cart.outOfStock` sits in the
+Checkout group, where the panel shows it).
+
 ### Cart line limit
 
 `cartPolicy.maxLineItems` is the panel's "Cart Line Item Maximum Limit". It counts

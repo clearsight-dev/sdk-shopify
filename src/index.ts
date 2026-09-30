@@ -36,6 +36,17 @@ export {
   wouldExceedLineLimit,
 } from './cartPolicy';
 export {
+  ALERT_SETTINGS_PATH,
+  MAX_LINE_ITEMS_SETTING_PATH,
+  ALERT_SETTING_FIELDS,
+  MAX_ALERT_LENGTH,
+  MAX_LINE_ITEMS_RANGE,
+  readAlertSettings,
+  readCartPolicy,
+  isAlertSilenced,
+  type AlertSettings,
+} from './alertSettings';
+export {
   classifyAuthFailure,
   isOutOfStockError,
   isUserErrorRejection,
@@ -78,6 +89,7 @@ export {
   SEARCH_DEBOUNCE_MS,
   useProduct,
   REVALIDATE_AFTER_MS,
+  useAlertSettings,
   type ShopifyProviderProps,
   type ShopifyEvent,
   type ShopifyEventType,
@@ -100,4 +112,6 @@ export {
   type UseProductResult,
   type ProductFeedState,
   type ProductFeedResult,
+  type UseAlertSettingsOptions,
+  type AlertSettingsProps,
 } from './react';
