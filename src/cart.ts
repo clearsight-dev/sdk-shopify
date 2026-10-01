@@ -82,6 +82,9 @@ export function toLineSnapshot(cart: Cart): CartLineSnapshot[] {
     }));
 }
 
+// Shopify rejects an unknown CartLineInput field, so the SDK-only `source` never goes on the wire.
+const toShopifyLines = (lines?: CartLineInput[]) => lines?.map(({ source: _source, ...line }) => line);
+
 /** A cart's line-image transform: the call's own, else the provider-wide `imageTransforms.cart`. */
 function cartImages(opts?: ImageOptions): { imageTransform?: ImageTransform } {
   return { imageTransform: opts?.imageTransform ?? getConfig().imageTransforms?.cart };
@@ -98,7 +101,7 @@ export const cart: ShopifyCartAPI = {
      * error — the cart came back fine, just without them.
      */
     const payload = {
-      lines: input?.lines,
+      lines: toShopifyLines(input?.lines),
       discountCodes: input?.discountCodes,
       attributes: input?.attributes,
       buyerIdentity: input?.buyerIdentity,
@@ -114,7 +117,7 @@ export const cart: ShopifyCartAPI = {
   },
 
   async addLines(cartId: string, lines: CartLineInput[], opts?: ImageOptions): Promise<Cart> {
-    const data = await request<CartAddPayload>(CART_LINES_ADD_MUTATION, { cartId, lines }, cartImages(opts));
+    const data = await request<CartAddPayload>(CART_LINES_ADD_MUTATION, { cartId, lines: toShopifyLines(lines) }, cartImages(opts));
     assertNoUserErrors('cartLinesAdd', data.cartLinesAdd.userErrors);
     return normalize(data.cartLinesAdd.cart);
   },

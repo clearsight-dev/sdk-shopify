@@ -13,6 +13,19 @@ export {
 } from './productStore';
 export { toLineSnapshot } from './cart';
 export {
+  ATTRIBUTION_ATTRIBUTE_KEY,
+  parseAttribution,
+  serializeAttribution,
+  recordAdd,
+  recordRemove,
+  mergeAttribution,
+  type Attribution,
+  type AttributionCounts,
+  type AttributionShow,
+  type AttributionSource,
+  type AttributionLineType,
+} from './attribution';
+export {
   priceRange,
   priceFilterInput,
   parsePriceFilterInput,
