@@ -11,6 +11,8 @@ import {
 import { shopify } from "../shopify";
 import { isConfigured, setConfig } from "../client";
 import { toLineSnapshot } from "../cart";
+import type { AttributionSource } from "../attribution";
+import { createAttributionRecorder } from "./attributionRecorder";
 import { wouldExceedLineLimit, maxLineItems } from "../cartPolicy";
 import { classifyAuthFailure, isOutOfStockError, isUserErrorRejection } from "../errors";
 import { limitExceededMessage, message, setMessageResolver } from "../messages";
@@ -84,9 +86,15 @@ interface CartState {
   addLines:           (inputs: CartLineInput[]) => Promise<Cart | null>;
   /**
    * `false` when a `cartGuard` cancelled the increase. `attributes` REPLACE the line's set —
-   * Shopify does not merge them — so omit the argument to leave them untouched.
+   * Shopify does not merge them — so omit the argument to leave them untouched. `opts.source` is
+   * where an increase came from, for `attribution` (default `app`).
    */
-  updateLine:         (lineId: string, quantity: number, attributes?: CartLineAttribute[]) => Promise<boolean>;
+  updateLine:         (
+    lineId: string,
+    quantity: number,
+    attributes?: CartLineAttribute[],
+    opts?: { source?: AttributionSource },
+  ) => Promise<boolean>;
   removeLine:         (lineId: string) => Promise<void>;
   applyDiscountCodes: (codes: string[]) => Promise<void>;
   /**
@@ -114,6 +122,18 @@ interface CartState {
    */
   adopt:              (cartId: string) => Promise<Cart | null>;
   reset:              () => Promise<void>;
+  /**
+   * Waits for queued `attribution` writes and retries an unsent value once. True when the cart holds
+   * the device's value (and always when attribution is off). Never throws. Await before checkout:
+   * a failed write is otherwise only retried by the next change.
+   */
+  flushAttribution:   () => Promise<boolean>;
+  /**
+   * Sets `pairs` on the cart (overwriting a different value) and keeps every other attribute,
+   * `_apptile_attribution` included. Queued behind pending cart writes; no request when every pair
+   * is already there. Never throws: false when it could not be written or there is no cart yet.
+   */
+  ensureCartAttributes: (pairs: CartAttribute[]) => Promise<boolean>;
 }
 
 interface WishlistState {
@@ -376,6 +396,11 @@ export interface ShopifyProviderProps {
    * sets it here or the cart goes out anonymous.
    */
   cartAttributes?: CartAttribute[];
+  /**
+   * Records where the cart's units came from (live show, replay, or the rest of the app) in the
+   * `_apptile_attribution` cart attribute, after each line write lands. Off by default.
+   */
+  attribution?: { enabled: boolean };
 }
 
 function defaultStorage(): WishlistStorageAdapter | null {
@@ -396,6 +421,7 @@ export function ShopifyProvider({
   translate,
   cartPolicy,
   cartAttributes,
+  attribution,
 }: ShopifyProviderProps) {
   const [ready, setReady]           = useState(false);
   const [error, setError]           = useState<string | null>(null);
@@ -531,6 +557,22 @@ export function ShopifyProvider({
     return run;
   }, []);
 
+  const attributionOn = useRef(false);
+  attributionOn.current = !!attribution?.enabled;
+  const recorderRef = useRef<ReturnType<typeof createAttributionRecorder> | null>(null);
+  if (!recorderRef.current) {
+    recorderRef.current = createAttributionRecorder({
+      enabled: () => attributionOn.current,
+      serialize,
+      storage: () => storageRef.current,
+      write: (cartId, attrs) => shopify.cart.updateAttributes(cartId, attrs),
+      onWritten: (next) => persistCartRef.current(next),
+    });
+  }
+  const recorder = recorderRef.current;
+  // The cart the last write returned, for work queued behind it that must not read a stale render.
+  const cartRef = useRef<Cart | null>(null);
+
   /**
    * A guard is advisory: a hook that throws must not take the cart down with it. `fallback` is what
    * that failure means — approval for the `before*` hooks, nothing for the observers.
@@ -547,7 +589,9 @@ export function ShopifyProvider({
   const approveAdd = useCallback(async (input: CartLineInput): Promise<CartLineInput | null> => {
     const guard = guardRef.current;
     if (!guard?.beforeAdd) return input;
-    return runGuard(() => guard.beforeAdd!(input), input);
+    const approved = await runGuard(() => guard.beforeAdd!(input), input);
+    // A guard that rebuilds the input must not lose where it came from.
+    return approved && !approved.source && input.source ? { ...approved, source: input.source } : approved;
   }, [runGuard]);
 
   /** Hands back units the guard approved for a write that then failed. */
@@ -602,10 +646,12 @@ export function ShopifyProvider({
             // A cart created now is already in the configured market — `@inContext` saw to that.
             next = checkedOut
               ? await shopify.cart.create({ attributes: cartAttrsRef.current })
-              : await createFromSnapshot(await loadLineSnapshot(s), cartAttrsRef.current);
+              : await createFromSnapshot(await loadLineSnapshot(s), await recorder.restoreAttributes(cartAttrsRef.current));
             if (s) await Promise.resolve(s.setItem(CART_STORAGE_KEY, next.id));
           }
           await saveLineSnapshot(s, next);
+          cartRef.current = next;
+          await recorder.sync(next);
           if (mounted) setCart(next);
         } finally {
           if (mounted) setCartLoad(false);
@@ -722,12 +768,18 @@ export function ShopifyProvider({
 
   const persistCart = useCallback(async (next: Cart | null) => {
     setCart(next);
+    cartRef.current = next;
+    const synced = recorder.sync(next);
     const s = storageRef.current;
-    if (!s) return;
-    if (next) await Promise.resolve(s.setItem(CART_STORAGE_KEY, next.id));
-    else await Promise.resolve(s.removeItem(CART_STORAGE_KEY));
-    await saveLineSnapshot(s, next);
-  }, []);
+    if (s) {
+      if (next) await Promise.resolve(s.setItem(CART_STORAGE_KEY, next.id));
+      else await Promise.resolve(s.removeItem(CART_STORAGE_KEY));
+      await saveLineSnapshot(s, next);
+    }
+    await synced;
+  }, [recorder]);
+  const persistCartRef = useRef(persistCart);
+  persistCartRef.current = persistCart;
 
   const ensureCartId = useCallback(async (): Promise<string> => {
     if (cart?.id) return cart.id;
@@ -779,13 +831,14 @@ export function ShopifyProvider({
       }
       await persistCart(next);
       await clearCheckoutStarted(storageRef.current);
+      recorder.addInput(next.id, approved);
       emit("cart:add");
       announceLanded(approved, next);
       return { ok: true, cart: next };
     } finally {
       setCartLoad(false);
     }
-  }, [cart, approveAdd, releaseRejected, announceLanded, ensureCartId, persistCart, emit, reportCartFailure, serialize]);
+  }, [cart, approveAdd, releaseRejected, announceLanded, ensureCartId, persistCart, emit, reportCartFailure, serialize, recorder]);
 
   const cartAddLines = useCallback(async (requested: CartLineInput[]): Promise<Cart | null> => {
     if (requested.length === 0) return cart;
@@ -849,6 +902,8 @@ export function ShopifyProvider({
       if (next) {
         await persistCart(next);
         await clearCheckoutStarted(storageRef.current);
+        const cartId = next.id;
+        landed.forEach((input) => recorder.addInput(cartId, input));
         emit("cart:add");
         const settled = next;
         landed.forEach((input) => announceLanded(input, settled));
@@ -857,7 +912,7 @@ export function ShopifyProvider({
     } finally {
       setCartLoad(false);
     }
-  }, [cart, approveAdd, releaseRejected, announceLanded, ensureCartId, persistCart, emit, reportCartFailure, serialize]);
+  }, [cart, approveAdd, releaseRejected, announceLanded, ensureCartId, persistCart, emit, reportCartFailure, serialize, recorder]);
 
   const cartSetBuyerIdentity = useCallback(async (identity: {
     email?: string;
@@ -881,6 +936,7 @@ export function ShopifyProvider({
     lineId: string,
     quantity: number,
     attributes?: CartLineAttribute[],
+    opts?: { source?: AttributionSource },
   ): Promise<boolean> => {
     if (!cart?.id) return false;
     const guard = guardRef.current;
@@ -910,6 +966,7 @@ export function ShopifyProvider({
       }
       await persistCart(next);
       await clearCheckoutStarted(storageRef.current);
+      recorder.changeLine(next.id, previous, previous ? update.quantity - previous.quantity : 0, opts?.source);
       // A quantity change is not one of the panel's alerts — emitted as a state
       // signal so a host can refresh a badge, with no copy attached.
       emit("cart:update");
@@ -930,7 +987,7 @@ export function ShopifyProvider({
     } finally {
       setCartLoad(false);
     }
-  }, [cart, persistCart, runGuard, releaseRejected, emit, reportCartFailure, serialize]);
+  }, [cart, persistCart, runGuard, releaseRejected, emit, reportCartFailure, serialize, recorder]);
 
   const cartRemoveLine = useCallback(async (lineId: string) => {
     if (!cart?.id) return;
@@ -941,6 +998,7 @@ export function ShopifyProvider({
       const next = await serialize(() => shopify.cart.removeLines(cart.id, [lineId]));
       await persistCart(next);
       await clearCheckoutStarted(storageRef.current);
+      recorder.changeLine(next.id, previous, -(previous?.quantity ?? 0));
       // The panel's "Removed From Cart" alert. Previously nothing fired here, so
       // the configured copy had no trigger at all.
       emit("cart:remove");
@@ -960,7 +1018,7 @@ export function ShopifyProvider({
     } finally {
       setCartLoad(false);
     }
-  }, [cart, persistCart, runGuard, emit, serialize]);
+  }, [cart, persistCart, runGuard, emit, serialize, recorder]);
 
   const cartApplyDiscounts = useCallback(async (codes: string[]) => {
     if (!cart?.id) return;
@@ -1000,6 +1058,26 @@ export function ShopifyProvider({
     if (next) await persistCart(next);
     return next;
   }, [persistCart, pinMarket, applyCartAttributes]);
+
+  const cartFlushAttribution = useCallback(() => recorder.flushPending(), [recorder]);
+
+  const cartEnsureAttributes = useCallback(async (pairs: CartAttribute[]): Promise<boolean> => {
+    try {
+      return await serialize(async () => {
+        const current = cartRef.current;
+        if (!current) return false;
+        const have = current.attributes;
+        if (pairs.every((pair) => have.some((a) => a.key === pair.key && a.value === pair.value))) return true;
+        const keys = new Set(pairs.map((pair) => pair.key));
+        const next = await shopify.cart.updateAttributes(current.id, [...have.filter((a) => !keys.has(a.key)), ...pairs]);
+        await persistCart(next);
+        return true;
+      });
+    } catch (ensureError) {
+      console.warn("[ShopifyProvider] cart attribute write failed", ensureError);
+      return false;
+    }
+  }, [serialize, persistCart]);
 
   const cartReset = useCallback(async () => {
     const created = await shopify.cart.create({ attributes: cartAttrsRef.current });
@@ -1185,6 +1263,8 @@ export function ShopifyProvider({
       refresh:            cartRefresh,
       adopt:              cartAdopt,
       reset:              cartReset,
+      flushAttribution:   cartFlushAttribution,
+      ensureCartAttributes: cartEnsureAttributes,
     },
     wishlist: {
       items:        wlItems,
@@ -1219,7 +1299,7 @@ export function ShopifyProvider({
     ready, error,
     // A new policy changes `cart.maxLineItems`, so the memo must see it.
     resolvedPolicy,
-    cart, cartLoading, cartAddLine, cartAddLines, cartUpdateLine, cartRemoveLine, cartApplyDiscounts, cartUpdateNote, cartSetBuyerIdentity, cartRefresh, cartAdopt, cartReset,
+    cart, cartLoading, cartAddLine, cartAddLines, cartUpdateLine, cartRemoveLine, cartApplyDiscounts, cartUpdateNote, cartSetBuyerIdentity, cartRefresh, cartAdopt, cartReset, cartFlushAttribution, cartEnsureAttributes,
     wlItems, wlIds, wlHas, wlAdd, wlRemove, wlToggle, wlClear, wlRefresh,
     customer, token, authLoading, restoring, authLogin, authSignup, authLogout, authRecover, authRefresh,
     checkoutStarted, checkoutOrderPlaced, checkoutPaymentFailed,

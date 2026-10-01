@@ -341,6 +341,35 @@ const { reportOrderPlaced, reportPaymentFailed } = useCheckout();
 > A `checkout.observe(url)` helper that classifies the return URL itself is the
 > next piece of work; this is the seam it will emit through.
 
+### Where cart units came from (0.9.0)
+
+Off by default. With `attribution={{ enabled: true }}` the provider counts, per variant, how many
+units were added from a live show, a replay, or the rest of the app, in one cart attribute,
+`_apptile_attribution`. The order carries it in `note_attributes`.
+
+```tsx
+<ShopifyProvider config={config} attribution={{ enabled: true }}>
+// Live sheet:
+addLine({ merchandiseId, quantity: 1, source: { type: 'live', showId: streamingId } });
+// Stepper with a source:
+updateLine(lineId, 3, undefined, { source: { type: 'replay', showId: streamingId } });
+```
+
+- No `source` means `{ type: 'app' }`. Decreases and removals take units off app first, then
+  replays, then live shows, oldest first.
+- It is written after the line write lands, one write at a time. A failed write never fails the
+  line write; the next change writes the missed counts too. Every other cart attribute is kept.
+- Before opening checkout, `await flushAttribution()` (from `useCart()`) so a last failed write is
+  retried. `false` means the cart still lacks the device's value; it never throws.
+- `ensureCartAttributes(pairs)` (from `useCart()`) sets cart attributes without wiping the rest,
+  `_apptile_attribution` included, queued behind pending writes. Works with attribution off too.
+- An expired cart restored from the device snapshot is created with the value; `adopt` takes the
+  adopted cart's value.
+- `parseAttribution`, `serializeAttribution`, `recordAdd`, `recordRemove` and `mergeAttribution`
+  are exported for code that rebuilds carts itself (Cart Assist merges two carts' values).
+- `shopify.cart.updateAttributes` still replaces the whole set: send the cart's current attributes,
+  `_apptile_attribution` included.
+
 ## Tile Credit
 
 Customer wallet + gift-card mint + one-shot apply to a Shopify cart.

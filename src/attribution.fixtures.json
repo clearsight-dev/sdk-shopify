@@ -1,0 +1,132 @@
+{
+  "about": "Attribution cases from the V2 contract (C1, C2, C9). Each case starts from `start` (a cart attribute value, or null for absent), applies `steps` in order, and must end at `expected`, whose compact JSON is `serialized`. `serialized` is what the payout reads from note_attributes._apptile_attribution.",
+  "cases": [
+    {
+      "name": "two shows on one variant",
+      "start": null,
+      "steps": [
+        { "op": "add", "source": { "type": "live", "showId": "showA" }, "variantId": "gid://shopify/ProductVariant/111", "lineType": "n", "quantity": 2, "now": 1000 },
+        { "op": "add", "source": { "type": "live", "showId": "showB" }, "variantId": "gid://shopify/ProductVariant/111", "lineType": "n", "quantity": 1, "now": 2000 }
+      ],
+      "expected": { "v": 1, "live": { "showA": { "t": 1000, "items": { "111": { "n": 2 } } }, "showB": { "t": 2000, "items": { "111": { "n": 1 } } } } },
+      "serialized": "{\"v\":1,\"live\":{\"showA\":{\"t\":1000,\"items\":{\"111\":{\"n\":2}}},\"showB\":{\"t\":2000,\"items\":{\"111\":{\"n\":1}}}}}"
+    },
+    {
+      "name": "live and replay of the same show group separately, each with its own t",
+      "start": null,
+      "steps": [
+        { "op": "add", "source": { "type": "live", "showId": "showA" }, "variantId": "111", "lineType": "n", "quantity": 1, "now": 1000 },
+        { "op": "add", "source": { "type": "replay", "showId": "showA" }, "variantId": "111", "lineType": "n", "quantity": 2, "now": 5000 }
+      ],
+      "expected": { "v": 1, "live": { "showA": { "t": 1000, "items": { "111": { "n": 1 } } } }, "replay": { "showA": { "t": 5000, "items": { "111": { "n": 2 } } } } },
+      "serialized": "{\"v\":1,\"live\":{\"showA\":{\"t\":1000,\"items\":{\"111\":{\"n\":1}}}},\"replay\":{\"showA\":{\"t\":5000,\"items\":{\"111\":{\"n\":2}}}}}"
+    },
+    {
+      "name": "a second add from the same show sums and moves t",
+      "start": null,
+      "steps": [
+        { "op": "add", "source": { "type": "live", "showId": "showA" }, "variantId": "111", "lineType": "n", "quantity": 1, "now": 1000 },
+        { "op": "add", "source": { "type": "live", "showId": "showA" }, "variantId": "111", "lineType": "n", "quantity": 3, "now": 1500 }
+      ],
+      "expected": { "v": 1, "live": { "showA": { "t": 1500, "items": { "111": { "n": 4 } } } } },
+      "serialized": "{\"v\":1,\"live\":{\"showA\":{\"t\":1500,\"items\":{\"111\":{\"n\":4}}}}}"
+    },
+    {
+      "name": "removal takes app first, then replay oldest first, then live oldest first",
+      "start": "{\"v\":1,\"live\":{\"liveOld\":{\"t\":100,\"items\":{\"111\":{\"n\":1}}},\"liveNew\":{\"t\":900,\"items\":{\"111\":{\"n\":1}}}},\"replay\":{\"repNew\":{\"t\":800,\"items\":{\"111\":{\"n\":1}}},\"repOld\":{\"t\":200,\"items\":{\"111\":{\"n\":1}}}},\"app\":{\"111\":{\"n\":1}}}",
+      "steps": [
+        { "op": "remove", "variantId": "111", "lineType": "n", "quantity": 3 }
+      ],
+      "expected": { "v": 1, "live": { "liveOld": { "t": 100, "items": { "111": { "n": 1 } } }, "liveNew": { "t": 900, "items": { "111": { "n": 1 } } } } },
+      "serialized": "{\"v\":1,\"live\":{\"liveOld\":{\"t\":100,\"items\":{\"111\":{\"n\":1}}},\"liveNew\":{\"t\":900,\"items\":{\"111\":{\"n\":1}}}}}"
+    },
+    {
+      "name": "removal reaches live shows oldest first once app and replay are gone",
+      "start": "{\"v\":1,\"live\":{\"liveOld\":{\"t\":100,\"items\":{\"111\":{\"n\":2}}},\"liveNew\":{\"t\":900,\"items\":{\"111\":{\"n\":2}}}},\"app\":{\"111\":{\"n\":1}}}",
+      "steps": [
+        { "op": "remove", "variantId": "gid://shopify/ProductVariant/111", "lineType": "n", "quantity": 4 }
+      ],
+      "expected": { "v": 1, "live": { "liveNew": { "t": 900, "items": { "111": { "n": 1 } } } } },
+      "serialized": "{\"v\":1,\"live\":{\"liveNew\":{\"t\":900,\"items\":{\"111\":{\"n\":1}}}}}"
+    },
+    {
+      "name": "pre-auth and normal units of one variant count apart; removal touches only its own type",
+      "start": null,
+      "steps": [
+        { "op": "add", "source": { "type": "live", "showId": "showA" }, "variantId": "111", "lineType": "p", "quantity": 2, "now": 1000 },
+        { "op": "add", "source": { "type": "live", "showId": "showA" }, "variantId": "111", "lineType": "n", "quantity": 1, "now": 1100 },
+        { "op": "remove", "variantId": "111", "lineType": "p", "quantity": 1 }
+      ],
+      "expected": { "v": 1, "live": { "showA": { "t": 1100, "items": { "111": { "n": 1, "p": 1 } } } } },
+      "serialized": "{\"v\":1,\"live\":{\"showA\":{\"t\":1100,\"items\":{\"111\":{\"n\":1,\"p\":1}}}}}"
+    },
+    {
+      "name": "cap at line quantity: three shows hold 5 units of a variant (payout allocates newest first and caps at the order line's quantity)",
+      "start": null,
+      "steps": [
+        { "op": "add", "source": { "type": "live", "showId": "showA" }, "variantId": "111", "lineType": "n", "quantity": 2, "now": 1000 },
+        { "op": "add", "source": { "type": "replay", "showId": "showB" }, "variantId": "111", "lineType": "n", "quantity": 2, "now": 2000 },
+        { "op": "add", "source": { "type": "live", "showId": "showC" }, "variantId": "111", "lineType": "n", "quantity": 1, "now": 3000 }
+      ],
+      "expected": { "v": 1, "live": { "showA": { "t": 1000, "items": { "111": { "n": 2 } } }, "showC": { "t": 3000, "items": { "111": { "n": 1 } } } }, "replay": { "showB": { "t": 2000, "items": { "111": { "n": 2 } } } } },
+      "serialized": "{\"v\":1,\"live\":{\"showA\":{\"t\":1000,\"items\":{\"111\":{\"n\":2}}},\"showC\":{\"t\":3000,\"items\":{\"111\":{\"n\":1}}}},\"replay\":{\"showB\":{\"t\":2000,\"items\":{\"111\":{\"n\":2}}}}}"
+    },
+    {
+      "name": "drift: removing more than is recorded removes what exists and stops",
+      "start": "{\"v\":1,\"live\":{\"showA\":{\"t\":1000,\"items\":{\"111\":{\"n\":1},\"222\":{\"n\":3}}}}}",
+      "steps": [
+        { "op": "remove", "variantId": "111", "lineType": "n", "quantity": 5 }
+      ],
+      "expected": { "v": 1, "live": { "showA": { "t": 1000, "items": { "222": { "n": 3 } } } } },
+      "serialized": "{\"v\":1,\"live\":{\"showA\":{\"t\":1000,\"items\":{\"222\":{\"n\":3}}}}}"
+    },
+    {
+      "name": "drift: counts above the line quantity are kept as recorded (an untracked line removal); the payout caps",
+      "start": null,
+      "steps": [
+        { "op": "add", "source": { "type": "live", "showId": "showA" }, "variantId": "111", "lineType": "n", "quantity": 4, "now": 1000 }
+      ],
+      "expected": { "v": 1, "live": { "showA": { "t": 1000, "items": { "111": { "n": 4 } } } } },
+      "serialized": "{\"v\":1,\"live\":{\"showA\":{\"t\":1000,\"items\":{\"111\":{\"n\":4}}}}}"
+    },
+    {
+      "name": "app units only: nothing earns",
+      "start": null,
+      "steps": [
+        { "op": "add", "source": { "type": "app" }, "variantId": "gid://shopify/ProductVariant/333", "lineType": "n", "quantity": 2, "now": 1000 }
+      ],
+      "expected": { "v": 1, "app": { "333": { "n": 2 } } },
+      "serialized": "{\"v\":1,\"app\":{\"333\":{\"n\":2}}}"
+    },
+    {
+      "name": "everything removed leaves {\"v\":1}",
+      "start": null,
+      "steps": [
+        { "op": "add", "source": { "type": "live", "showId": "showA" }, "variantId": "111", "lineType": "n", "quantity": 1, "now": 1000 },
+        { "op": "add", "source": { "type": "app" }, "variantId": "111", "lineType": "n", "quantity": 1, "now": 1000 },
+        { "op": "remove", "variantId": "111", "lineType": "n", "quantity": 2 }
+      ],
+      "expected": { "v": 1 },
+      "serialized": "{\"v\":1}"
+    },
+    {
+      "name": "merge sums every counter and keeps the larger t",
+      "start": "{\"v\":1,\"live\":{\"showA\":{\"t\":1000,\"items\":{\"111\":{\"n\":1}}}},\"app\":{\"222\":{\"p\":1}}}",
+      "steps": [
+        { "op": "merge", "with": "{\"v\":1,\"live\":{\"showA\":{\"t\":3000,\"items\":{\"111\":{\"n\":2,\"p\":1}}},\"showB\":{\"t\":500,\"items\":{\"444\":{\"n\":1}}}},\"replay\":{\"showA\":{\"t\":2000,\"items\":{\"111\":{\"n\":1}}}},\"app\":{\"222\":{\"p\":2}}}" }
+      ],
+      "expected": { "v": 1, "live": { "showA": { "t": 3000, "items": { "111": { "n": 3, "p": 1 } } }, "showB": { "t": 500, "items": { "444": { "n": 1 } } } }, "replay": { "showA": { "t": 2000, "items": { "111": { "n": 1 } } } }, "app": { "222": { "p": 3 } } },
+      "serialized": "{\"v\":1,\"live\":{\"showA\":{\"t\":3000,\"items\":{\"111\":{\"n\":3,\"p\":1}}},\"showB\":{\"t\":500,\"items\":{\"444\":{\"n\":1}}}},\"replay\":{\"showA\":{\"t\":2000,\"items\":{\"111\":{\"n\":1}}}},\"app\":{\"222\":{\"p\":3}}}"
+    }
+  ],
+  "parse": [
+    { "name": "absent: missing key", "input": null, "expected": null },
+    { "name": "absent: undefined", "input": "__undefined__", "expected": null },
+    { "name": "absent: empty string", "input": "", "expected": null },
+    { "name": "absent: invalid JSON", "input": "{v:1", "expected": null },
+    { "name": "absent: wrong version", "input": "{\"v\":2,\"app\":{\"111\":{\"n\":1}}}", "expected": null },
+    { "name": "absent: not an object", "input": "[1]", "expected": null },
+    { "name": "empty value", "input": "{\"v\":1}", "expected": { "v": 1 } },
+    { "name": "zeros, bad counts and empty shows are dropped", "input": "{\"v\":1,\"live\":{\"s\":{\"t\":1,\"items\":{\"111\":{\"n\":0,\"p\":-1}}}},\"app\":{\"222\":{\"n\":1.5,\"p\":2}}}", "expected": { "v": 1, "app": { "222": { "p": 2 } } } }
+  ]
+}
