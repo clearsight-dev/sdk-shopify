@@ -933,6 +933,44 @@ const pageMovedTo = (url: string) => {
 Report the order **once per checkout**: the same page arrives several times. Tested in
 `test/checkout.test.mjs` (20 checks; the script runs in jsdom).
 
+### Where cart units came from (0.9.0)
+
+Off by default. With `attribution={{ enabled: true }}` the provider counts, per variant, how many
+units were added from a live show, a replay, or the rest of the app, in one cart attribute,
+`_apptile_attribution`. The order carries it in `note_attributes`.
+
+```tsx
+<ShopifyProvider config={config} attribution={{ enabled: true }}>
+// Live sheet:
+addLine({ merchandiseId, quantity: 1, source: { type: 'live', showId: streamingId } });
+// Stepper with a source:
+updateLine(lineId, 3, undefined, { source: { type: 'replay', showId: streamingId } });
+```
+
+- No `source` means `{ type: 'app' }`. Decreases and removals take units off app first, then
+  replays, then live shows, oldest first.
+- A product page or variant sheet passes it once: `useProductPage(handle, { source })` (or
+  `useAddToCart`) gives it to every add from the page, the stepper's + included (0.10, SDK move 6).
+- `useCheckout().prepare()` runs `flushAttribution()` and `ensureCartAttributes(cartAttributes)`
+  before checkout (0.10, SDK move 6), so an app needn't.
+- It is written after the line write lands, one write at a time. A failed write never fails the
+  line write; the next change writes the missed counts too. Every other cart attribute is kept.
+- Before opening checkout, `await flushAttribution()` (from `useCart()`) so a last failed write is
+  retried. `false` means the cart still lacks the device's value; it never throws.
+- `ensureCartAttributes(pairs)` (from `useCart()`) sets cart attributes without wiping the rest,
+  `_apptile_attribution` included, queued behind pending writes. Works with attribution off too.
+- An expired cart restored from the device snapshot is created with the value; `adopt` takes the
+  adopted cart's value.
+- `parseAttribution`, `serializeAttribution`, `recordAdd`, `recordRemove` and `mergeAttribution`
+  are exported for code that rebuilds carts itself (Cart Assist merges two carts' values).
+- **`showsInCart(cart): { live: string[]; replay: string[] }`** (0.10, SDK move 7): the shows a cart
+  holds units from, both by the show's streaming id (a replay is counted under the show it records).
+  A show whose units all left the cart isn't listed. For the analytics events `streamCheckout` and
+  `streamPurchase` (`@tiledev/sdk-analytics-core`'s `streamCheckoutParams`), sent beside
+  `initiateCheckout` and `purchase` when either list has a show (Freckled Poppy's `streamAttribution`).
+- `shopify.cart.updateAttributes` still replaces the whole set: send the cart's current attributes,
+  `_apptile_attribution` included.
+
 ## Tile Credit
 
 Tile Credit is Apptile's store-credit wallet: a service (`https://tile-credit.apptile.io`) that holds each

@@ -36,6 +36,7 @@ import {
   type ProductLike,
   type VariantPrice,
 } from '../productPage';
+import type { AttributionSource } from '../attribution';
 import type { CartLineAttribute, CartWriteResult, ImageTransform, Product, ProductMedia, ProductOption, ProductVariant } from '../types';
 import { useCart, useWishlist } from './ShopifyProvider';
 import { useProduct, type UseProductResult } from './useProduct';
@@ -177,6 +178,12 @@ export interface AddToCartInput {
   quantity?: number;
   attributes?: CartLineAttribute[];
   sellingPlanId?: string | null;
+  /**
+   * Where the units came from (a live show, a replay), for the provider's `attribution`
+   * (`_apptile_attribution`). Passed on to `addLine`, never to Shopify. Left out: the app's own
+   * (`{ type: 'app' }`). Given to `useProductPage` / `useAddToCart`, it is every add's (SDK move 6).
+   */
+  source?: AttributionSource;
 }
 
 export interface UseAddToCartOptions extends AddToCartInput {
@@ -223,6 +230,7 @@ export function useAddToCart(variant: ProductVariant | null | undefined, options
           attributes: input.attributes ?? o.attributes,
           sellingPlanId: input.sellingPlanId ?? o.sellingPlanId,
           maxQuantity: max,
+          source: input.source ?? o.source,
         });
         return done(result);
       } catch (error) {

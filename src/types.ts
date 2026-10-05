@@ -1,3 +1,4 @@
+import type { AttributionSource } from './attribution';
 import type { RequestCacheOptions } from './requestCache';
 // Setup
 
@@ -400,6 +401,8 @@ export interface CartLineInput {
    * Omitted or null: no ceiling.
    */
   maxQuantity?: number | null;
+  /** Where the units came from, for `ShopifyProviderProps.attribution`. Never sent to Shopify. */
+  source?: AttributionSource;
 }
 
 /** What a cart line needs to be re-created on a new cart — see `toLineSnapshot`. */

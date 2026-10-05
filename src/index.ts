@@ -61,6 +61,21 @@ export {
   type DescriptionBlock,
 } from './productPage';
 export {
+  ATTRIBUTION_ATTRIBUTE_KEY,
+  parseAttribution,
+  serializeAttribution,
+  recordAdd,
+  recordRemove,
+  mergeAttribution,
+  showsInCart,
+  type ShowsInCart,
+  type Attribution,
+  type AttributionCounts,
+  type AttributionShow,
+  type AttributionSource,
+  type AttributionLineType,
+} from './attribution';
+export {
   priceRange,
   priceFilterInput,
   parsePriceFilterInput,

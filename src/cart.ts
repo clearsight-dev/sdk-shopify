@@ -117,6 +117,9 @@ export function toLineSnapshot(cart: Cart): CartLineSnapshot[] {
     }));
 }
 
+// Shopify rejects an unknown CartLineInput field, so the SDK-only `source` and `maxQuantity` never go on the wire.
+const toShopifyLines = (lines?: CartLineInput[]) => lines?.map(({ source: _source, maxQuantity: _ceiling, ...line }) => line);
+
 /**
  * Whether a gift card's last characters (`AppliedGiftCard.lastCharacters`, `TileCreditRedeemResult.last4`)
  * are the end of a code or of another card's last characters. Codes are case-insensitive. At least four
@@ -156,7 +159,7 @@ export const cart: ShopifyCartAPI = {
      * error — the cart came back fine, just without them.
      */
     const payload = {
-      lines: input?.lines,
+      lines: toShopifyLines(input?.lines),
       discountCodes: input?.discountCodes,
       attributes: input?.attributes,
       buyerIdentity: input?.buyerIdentity,
@@ -172,9 +175,7 @@ export const cart: ShopifyCartAPI = {
   },
 
   async addLines(cartId: string, lines: CartLineInput[], opts?: ImageOptions): Promise<Cart> {
-    // `maxQuantity` is the SDK's own pre-write check; Shopify would reject the unknown field.
-    const shopifyLines = lines.map(({ maxQuantity: _ceiling, ...line }) => line);
-    const data = await request<CartAddPayload>(CART_LINES_ADD_MUTATION, { cartId, lines: shopifyLines }, cartImages(opts));
+    const data = await request<CartAddPayload>(CART_LINES_ADD_MUTATION, { cartId, lines: toShopifyLines(lines) }, cartImages(opts));
     assertNoUserErrors('cartLinesAdd', data.cartLinesAdd.userErrors);
     return normalize(data.cartLinesAdd.cart);
   },

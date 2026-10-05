@@ -1,6 +1,5 @@
 // SDK move 7: events that say what changed (`cart`, `changedLines`, `productId`, the signed-in
-// `customer`) and `useShopifyEvents`. The trial merge onto origin/main also checks `showsInCart`, which
-// needs 0.9.1's attribution (CHANGELOG, SDK move 7's merge note). Real ShopifyProvider in jsdom, the Storefront API
+// `customer`), `useShopifyEvents`, and `showsInCart`. Real ShopifyProvider in jsdom, the Storefront API
 // stubbed at `fetch` with an in-memory cart that merges lines like Shopify.
 import assert from 'node:assert/strict';
 import { JSDOM } from 'jsdom';
@@ -79,7 +78,7 @@ const React = (await import('react')).default;
 const { createRoot } = await import('react-dom/client');
 const TestUtils = await import('react-dom/test-utils');
 const runAct = React.act ?? TestUtils.act ?? TestUtils.default.act;
-const { ShopifyProvider, useShopify, useShopifyEvents } = await import('../dist/index.js');
+const { ShopifyProvider, useShopify, useShopifyEvents, showsInCart, ATTRIBUTION_ATTRIBUTE_KEY } = await import('../dist/index.js');
 
 const memoryStorage = () => {
   const map = new Map();
@@ -279,6 +278,24 @@ await settle();
 await act(() => api.cart.addLine({ merchandiseId: 'v5', quantity: 1 }));
 check('a provider with no onEvent still tells useShopifyEvents', () => assert.deepStrictEqual(heard, ['cart:add']));
 await runAct(async () => root2.unmount());
+
+console.log('showsInCart');
+const cartWith = (value) => ({ attributes: [{ key: 'source_name', value: 'app' }, { key: ATTRIBUTION_ATTRIBUTE_KEY, value }] });
+check('the live and replay shows, by streaming id', () => {
+  const value = JSON.stringify({ v: 1, live: { A: { t: 1, items: { 11: { n: 1 } } } }, replay: { B: { t: 2, items: { 12: { p: 1 } } }, C: { t: 3, items: { 13: { n: 2 } } } }, app: { 14: { n: 1 } } });
+  assert.deepStrictEqual(showsInCart(cartWith(value)), { live: ['A'], replay: ['B', 'C'] });
+});
+check('a show whose units all left the cart is not listed', () => {
+  const value = JSON.stringify({ v: 1, live: { A: { t: 1, items: {} }, D: { t: 1, items: { 11: { n: 0 } } } } });
+  assert.deepStrictEqual(showsInCart(cartWith(value)), { live: [], replay: [] });
+});
+check('no attribution, an unreadable one, or no cart: no shows', () => {
+  assert.deepStrictEqual(showsInCart({ attributes: [] }), { live: [], replay: [] });
+  assert.deepStrictEqual(showsInCart(cartWith('not json')), { live: [], replay: [] });
+  assert.deepStrictEqual(showsInCart(cartWith(JSON.stringify({ v: 2, live: { A: { t: 1, items: { 1: { n: 1 } } } } }))), { live: [], replay: [] });
+  assert.deepStrictEqual(showsInCart(null), { live: [], replay: [] });
+  assert.deepStrictEqual(showsInCart(undefined), { live: [], replay: [] });
+});
 
 console.log(`\n${pass} checks passed`);
 process.exit(0);
