@@ -1,4 +1,4 @@
-// SDK move 6 on top of 0.9.1's attribution (trial merge only until the merge onto origin/main):
+// SDK move 6 on top of 0.9.1's attribution:
 // `AddToCartInput.source` through `useAddToCart` (what `useProductPage().cart.add` is), and
 // `useCheckout().prepare` landing the attribution and the provider's `cartAttributes`. Real
 // ShopifyProvider in jsdom, the Storefront API stubbed at `fetch` with an in-memory cart.

@@ -1,14 +1,10 @@
 # Changelog
 
-## 0.10.0 (unreleased)
+## 0.10.0 (2026-10-06)
 
-Not published yet. This file starts with 0.10, and so far lists only SDK moves 1, 6 and 7 (logic
-moved here from the apps). The rest of 0.10's work isn't listed here yet; the README describes it.
-
-**Before publishing, read the merge notes below (two for SDK move 6, one for SDK move 7), then delete
-them.** Three pieces need origin/main's 0.9.1 attribution (`AttributionSource`, `flushAttribution`,
-`ensureCartAttributes`, `parseAttribution`), so they exist only in the trial merge onto origin/main,
-not in the 0.9.0-based working tree.
+This file starts with 0.10. It lists the logic moved here from the apps (SDK moves 1, 6 and 7); the
+rest of 0.10's work (Tile Credit and gift cards on the cart, store-credit history, selling plans on
+variants and cart lines) is described in the README.
 
 ### Checkout: noticing a placed order
 
@@ -75,14 +71,6 @@ cart's attribution first. The steps live here now. Going to the checkout page st
   provider). Not exported.
 - **New exports:** `CHECKOUT_LABEL_STEP_TIMEOUT_MS`, `type CheckoutPreparation`,
   `type PrepareCheckoutOptions`.
-- **Merge note (delete before publishing):** step 3's labelling needs 0.9.1's `flushAttribution` and
-  `ensureCartAttributes`. The working tree (0.9.0) has neither, so its `checkoutPrepare` in
-  `src/react/ShopifyProvider.tsx` leaves both steps out (a comment there says so). When merging onto
-  origin/main, pass both, as the trial merge does:
-  `flushAttribution: cartFlushAttribution` and
-  `ensureCartAttributes: () => (cartAttrsRef.current?.length ? cartEnsureAttributes(cartAttrsRef.current) : Promise.resolve(true))`,
-  with both in the `useCallback` dependencies. The trial merge's `test/product-page-source.test.mjs`
-  checks it (2 checks).
 
 ### Orders: the order just placed (SDK move 6)
 
@@ -120,11 +108,6 @@ cart's attribution first. The steps live here now. Going to the checkout page st
   `page.cart.add({ source })` names one add's. Left out, an add is the app's own, as before.
 - Until now only a direct `addLine({ source })` could carry it, so an app whose variant sheet adds
   through `useProductPage` (amore-v2's) couldn't credit a live show or a replay there.
-- **Merge note (delete before publishing):** this needs 0.9.1's `AttributionSource`, so it is in the
-  trial merge only: `src/react/useProductPage.ts` imports the type from `../attribution`, adds
-  `source?: AttributionSource` to `AddToCartInput`, and passes `source: input.source ?? o.source` to
-  `addLine`. Port those three lines when merging onto origin/main. The trial merge's
-  `test/product-page-source.test.mjs` checks it (4 checks), and is added to `npm test` there.
 
 ### One rule for pre-ordering and buying a size (SDK move 6)
 
@@ -202,18 +185,12 @@ event carried no cart. The event now says what changed, and a hook hears it from
   anywhere inside the provider, told right after `onEvent` (which is now optional for it). The
   listener is read when an event fires; it starts once mounted and stops on unmount. A throwing
   listener is warned about (`[ShopifyProvider] a useShopifyEvents listener threw`) and costs nothing.
-- **New (needs 0.9.1's attribution, so in the trial merge only): `showsInCart(cart): ShowsInCart`**
+- **New: `showsInCart(cart): ShowsInCart`**
   = `{ live: string[]; replay: string[] }`, the shows a cart holds units from, read off
   `_apptile_attribution`, both by the show's streaming id. For `streamCheckout` and
   `streamPurchase` (Freckled Poppy's `streamAttribution`).
-- New exports: `useShopifyEvents`, `type CartLineChange`, and in the trial merge `showsInCart`,
-  `type ShowsInCart`.
-- `test/shopify-events.test.mjs`: 22 checks in the trial merge (19 in the working tree, without
-  `showsInCart`).
-- **Merge note (delete before publishing):** `showsInCart` is in `src/attribution.ts`, which the
-  0.9.0-based working tree doesn't have. When merging onto origin/main, keep it, its export from
-  `src/index.ts`, and its three checks at the end of `test/shopify-events.test.mjs` (the trial
-  merge's file is the whole one).
+- New exports: `useShopifyEvents`, `type CartLineChange`, `showsInCart`, `type ShowsInCart`.
+- `test/shopify-events.test.mjs`: 22 checks.
 
 ### Moving an app over (SDK move 7)
 
