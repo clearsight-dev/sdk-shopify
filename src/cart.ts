@@ -5,6 +5,7 @@ import {
   CART_CREATE_MUTATION,
   CART_DISCOUNT_CODES_UPDATE_MUTATION,
   CART_GET_QUERY,
+  CART_GIFT_CARD_CODES_ADD_MUTATION,
   CART_GIFT_CARD_CODES_REMOVE_MUTATION,
   CART_GIFT_CARD_CODES_UPDATE_MUTATION,
   CART_LINES_ADD_MUTATION,
@@ -13,14 +14,17 @@ import {
   CART_NOTE_UPDATE_MUTATION,
 } from './queries';
 import type {
+  AppliedGiftCard,
   Cart,
   CartLineInput,
+  CartLineSellingPlan,
   CartLineSnapshot,
   CartLineUpdateInput,
   ShopifyCartAPI,
   UserError,
   ImageOptions,
   ImageTransform,
+  Money,
 } from './types';
 
 interface CartCreatePayload { cartCreate: { cart: any; userErrors: UserError[] } }
@@ -30,10 +34,40 @@ interface CartUpdPayload    { cartLinesUpdate: { cart: any; userErrors: UserErro
 interface CartRmPayload     { cartLinesRemove: { cart: any; userErrors: UserError[] } }
 interface CartDiscPayload   { cartDiscountCodesUpdate: { cart: any; userErrors: UserError[] } }
 interface CartBuyPayload    { cartBuyerIdentityUpdate: { cart: any; userErrors: UserError[] } }
-interface CartGcAddPayload  { cartGiftCardCodesUpdate: { cart: any; userErrors: UserError[] } }
+interface CartGcSetPayload  { cartGiftCardCodesUpdate: { cart: any; userErrors: UserError[] } }
+interface CartGcAddPayload  { cartGiftCardCodesAdd: { cart: any; userErrors: UserError[] } }
 interface CartGcRmPayload   { cartGiftCardCodesRemove: { cart: any; userErrors: UserError[] } }
 interface CartNotePayload   { cartNoteUpdate: { cart: any; userErrors: UserError[] } }
 interface CartAttrPayload   { cartAttributesUpdate: { cart: any; userErrors: UserError[] } }
+
+/**
+ * `money` times a whole number, worked in the amount's own smallest unit so `0.1 × 3` is `0.3`, and
+ * written with as many decimals as Shopify gave. Null in, null out.
+ */
+function timesQuantity(money: Money | null | undefined, quantity: number): Money | null {
+  if (!money || typeof money.amount !== 'string') return null;
+  const decimals = money.amount.split('.')[1]?.length ?? 0;
+  const scale = 10 ** decimals;
+  const smallestUnits = Math.round(Number(money.amount) * scale) * quantity;
+  if (!Number.isFinite(smallestUnits)) return null;
+  return { amount: (smallestUnits / scale).toFixed(decimals), currencyCode: money.currencyCode };
+}
+
+/**
+ * A line's selling-plan allocation as `CartLine.sellingPlan`: the plan, and its two amounts for the
+ * whole line. Shopify gives the amounts per unit (a line of 2 at $250 said $250 left to pay,
+ * 2026-10-05), so they are multiplied by the quantity here. Null for a line bought outright.
+ */
+function lineSellingPlan(allocation: any, quantity: number): CartLineSellingPlan | null {
+  const plan = allocation?.sellingPlan;
+  if (!plan?.id) return null;
+  return {
+    id: plan.id,
+    name: plan.name ?? '',
+    checkoutCharge: timesQuantity(allocation.checkoutChargeAmount, quantity),
+    remainingBalance: timesQuantity(allocation.remainingBalanceChargeAmount, quantity),
+  };
+}
 
 function normalize(c: any): Cart {
   return {
@@ -54,6 +88,7 @@ function normalize(c: any): Cart {
       quantity: line.quantity,
       attributes: line.attributes ?? [],
       sellingPlanId: line.sellingPlanAllocation?.sellingPlan?.id ?? null,
+      sellingPlan: lineSellingPlan(line.sellingPlanAllocation, line.quantity),
       merchandise: line.merchandise,
       product: line.merchandise?.product ?? null,
       cost: line.cost,
@@ -80,6 +115,29 @@ export function toLineSnapshot(cart: Cart): CartLineSnapshot[] {
       sellingPlanId: line.sellingPlanId ?? null,
       attributes: line.attributes.map(({ key, value }) => ({ key, value })),
     }));
+}
+
+/**
+ * Whether a gift card's last characters (`AppliedGiftCard.lastCharacters`, `TileCreditRedeemResult.last4`)
+ * are the end of a code or of another card's last characters. Codes are case-insensitive. At least four
+ * characters must match, so an empty ending matches nothing.
+ */
+function sameEnding(a: string, b: string): boolean {
+  const one = a.trim().toLowerCase();
+  const other = b.trim().toLowerCase();
+  const shorter = one.length <= other.length ? one : other;
+  return shorter.length >= 4 && (one.endsWith(other) || other.endsWith(one));
+}
+
+/** The gift cards on `cart` whose last characters match one of `endings` (a code, or its last four). */
+export function giftCardsEndingIn(cart: Cart | null, endings: string[]): AppliedGiftCard[] {
+  if (!cart) return [];
+  return cart.appliedGiftCards.filter((card) => endings.some((ending) => sameEnding(card.lastCharacters, ending)));
+}
+
+/** The codes no gift card on `cart` ends like: what Shopify didn't apply. */
+export function giftCardCodesNotOnCart(cart: Cart, codes: string[]): string[] {
+  return codes.filter((code) => giftCardsEndingIn(cart, [code]).length === 0);
 }
 
 /** A cart's line-image transform: the call's own, else the provider-wide `imageTransforms.cart`. */
@@ -114,7 +172,9 @@ export const cart: ShopifyCartAPI = {
   },
 
   async addLines(cartId: string, lines: CartLineInput[], opts?: ImageOptions): Promise<Cart> {
-    const data = await request<CartAddPayload>(CART_LINES_ADD_MUTATION, { cartId, lines }, cartImages(opts));
+    // `maxQuantity` is the SDK's own pre-write check; Shopify would reject the unknown field.
+    const shopifyLines = lines.map(({ maxQuantity: _ceiling, ...line }) => line);
+    const data = await request<CartAddPayload>(CART_LINES_ADD_MUTATION, { cartId, lines: shopifyLines }, cartImages(opts));
     assertNoUserErrors('cartLinesAdd', data.cartLinesAdd.userErrors);
     return normalize(data.cartLinesAdd.cart);
   },
@@ -153,13 +213,24 @@ export const cart: ShopifyCartAPI = {
     return normalize(data.cartBuyerIdentityUpdate.cart);
   },
 
+  /** REPLACES the cart's gift cards: a card not in `codes` comes off. Adding one is `addGiftCardCodes`. */
   async applyGiftCardCodes(cartId: string, codes: string[], opts?: ImageOptions): Promise<Cart> {
-    const data = await request<CartGcAddPayload>(CART_GIFT_CARD_CODES_UPDATE_MUTATION, {
+    const data = await request<CartGcSetPayload>(CART_GIFT_CARD_CODES_UPDATE_MUTATION, {
       cartId,
       giftCardCodes: codes,
     }, cartImages(opts));
     assertNoUserErrors('cartGiftCardCodesUpdate', data.cartGiftCardCodesUpdate.userErrors);
     return normalize(data.cartGiftCardCodesUpdate.cart);
+  },
+
+  /** Adds codes and keeps the cards already on the cart. Shopify can skip a code without an error. */
+  async addGiftCardCodes(cartId: string, codes: string[], opts?: ImageOptions): Promise<Cart> {
+    const data = await request<CartGcAddPayload>(CART_GIFT_CARD_CODES_ADD_MUTATION, {
+      cartId,
+      giftCardCodes: codes,
+    }, cartImages(opts));
+    assertNoUserErrors('cartGiftCardCodesAdd', data.cartGiftCardCodesAdd.userErrors);
+    return normalize(data.cartGiftCardCodesAdd.cart);
   },
 
   /**
@@ -193,3 +264,33 @@ export const cart: ShopifyCartAPI = {
     return normalize(data.cartGiftCardCodesRemove.cart);
   },
 };
+
+/**
+ * Adds gift-card codes to `current` so they can pay for it:
+ *
+ * 1. **A country first, only when the cart has none** (Shopify takes a gift card only on a cart with
+ *    `buyerIdentity.countryCode`). `cartBuyerIdentityUpdate` REPLACES the identity, so the cart's email
+ *    is sent again, and the shopper's token (`customerAccessToken`) keeps it linked to them. A cart that
+ *    already has a country isn't touched: the identity can't be read back whole (the token), so the
+ *    safest identity write is none.
+ * 2. **`cartGiftCardCodesAdd`**, which keeps the cart's other gift cards.
+ *
+ * `notApplied` lists the codes no card on the returned cart ends like: Shopify answered without
+ * applying them (it does that without an error for a code it doesn't take).
+ */
+export async function addGiftCardsKeepingBuyer(
+  current: Cart,
+  codes: string[],
+  options: { countryCode: () => Promise<string>; customerAccessToken?: string | null },
+): Promise<{ cart: Cart; notApplied: string[] }> {
+  let next = current;
+  if (!next.buyerIdentity?.countryCode) {
+    next = await cart.setBuyerIdentity(next.id, {
+      countryCode: await options.countryCode(),
+      ...(next.buyerIdentity?.email ? { email: next.buyerIdentity.email } : {}),
+      ...(options.customerAccessToken ? { customerAccessToken: options.customerAccessToken } : {}),
+    });
+  }
+  next = await cart.addGiftCardCodes(next.id, codes);
+  return { cart: next, notApplied: giftCardCodesNotOnCart(next, codes) };
+}

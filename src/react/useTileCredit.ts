@@ -1,15 +1,22 @@
 /**
- * useTileCredit — customer wallet + redeem hook.
+ * useTileCredit — customer wallet + redeem hook, for a caller that holds the token itself.
  *
- * The hook keeps the client wired to the ShopifyProvider's cart so
- * `redeemAndApply(amountCents)` mints a gift card AND applies it in one
- * call. It re-configures the underlying client whenever the customer
- * access token changes (rebuild the client on logout / new customer;
- * the token is baked in for the lifetime of the instance).
+ * @deprecated For the cart use `useCartStoreCredit()`, and for a balance `useStoreCredit()`: both read
+ * the provider's session (the token fresh for every request, renewed once on a 401) and need no token
+ * passed in. Kept for existing callers.
+ *
+ * Fixed 2026-10-05:
+ * - **Another shopper's wallet never shows.** What was read is held with the token it was read for, and
+ *   a new token reads again; it used to keep shopper A's wallet for shopper B (re-reading only when
+ *   the token went from none to some).
+ * - `redeemAndApply` adds the card through the provider's cart queue (`useCart().addGiftCardCodes`),
+ *   keeping the cart's other gift cards and its buyer; it used to replace both. `removeAppliedGiftCards`
+ *   goes through the queue too.
  */
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { shopify } from '../shopify';
-import { DEFAULT_TILE_CREDIT_BASE_URL } from '../tileCredit';
+import { DEFAULT_TILE_CREDIT_BASE_URL, TileCreditClient } from '../tileCredit';
+import { TileCreditError } from '../types';
 import { useCart } from './ShopifyProvider';
 import type {
   Cart,
@@ -37,102 +44,107 @@ export interface UseTileCreditState {
   loading: boolean;
   error: Error | null;
   refresh: () => Promise<void>;
-  /** Redeem N cents and apply to the current cart (from `useCart`).
-   *  Throws if no cart is loaded yet. */
+  /** Redeem N cents and add the card to the current cart (from `useCart`).
+   *  Throws if no cart is loaded yet, or `TileCreditError('cart_refused')` when the card didn't go on. */
   redeemAndApply: (amountCents: number, opts?: {
     idempotencyKey?: string;
     reason?: string;
+    /** No longer used: the provider sets the cart's country (its `config.country`, else the shop's). */
     countryFallback?: string;
   }) => Promise<{ redeemed: TileCreditRedeemResult; cart: Cart }>;
-  /** Remove one or more applied gift cards from the current cart. */
+  /** Remove one or more applied gift cards from the current cart, by `AppliedGiftCard.id`. */
   removeAppliedGiftCards: (appliedGiftCardIds: string[]) => Promise<Cart>;
+}
+
+/** What was read, and for which token: shown only while that token is the current one. */
+interface Read {
+  token: string | null;
+  wallet: TileCreditWallet | null;
+  config: TileCreditPublicConfig | null;
+  error: Error | null;
 }
 
 export function useTileCredit(opts: UseTileCreditOptions): UseTileCreditState {
   const { baseUrl = DEFAULT_TILE_CREDIT_BASE_URL, customerAccessToken, shopDomain, autoLoad = true } = opts;
   const cartState = useCart();
+  const token = customerAccessToken || null;
 
-  const [wallet, setWallet] = useState<TileCreditWallet | null>(null);
-  const [config, setConfig] = useState<TileCreditPublicConfig | null>(null);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<Error | null>(null);
-  const [configured, setConfigured] = useState(false);
+  const [read, setRead] = useState<Read>({ token: null, wallet: null, config: null, error: null });
+  const [loadingFor, setLoadingFor] = useState<string | null>(null);
+  const current: Read = read.token === token ? read : { token, wallet: null, config: null, error: null };
+  const tokenRef = useRef(token);
+  tokenRef.current = token;
 
-  // (Re)configure the client whenever the token / domain / baseUrl changes.
-  useEffect(() => {
-    if (!customerAccessToken) {
-      setConfigured(false);
-      setWallet(null);
-      return;
-    }
-    shopify.tileCredit.configure({ baseUrl, customerAccessToken, shopDomain });
-    setConfigured(true);
-  }, [baseUrl, customerAccessToken, shopDomain]);
+  // The client for the current token; also configured as the shared one, as before.
+  const client = useMemo(() => {
+    if (!token) return null;
+    shopify.tileCredit.configure({ baseUrl, customerAccessToken: token, shopDomain });
+    return new TileCreditClient({ baseUrl, customerAccessToken: token, shopDomain });
+  }, [baseUrl, token, shopDomain]);
 
   const refresh = useCallback(async () => {
-    if (!configured) return;
-    const client = shopify.tileCredit.client();
-    if (!client) return;
-    setLoading(true);
-    setError(null);
+    if (!client || !token) return;
+    setLoadingFor(token);
     try {
       const [w, c] = await Promise.all([client.getWallet(), client.getConfig()]);
-      setWallet(w);
-      setConfig(c);
+      if (tokenRef.current === token) setRead({ token, wallet: w, config: c, error: null });
     } catch (e) {
-      setError(e instanceof Error ? e : new Error(String(e)));
+      if (tokenRef.current === token) {
+        const error = e instanceof Error ? e : new Error(String(e));
+        setRead((before) => (before.token === token ? { ...before, error } : { token, wallet: null, config: null, error }));
+      }
     } finally {
-      setLoading(false);
+      setLoadingFor((now) => (now === token ? null : now));
     }
-  }, [configured]);
+  }, [client, token]);
 
   useEffect(() => {
-    if (autoLoad && configured) void refresh();
-  }, [autoLoad, configured, refresh]);
+    if (autoLoad && client) void refresh();
+  }, [autoLoad, client, refresh]);
 
   const redeemAndApply = useCallback<UseTileCreditState['redeemAndApply']>(
     async (amountCents, o = {}) => {
-      const currentCart = cartState.cart;
-      if (!currentCart) throw new Error('useTileCredit.redeemAndApply: no cart loaded');
-      const result = await shopify.tileCredit.redeemAndApplyToCart({
-        cartId: currentCart.id,
+      if (!cartState.cart) throw new Error('useTileCredit.redeemAndApply: no cart loaded');
+      if (!client) throw new TileCreditError('unauthorized', 'No signed-in customer');
+      const redeemed = await client.redeem({
         amountCents,
         idempotencyKey: o.idempotencyKey,
-        reason: o.reason,
-        countryFallback: o.countryFallback,
+        reason: o.reason ?? 'Wallet redemption',
       });
-      // Refresh the wallet so the balance debit shows in the UI.
+      let cart: Cart | null;
+      try {
+        cart = await cartState.addGiftCardCodes([redeemed.code]);
+      } catch (e) {
+        throw new TileCreditError('cart_refused', e instanceof Error ? e.message : String(e));
+      }
+      if (!cart) throw new TileCreditError('cart_refused', 'There is no cart to put the credit on');
       void refresh();
-      // The convenience method already applied; refresh cart state so the
-      // provider re-emits with the new totals + appliedGiftCards.
-      await cartState.refresh();
-      return result;
+      return { redeemed, cart };
     },
-    [cartState, refresh],
+    [cartState, client, refresh],
   );
 
   const removeAppliedGiftCards = useCallback<UseTileCreditState['removeAppliedGiftCards']>(
     async (ids) => {
-      const currentCart = cartState.cart;
-      if (!currentCart) throw new Error('useTileCredit.removeAppliedGiftCards: no cart loaded');
-      const next = await shopify.cart.removeGiftCardCodes(currentCart.id, ids);
-      await cartState.refresh();
+      const next = await cartState.removeGiftCards(ids);
+      if (!next) throw new Error('useTileCredit.removeAppliedGiftCards: no cart loaded');
       return next;
     },
     [cartState],
   );
 
+  const loading = loadingFor !== null && loadingFor === token;
   return useMemo(
     () => ({
-      ready: configured && !loading && (wallet !== null || error !== null),
-      wallet,
-      config,
+      ready: !!token && !loading && (current.wallet !== null || current.error !== null),
+      wallet: current.wallet,
+      config: current.config,
       loading,
-      error,
+      error: current.error,
       refresh,
       redeemAndApply,
       removeAppliedGiftCards,
     }),
-    [configured, wallet, config, loading, error, refresh, redeemAndApply, removeAppliedGiftCards],
+    [token, loading, current.wallet, current.config, current.error, refresh, redeemAndApply, removeAppliedGiftCards],
   );
 }

@@ -4,7 +4,9 @@
  *
  * - **Base** keys (`PRODUCT_BASE_KEYS`) are recorded from EVERY read that returns products:
  *   collections, search, recommendations, lists, `byIds`, the wishlist. They are what a product page
- *   shows instantly: title, image and price.
+ *   shows instantly: title, image, price, the variant picker (options, variants), stock state and the
+ *   description. Every one of those reads fetches them anyway; only the gallery's media waits for
+ *   the product's own read.
  * - **Full** products are recorded by `byHandle` / `byId`, for returning to a product page.
  * - **Lists**: the first page of each collection or search, for `useCollectionProducts` /
  *   `useSearch` to show before revalidating.
@@ -23,7 +25,23 @@ import { hashKey } from './deviceStoreCore';
 import type { Filter, PageInfo, Product } from './types';
 
 /** What any product read records, and what a product page can render before its own read lands. */
-export const PRODUCT_BASE_KEYS = ['id', 'handle', 'title', 'featuredImage', 'priceRange', 'compareAtPriceRange'] as const;
+export const PRODUCT_BASE_KEYS = [
+  'id',
+  'handle',
+  'title',
+  'featuredImage',
+  'priceRange',
+  'compareAtPriceRange',
+  'description',
+  'descriptionHtml',
+  'options',
+  'variants',
+  'availableForSale',
+  'totalInventory',
+  'tags',
+  'vendor',
+  'productType',
+] as const;
 export type ProductBase = Pick<Product, (typeof PRODUCT_BASE_KEYS)[number]>;
 
 export interface CachedProduct {
@@ -45,13 +63,23 @@ export interface CachedList {
   at: number;
 }
 
-const VERSION = 'v1';
+/**
+ * v3: every variant carries `sellingPlan` (its pre-order plan, or null), so a stored variant without
+ * one is never read as "no plan". v2: base entries carry options, variants, stock and the description
+ * (v1 had six keys).
+ */
+const VERSION = 'v3';
+/** Earlier schema versions, cleared from the device once per session. */
+const OLD_VERSIONS = ['v1', 'v2'];
 const DAY = 24 * 60 * 60 * 1000;
 /** Older than this, an entry is dropped rather than shown. */
 export const MAX_AGE_MS = 7 * DAY;
 const MEMORY_PRODUCTS = 300;
 const MEMORY_LISTS = 30;
-/** Device caps. A base entry is ~0.5 KB, so 2,500 is ~1.25 MB: a whole mid-size catalogue. */
+/**
+ * Device caps. A base entry is 3-10 KB with its variants and description (most of it the variants),
+ * so 2,500 is roughly 10-25 MB: a whole mid-size catalogue, read one key at a time.
+ */
 const DEVICE_BASES = 2500;
 const DEVICE_FULLS = 30;
 const DEVICE_LISTS = 20;
@@ -117,11 +145,19 @@ function touch<V>(map: Map<string, V>, k: string, v: V, cap: number): void {
   }
 }
 
+/**
+ * Memory entries whose full product has already been looked for on the device. A list read after a
+ * cold start makes a memory entry with the base keys only, while the full product from an earlier
+ * session is still on the device; `peekProduct` checks there once, then trusts memory.
+ */
+const deviceFullChecked = new Set<string>();
+
 /** Tests only: forget memory but keep the device store, which is what a cold start looks like. */
 export function resetProductStoreMemory(): void {
   products.clear();
   handles.clear();
   lists.clear();
+  deviceFullChecked.clear();
 }
 
 // ---------------------------------------------------------------------------
@@ -136,6 +172,15 @@ export function toProductBase(p: Product): ProductBase {
     featuredImage: p.featuredImage ?? null,
     priceRange: p.priceRange,
     compareAtPriceRange: p.compareAtPriceRange ?? null,
+    description: p.description ?? '',
+    descriptionHtml: p.descriptionHtml ?? '',
+    options: p.options ?? [],
+    variants: p.variants ?? [],
+    availableForSale: p.availableForSale,
+    totalInventory: p.totalInventory ?? null,
+    tags: p.tags ?? [],
+    vendor: p.vendor ?? '',
+    productType: p.productType ?? '',
   };
 }
 
@@ -157,6 +202,8 @@ function schedulePrune(s: string): void {
   setTimeout(() => {
     try {
       const store = deviceStore();
+      // Entries from an earlier schema can never be read again: drop them.
+      for (const k of store.keys()) if (OLD_VERSIONS.some((v) => k.startsWith(`${v}:`))) store.remove(k);
       const prefix = `${VERSION}:${s}:b:`;
       const baseKeys = store.keys().filter((k) => k.startsWith(prefix));
       if (baseKeys.length <= DEVICE_BASES) return;
@@ -227,6 +274,15 @@ export function peekProduct(handleOrId: string | null | undefined): CachedProduc
   const mk = `${s}|${id}`;
   const hit = products.get(mk);
   if (hit && fresh(hit.baseAt, now)) {
+    // Base keys in memory (a grid read since launch) don't mean the device has no full product.
+    if (!hit.full && !deviceFullChecked.has(mk)) {
+      deviceFullChecked.add(mk);
+      const full = parse<{ p: Product; t: number }>(store.get(key.full(s, id)));
+      if (full && fresh(full.t, now)) {
+        hit.full = full.p;
+        hit.fullAt = full.t;
+      }
+    }
     touch(products, mk, hit, MEMORY_PRODUCTS);
     return hit;
   }
@@ -257,6 +313,7 @@ export function forgetProduct(id: string): void {
   const s = scope();
   const entry = products.get(`${s}|${id}`);
   products.delete(`${s}|${id}`);
+  deviceFullChecked.delete(`${s}|${id}`);
   const store = deviceStore();
   store.remove(key.base(s, id));
   store.remove(key.full(s, id));

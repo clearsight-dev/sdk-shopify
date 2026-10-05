@@ -13,8 +13,9 @@ const ok = (label, fn) => { fn(); pass++; console.log('  ✓', label); };
 console.log('messages');
 ok('defaults cover every panel field', () => {
   const keys = Object.keys(M.DEFAULT_MESSAGES);
-  assert.equal(keys.length, 13);
+  assert.equal(keys.length, 15);
   assert.equal(M.message('cart.added'), 'Product added to the Cart');
+  assert.equal(M.message('waitlist.added'), 'Added to waitlist');
 });
 ok('panel override wins', () => {
   M.setMessages({ 'cart.added': 'Added to bag' });

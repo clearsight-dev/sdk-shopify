@@ -1,18 +1,22 @@
 /**
  * Tile Credit — customer wallet + gift-card mint client.
  *
- * A typed, error-normalized wrapper around the tile-credit Cloud Run
- * service. Talks to `/public/*` on behalf of one signed-in customer.
- * The service resolves shop → appId internally; callers never pass an
- * appId, only the shop domain + the customer access token.
+ * A typed, error-normalized wrapper around the tile-credit service (`https://tile-credit.apptile.io`).
+ * Talks to `/public/*` on behalf of one signed-in customer: `Authorization: Customer <token>` and
+ * `x-shopify-shop-domain`. The service resolves shop → appId itself.
  *
- * See `docs/tile-credit-integration.md` for the mobile flow (wallet
- * screen → redeem sheet → apply to cart), the idempotency contract, and
- * the error taxonomy. This file is deliberately dependency-free (pure
- * `fetch`) so it can be lifted into any tile SDK.
+ * How the money moves (the service's reserve-at-mint model): **redeeming reserves, it doesn't charge.**
+ * `redeem` mints a Shopify gift card for the amount and reserves it; the wallet is charged only for
+ * what an order actually uses (`orders/create`), so the balance is unchanged by a redeem. One card is
+ * active per customer: a new redeem disables the previous one. The same idempotency key returns the
+ * same card (`duplicate: true`), but two redeems at once with different keys mint two cards, so a
+ * caller allows one at a time (`useCartStoreCredit` does).
+ *
+ * The token is read before every request (`getAccessToken`) and renewed once on a 401
+ * (`renewAccessToken`). This file is dependency-free (pure `fetch`).
  */
 import { getConfig } from './client';
-import { cart as cartApi } from './cart';
+import { addGiftCardsKeepingBuyer, cart as cartApi } from './cart';
 import { shop } from './money';
 import type {
   Cart,
@@ -79,22 +83,32 @@ function statusToCode(status: number, bodyMsg?: string): TileCreditErrorCode {
 
 const DEFAULT_TIMEOUT = 20_000;
 
+interface SentRequest {
+  status: number;
+  ok: boolean;
+  statusText: string;
+  body: any;
+}
+
 /** Default tile-credit service base URL when the caller doesn't supply one. */
 export const DEFAULT_TILE_CREDIT_BASE_URL = 'https://tile-credit.apptile.io';
 
 export class TileCreditClient implements TileCreditAPI {
   private readonly baseUrl: string;
-  private readonly token: string;
+  private readonly getAccessToken: () => Promise<string | null>;
+  private readonly renewAccessToken: (() => Promise<string | null>) | null;
   private readonly shopDomain: string;
   private readonly signal?: AbortSignal;
   private readonly timeoutMs: number;
 
   constructor(config: TileCreditConfig) {
-    if (!config.customerAccessToken) throw new Error('TileCreditClient: customerAccessToken is required');
+    const fixed = config.customerAccessToken;
+    if (!config.getAccessToken && !fixed) throw new Error('TileCreditClient: getAccessToken or customerAccessToken is required');
     if (!config.shopDomain) throw new Error('TileCreditClient: shopDomain is required');
     // baseUrl is optional — falls back to the hosted tile-credit service.
     this.baseUrl = (config.baseUrl || DEFAULT_TILE_CREDIT_BASE_URL).replace(/\/+$/, '');
-    this.token = config.customerAccessToken;
+    this.getAccessToken = config.getAccessToken ?? (async () => fixed ?? null);
+    this.renewAccessToken = config.renewAccessToken ?? null;
     this.shopDomain = config.shopDomain.toLowerCase();
     this.signal = config.signal;
     this.timeoutMs = config.timeoutMs ?? DEFAULT_TIMEOUT;
@@ -102,7 +116,39 @@ export class TileCreditClient implements TileCreditAPI {
 
   // ─── HTTP core ──────────────────────────────────────────────────────────
 
+  /**
+   * One request with a token read just now. A 401 renews the token once (`renewAccessToken`) and sends
+   * the request again; a second 401, or no new token, is `unauthorized`. Nothing here signs anyone out:
+   * the service also answers 401 for a shop it doesn't know.
+   */
   private async call<T>(path: string, init: { method?: 'GET' | 'POST'; body?: unknown } = {}): Promise<T> {
+    const token = await this.tokenOrThrow(() => this.getAccessToken());
+    const first = await this.send(path, init, token);
+    if (first.status !== 401 || !this.renewAccessToken) return this.read<T>(first);
+    const renew = this.renewAccessToken;
+    const renewed = await this.tokenOrThrow(() => renew()).catch((error: unknown) => {
+      // No new token: the service's own answer stands.
+      if (error instanceof TileCreditError && error.code === 'unauthorized') return null;
+      throw error;
+    });
+    if (!renewed) return this.read<T>(first);
+    return this.read<T>(await this.send(path, init, renewed));
+  }
+
+  /** A token from `source`, or `unauthorized` (signed out) / `network` (couldn't be renewed). */
+  private async tokenOrThrow(source: () => Promise<string | null>): Promise<string> {
+    let token: string | null;
+    try {
+      token = await source();
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : String(error);
+      throw new TileCreditError('network', `Couldn't get the customer's token: ${msg}`);
+    }
+    if (!token) throw new TileCreditError('unauthorized', 'No signed-in customer');
+    return token;
+  }
+
+  private async send(path: string, init: { method?: 'GET' | 'POST'; body?: unknown }, token: string): Promise<SentRequest> {
     // Combine the constructor signal with a per-request timeout signal so
     // either can cancel the fetch; AbortController.abort() is idempotent.
     const controller = new AbortController();
@@ -119,7 +165,7 @@ export class TileCreditClient implements TileCreditAPI {
         headers: {
           'content-type': 'application/json',
           accept: 'application/json',
-          Authorization: `Customer ${this.token}`,
+          Authorization: `Customer ${token}`,
           'x-shopify-shop-domain': this.shopDomain,
         },
         body: init.body === undefined ? undefined : JSON.stringify(init.body),
@@ -130,14 +176,8 @@ export class TileCreditClient implements TileCreditAPI {
       if (text) {
         try { body = JSON.parse(text); } catch { body = { error: text.slice(0, 500) }; }
       }
-      if (!res.ok) {
-        const code = statusToCode(res.status);
-        const msg = (body && (body.message || body.error)) || `${res.status} ${res.statusText}`;
-        throw new TileCreditError(code, msg, res.status, body?.details ?? undefined);
-      }
-      return body as T;
+      return { status: res.status, ok: res.ok, statusText: res.statusText, body };
     } catch (e) {
-      if (e instanceof TileCreditError) throw e;
       // fetch throws on network / timeout / abort — normalize to `network`.
       const msg = e instanceof Error ? e.message : String(e);
       throw new TileCreditError('network', `${url} → ${msg}`);
@@ -147,7 +187,16 @@ export class TileCreditClient implements TileCreditAPI {
     }
   }
 
-  // ─── Public API — one method per endpoint (docs §4) ─────────────────────
+  private read<T>(res: SentRequest): T {
+    if (!res.ok) {
+      const code = statusToCode(res.status);
+      const msg = (res.body && (res.body.message || res.body.error)) || `${res.status} ${res.statusText}`;
+      throw new TileCreditError(code, msg, res.status, res.body?.details ?? undefined);
+    }
+    return res.body as T;
+  }
+
+  // ─── Public API — one method per endpoint ───────────────────────────────
 
   async getWallet(): Promise<TileCreditWallet> {
     const raw = await this.call<{ ok: boolean } & Omit<TileCreditWallet, ''>>('/public/me');
@@ -185,7 +234,7 @@ export class TileCreditClient implements TileCreditAPI {
   }
 
   /**
-   * Ledger + gift-cards joined into one history feed (docs §4.6). Each redeem
+   * Ledger + gift-cards joined into one history feed. Each redeem
    * row gets `.card` populated with the masked info (last4 / status / expiry)
    * so you can render "•••• adf7 · depleted" in one pass. Non-redeem rows
    * pass through unchanged with `card: null`.
@@ -231,14 +280,13 @@ export class TileCreditClient implements TileCreditAPI {
 }
 
 // ---------------------------------------------------------------------------
-// Facade — configured once, reused across screens (docs §7)
+// Facade — one client for callers without React
 // ---------------------------------------------------------------------------
 
 let activeClient: TileCreditClient | null = null;
 
-/** Configure the singleton client for the current customer session. Safe to
- *  call multiple times — replaces the instance. Rebuild on logout / new
- *  customer (`token` is baked in for the lifetime of the instance). */
+/** Configure the shared client. Safe to call multiple times — it replaces the instance. With a fixed
+ *  `customerAccessToken`, configure again for each new token; with `getAccessToken` it stays fresh. */
 export function configureTileCredit(config: TileCreditConfig): TileCreditAPI {
   activeClient = new TileCreditClient(config);
   return activeClient;
@@ -249,11 +297,16 @@ export function getTileCreditClient(): TileCreditAPI | null {
 }
 
 /**
- * Mint a gift card and apply it to the given cart — the "one function that
- * does it all" from the integration guide (§5.7). If `countryFallback` is
- * omitted, the shop's `localization.country.isoCode` is used. The buyer
- * identity update is a no-op when the cart already has a countryCode, so
- * calling this on a freshly created cart is safe.
+ * @deprecated Use `useCartStoreCredit()` in a React app: it allows one Apply at a time, finds its card
+ * on the cart, and writes through the provider's cart queue (this writes to the cart directly, so the
+ * provider's cart state is stale until it reads the cart again). Kept for callers without React.
+ *
+ * Mints a gift card with the shared client and adds it to the cart, keeping the cart's other gift
+ * cards (`cartGiftCardCodesAdd`; this used `cartGiftCardCodesUpdate`, which took them off). The cart's
+ * country is set only when it has none (`countryFallback`, else the shop's), keeping its email, and the
+ * shopper when `customerAccessToken` is passed; it used to replace the identity with the country alone,
+ * which dropped both. Throws `TileCreditError('cart_refused')` when Shopify didn't put the card on the
+ * cart; the card then only holds the credit (nothing is charged), and the next redeem disables it.
  */
 export async function redeemAndApplyToCart(opts: {
   cartId: string;
@@ -261,28 +314,32 @@ export async function redeemAndApplyToCart(opts: {
   idempotencyKey?: string;
   reason?: string;
   countryFallback?: string;
+  customerAccessToken?: string;
 }): Promise<{ redeemed: TileCreditRedeemResult; cart: Cart }> {
   if (!activeClient) {
     throw new TileCreditError('unauthorized', 'Tile Credit not configured — call shopify.tileCredit.configure(...)');
   }
-  // Ensure the Shopify SDK is initialized — we need its Storefront client
-  // to run cartBuyerIdentityUpdate + cartGiftCardCodesUpdate below.
+  // Ensure the Shopify SDK is initialized — its Storefront client writes the cart below.
   getConfig(); // throws with a friendly message if init() wasn't called
+  const current = await cartApi.get(opts.cartId);
+  if (!current) throw new TileCreditError('cart_refused', 'The cart no longer exists');
 
-  // 1. Mint the credit (idempotent — pass a key if you want crash-safe retry).
+  // Mint the credit (the same key returns the same card, so a retry never mints a second).
   const redeemed = await activeClient.redeem({
     amountCents: opts.amountCents,
     idempotencyKey: opts.idempotencyKey,
     reason: opts.reason ?? 'Wallet redemption',
   });
 
-  // 2. Ensure the cart has a buyerIdentity.countryCode so Shopify accepts
-  //    the gift card as a payment tender. No-op if already set to the same
-  //    value; belt-and-suspenders per the integration guide.
-  const country = opts.countryFallback ?? (await shop.countryCode()) ?? 'US';
-  await cartApi.setBuyerIdentity(opts.cartId, { countryCode: country });
-
-  // 3. Apply. `applyGiftCardCodes` asserts no userErrors internally.
-  const cart = await cartApi.applyGiftCardCodes(opts.cartId, [redeemed.code]);
+  const { cart, notApplied } = await addGiftCardsKeepingBuyer(current, [redeemed.code], {
+    countryCode: async () => opts.countryFallback ?? (await shop.countryCode()) ?? 'US',
+    customerAccessToken: opts.customerAccessToken,
+  });
+  if (notApplied.length) {
+    throw new TileCreditError('cart_refused', `Shopify didn't apply the gift card ending in ${redeemed.last4}`, undefined, {
+      last4: redeemed.last4,
+      giftCardGid: redeemed.giftCardGid,
+    });
+  }
   return { redeemed, cart };
 }

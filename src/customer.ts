@@ -2,6 +2,7 @@ import { request, assertNoUserErrors } from './client';
 import {
   CUSTOMER_ACCESS_TOKEN_CREATE_MUTATION,
   CUSTOMER_ACCESS_TOKEN_DELETE_MUTATION,
+  CUSTOMER_ACCESS_TOKEN_RENEW_MUTATION,
   CUSTOMER_CREATE_MUTATION,
   CUSTOMER_ORDERS_QUERY,
   CUSTOMER_QUERY,
@@ -28,6 +29,9 @@ interface TokenPayload {
     customerAccessToken: CustomerAccessToken | null;
     customerUserErrors: UserError[];
   };
+}
+interface RenewPayload {
+  customerAccessTokenRenew: { customerAccessToken: CustomerAccessToken | null; userErrors: UserError[] };
 }
 interface DeletePayload {
   customerAccessTokenDelete: { deletedAccessToken: string | null; userErrors: UserError[] };
@@ -99,6 +103,15 @@ export const customer: ShopifyCustomerAPI = {
       throw new Error('customerAccessTokenCreate returned no token');
     }
     return data.customerAccessTokenCreate.customerAccessToken;
+  },
+
+  async renew(accessToken: string): Promise<CustomerAccessToken> {
+    const data = await request<RenewPayload>(CUSTOMER_ACCESS_TOKEN_RENEW_MUTATION, { customerAccessToken: accessToken });
+    assertNoUserErrors('customerAccessTokenRenew', data.customerAccessTokenRenew.userErrors);
+    if (!data.customerAccessTokenRenew.customerAccessToken) {
+      throw new Error('customerAccessTokenRenew returned no token');
+    }
+    return data.customerAccessTokenRenew.customerAccessToken;
   },
 
   async logout(accessToken: string): Promise<void> {

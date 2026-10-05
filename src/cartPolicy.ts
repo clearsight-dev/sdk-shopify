@@ -34,10 +34,10 @@ export function maxLineItems(): number | null {
  *
  * Shopify merges an add into an existing line only when the merchandise AND the
  * line attributes match, so a per-add attribute opens a new line. Selling plans
- * split lines too, but `CartLine` carries no `sellingPlanAllocation` today, so a
- * subscription add can look like a merge into the one-off line — which counts
- * one line low and makes the limit slightly lenient rather than falsely
- * blocking a shopper.
+ * split lines too, but this check doesn't compare them (`line.sellingPlanId`),
+ * so a pre-order or subscription add can look like a merge into the one-off
+ * line — which counts one line low and makes the limit slightly lenient rather
+ * than falsely blocking a shopper.
  */
 function mergesInto(cart: Cart, input: CartLineInput): boolean {
   const attrs = input.attributes ?? [];

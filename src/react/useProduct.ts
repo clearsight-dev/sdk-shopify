@@ -14,7 +14,7 @@
  */
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { isConfigured } from '../client';
-import { peekProduct, type CachedProduct, type ProductBase } from '../productStore';
+import { peekProduct, toProductBase, type CachedProduct, type ProductBase } from '../productStore';
 import { shopify } from '../shopify';
 import { useShopify } from './ShopifyProvider';
 import { REVALIDATE_AFTER_MS } from './useProductFeed';
@@ -125,14 +125,7 @@ export function useProduct(handle: string | null | undefined, options: UseProduc
         }
         setState({
           product,
-          preview: {
-            id: product.id,
-            handle: product.handle,
-            title: product.title,
-            featuredImage: product.featuredImage ?? null,
-            priceRange: product.priceRange,
-            compareAtPriceRange: product.compareAtPriceRange ?? null,
-          },
+          preview: toProductBase(product),
           level: 'full',
           loading: false,
           refreshing: false,

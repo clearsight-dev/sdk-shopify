@@ -1,5 +1,5 @@
 export { shopify, shopify as default } from './shopify';
-export { formatMoney, applyMoneyFormat, shop } from './money';
+export { formatMoney, applyMoneyFormat, shop, typedAmountToCents } from './money';
 export { getMoneyFormat, getCurrencyCode } from './client';
 export { clearRequestCache, DEFAULT_CACHE_TTL_MS, type RequestCacheOptions } from './requestCache';
 export {
@@ -12,6 +12,54 @@ export {
   type CachedProduct,
 } from './productStore';
 export { toLineSnapshot } from './cart';
+export {
+  isOrderPlacedUrl,
+  REPORT_ADDRESS_CHANGES_SCRIPT,
+  CHECKOUT_LABEL_STEP_TIMEOUT_MS,
+  type CheckoutPreparation,
+  type PrepareCheckoutOptions,
+} from './checkout';
+export { ORDER_CLOCK_LEEWAY_MS } from './orders';
+export {
+  preorderPlanFor,
+  purchaseModeFor,
+  waitlistActionFor,
+  type PreorderVariant,
+  type PreorderOptions,
+  type PurchaseMode,
+  type PurchaseModeInput,
+  type WaitlistAction,
+} from './purchaseRules';
+export {
+  DEFAULT_OPTION_ORDER,
+  DEFAULT_LOW_STOCK_THRESHOLD,
+  isPlaceholderOption,
+  selectableOptions,
+  findVariant,
+  initialSelection,
+  selectionForVariant,
+  isVariantUnavailable,
+  optionStates,
+  selectionLabel,
+  variantPrice,
+  isLowStock,
+  stockCeiling,
+  quantityInCart,
+  withinCeiling,
+  initialMediaIndex,
+  firstImageUrl,
+  sizedImageUrl,
+  parseDescriptionHtml,
+  productShareUrl,
+  type ProductLike,
+  type OptionSelection,
+  type SelectableOptionsConfig,
+  type OptionValueState,
+  type OptionState,
+  type VariantPrice,
+  type DescriptionSpan,
+  type DescriptionBlock,
+} from './productPage';
 export {
   priceRange,
   priceFilterInput,
@@ -52,8 +100,10 @@ export {
   isUserErrorRejection,
   userErrorsOf,
 } from './errors';
+export { giftCardsEndingIn, giftCardCodesNotOnCart } from './cart';
 export {
   TileCreditClient,
+  DEFAULT_TILE_CREDIT_BASE_URL,
   configureTileCredit,
   getTileCreditClient,
   redeemAndApplyToCart,
@@ -66,6 +116,31 @@ export {
   productMetafield,
 } from './metafields';
 export { TileCreditError } from './types';
+export {
+  createCustomerSession,
+  customerAccountUrls,
+  SHOPIFY_SESSION_KEYS,
+  PASSWORD_SESSION_KEYS,
+  LEGACY_PASSWORD_TOKEN_KEY,
+  type CustomerSession,
+  type SessionState,
+  type SignupInput,
+  type ProfileChanges,
+  type AuthEventType,
+} from './auth/session';
+export {
+  sumStoreCredit,
+  STORE_CREDIT_QUERY,
+  STORE_CREDIT_HISTORY_QUERY,
+  STORE_CREDIT_HISTORY_PAGE_SIZE,
+  storeCreditHistoryNextQuery,
+  tileCreditEntry,
+  tileCreditHistory,
+  shopifyStoreCreditHistory,
+  type StoreCreditHistoryPage,
+  type StoreCreditHistorySource,
+} from './auth/storeCredit';
+export { codeChallenge, createPkce } from './auth/pkce';
 export type * from './types';
 
 // React helpers re-exported from the ROOT entry so consumers can write
@@ -78,9 +153,11 @@ export {
   useShopify,
   useCart,
   useWishlist,
+  useWaitlist,
   useCustomer,
   useCheckout,
   useShopifyMessage,
+  useShopifyEvents,
   useTileCredit,
   useCollectionProducts,
   COLLECTION_PAGE_SIZE,
@@ -90,11 +167,38 @@ export {
   useProduct,
   REVALIDATE_AFTER_MS,
   useAlertSettings,
+  useVariantSelection,
+  useAddToCart,
+  useProductPage,
+  useProductRecommendations,
+  DEFAULT_RECOMMENDATION_LIMIT,
+  useStoreCredit,
+  type StoreCreditState,
+  useCartStoreCredit,
+  type CartStoreCreditState,
+  useStoreCreditHistory,
+  type StoreCreditHistoryState,
+  type UseStoreCreditHistoryOptions,
+  useOrders,
+  useOrder,
+  useLatestOrderSince,
+  ORDERS_PAGE_SIZE,
+  LATEST_ORDER_READ_AGAIN_SECONDS,
+  type UseOrdersOptions,
+  type OrdersState,
+  type OrderState,
+  type BuyAgainResult,
+  type UseLatestOrderSinceOptions,
+  type LatestOrderSince,
+  useAppDiscountCode,
+  type UseAppDiscountCodeOptions,
   type ShopifyProviderProps,
   type ShopifyEvent,
   type ShopifyEventType,
+  type CartLineChange,
   type CartState,
   type WishlistState,
+  type WaitlistState,
   type CustomerState,
   type CheckoutState,
   type UseTileCreditOptions,
@@ -114,4 +218,16 @@ export {
   type ProductFeedResult,
   type UseAlertSettingsOptions,
   type AlertSettingsProps,
+  type UseVariantSelectionOptions,
+  type VariantSelection,
+  type AddToCartReason,
+  type AddToCartResult,
+  type AddToCartInput,
+  type UseAddToCartOptions,
+  type AddToCart,
+  type UseProductPageOptions,
+  type ProductPageStatus,
+  type ProductPage,
+  type UseProductRecommendationsOptions,
+  type ProductRecommendations,
 } from './react';

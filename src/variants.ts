@@ -34,6 +34,7 @@ interface RawVariantNode {
     handle: string;
     featuredImage: Image | null;
     media?: { nodes: { mediaContentType: string }[] } | null;
+    tags?: string[] | null;
   };
 }
 
@@ -64,6 +65,7 @@ function normalizeVariant(node: RawVariantNode): StandaloneVariant {
       hasVideo: hasVideoContentType(
         (node.product.media?.nodes ?? []).map((media) => media.mediaContentType)
       ),
+      tags: node.product.tags ?? [],
     },
     sellingPlan: allocation
       ? {

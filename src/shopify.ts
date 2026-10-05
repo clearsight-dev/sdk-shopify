@@ -8,6 +8,7 @@ import { customer } from './customer';
 import { products } from './products';
 import { variants } from './variants';
 import { wishlist } from './wishlist';
+import { waitlist } from './waitlist';
 import { isConfigured, setConfig } from './client';
 import { shop, formatMoney } from './money';
 import { setCartPolicy } from './cartPolicy';
@@ -36,6 +37,7 @@ export const shopify: ShopifyIntegration = {
   customer,
   blogs,
   wishlist,
+  waitlist,
   shop,
   formatMoney,
   alerts: {

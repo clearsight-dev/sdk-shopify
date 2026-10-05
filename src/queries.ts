@@ -38,6 +38,10 @@ export const VARIANT_FRAGMENT = /* GraphQL */ `
  *
  * Built on demand rather than held as a const: the metafield selection depends on what the app
  * configured, which happens after this module is imported.
+ *
+ * Each variant carries its first selling-plan allocation (`variant.sellingPlan`, its pre-order plan):
+ * one is all a page adds with, and every product read carries it, so a page opened from a card knows
+ * it in its first frame. It isn't in `VariantFields`, which the cart shares: a cart line has its own.
  */
 const productCoreFragment = () => /* GraphQL */ `
   ${VARIANT_FRAGMENT}
@@ -62,7 +66,12 @@ const productCoreFragment = () => /* GraphQL */ `
       maxVariantPrice { ...MoneyFields }
     }
     options { id name values }
-    variants(first: 100) { nodes { ...VariantFields } }
+    variants(first: 100) {
+      nodes {
+        ...VariantFields
+        sellingPlanAllocations(first: 1) { nodes { sellingPlan { id name } } }
+      }
+    }
     images(first: 20) { nodes { ...ImageFields } }
     featuredImage { ...ImageFields }
     onlineStoreUrl
@@ -93,8 +102,9 @@ export const productFragment = () => /* GraphQL */ `
       nodes {
         mediaContentType
         alt
-        previewImage { url(transform: $imageTransform) }
-        ... on MediaImage { id image { url(transform: $imageTransform) altText } }
+        # width/height are the original's, whatever the transform: a viewer sizes the photo from them.
+        previewImage { url(transform: $imageTransform) width height }
+        ... on MediaImage { id image { url(transform: $imageTransform) altText width height } }
         # mimeType tells the usable mp4s from the HLS/DASH manifests Shopify also returns.
         ... on Video { id sources { url mimeType width height } }
         ... on ExternalVideo { id embeddedUrl host }
@@ -146,7 +156,13 @@ export const CART_FRAGMENT = /* GraphQL */ `
         id
         quantity
         attributes { key value }
-        sellingPlanAllocation { sellingPlan { id } }
+        # The plan the line was bought on, and what checkout takes now and later for it. Shopify
+        # gives the two amounts per unit (normalize multiplies them by the quantity).
+        sellingPlanAllocation {
+          sellingPlan { id name }
+          checkoutChargeAmount { ...MoneyFields }
+          remainingBalanceChargeAmount { ...MoneyFields }
+        }
         cost {
           totalAmount { ...MoneyFields }
           amountPerQuantity { ...MoneyFields }
@@ -405,8 +421,20 @@ export const CART_BUYER_IDENTITY_UPDATE_MUTATION = /* GraphQL */ `
 
 // Gift cards are a payment tender in Shopify (not a discount), so they stack
 // past `combinesWith` rules. Apply requires `buyerIdentity.countryCode` on
-// the cart — otherwise Shopify returns INVALID_PAYMENT. See tile-credit
-// integration guide §5 for the full flow.
+// the cart — otherwise Shopify returns INVALID_PAYMENT.
+//
+// UPDATE replaces every gift card on the cart with the codes sent; ADD keeps
+// the ones already there. Adding a card is ADD.
+export const CART_GIFT_CARD_CODES_ADD_MUTATION = /* GraphQL */ `
+  ${CART_FRAGMENT}
+  mutation CartGiftCardCodesAdd($cartId: ID!, $giftCardCodes: [String!]!) {
+    cartGiftCardCodesAdd(cartId: $cartId, giftCardCodes: $giftCardCodes) {
+      cart { ...CartFields }
+      userErrors { field message code }
+    }
+  }
+`;
+
 export const CART_GIFT_CARD_CODES_UPDATE_MUTATION = /* GraphQL */ `
   ${CART_FRAGMENT}
   mutation CartGiftCardCodesUpdate($cartId: ID!, $giftCardCodes: [String!]!) {
@@ -460,6 +488,15 @@ export const CUSTOMER_ACCESS_TOKEN_DELETE_MUTATION = /* GraphQL */ `
   mutation CustomerAccessTokenDelete($customerAccessToken: String!) {
     customerAccessTokenDelete(customerAccessToken: $customerAccessToken) {
       deletedAccessToken
+      userErrors { field message }
+    }
+  }
+`;
+
+export const CUSTOMER_ACCESS_TOKEN_RENEW_MUTATION = /* GraphQL */ `
+  mutation CustomerAccessTokenRenew($customerAccessToken: String!) {
+    customerAccessTokenRenew(customerAccessToken: $customerAccessToken) {
+      customerAccessToken { accessToken expiresAt }
       userErrors { field message }
     }
   }
@@ -672,6 +709,7 @@ export const NODES_AS_VARIANTS_QUERY = /* GraphQL */ `
           id
           title
           handle
+          tags
           featuredImage { ...ImageFields }
           media(first: 250) { nodes { mediaContentType } }
         }

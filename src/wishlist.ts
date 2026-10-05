@@ -1,9 +1,18 @@
-// Storage layout: one JSON array of `{ productId, basic, addedAt }` under `storageKey`.
-// Init rehydrates from it instantly, then background-refreshes the full products.
+// The wishlist: products a shopper saved, newest first, kept on the device by `storedList` (the
+// storage rules, shared with the waitlist). Each entry is a superset of every shape the key has held,
+// so whatever reads it finds what it expects:
+//   - `productId`, `basic`, `addedAt`: sdk-shopify up to 0.8, which an older bundle (an OTA rollback)
+//     still reads;
+//   - `id` (the numeric product id) and `handle`: Apptile's engine, whose key an app migrating from it
+//     keeps using;
+//   - `product`: the product as last fetched, trimmed, so the list draws offline (`null`: gone).
+// Init reads it, merges any `migrateFrom` keys once, shows it at once, then refreshes the products in
+// the background. A refresh that fails keeps what was stored.
 import { request, getConfig } from './client';
 import { normalizeProduct } from './products';
-import { rememberProducts } from './productStore';
+import { peekProduct, rememberProducts } from './productStore';
 import { nodesAsProductsQuery } from './queries';
+import { createStoredList } from './storedList';
 import type {
   Product,
   ShopifyWishlistAPI,
@@ -16,13 +25,12 @@ import type {
 
 const DEFAULT_STORAGE_KEY = 'tile:shopify:wishlist:v1';
 const DEFAULT_BATCH_SIZE = 100;
+const PRODUCT_GID = 'gid://shopify/Product/';
 
 interface WishlistState {
   ready: boolean;
   items: WishlistItem[];
   index: Map<string, number>;    // productId → items[] index
-  storage: WishlistStorageAdapter | null;
-  storageKey: string;
   batchSize: number;
   listeners: Set<WishlistChangeListener>;
 }
@@ -31,8 +39,6 @@ const state: WishlistState = {
   ready: false,
   items: [],
   index: new Map(),
-  storage: null,
-  storageKey: DEFAULT_STORAGE_KEY,
   batchSize: DEFAULT_BATCH_SIZE,
   listeners: new Set(),
 };
@@ -44,41 +50,60 @@ function defaultStorage(): WishlistStorageAdapter | null {
   return null;
 }
 
-async function loadFromStorage(): Promise<WishlistItem[]> {
-  if (!state.storage) return [];
-  try {
-    const raw = await Promise.resolve(state.storage.getItem(state.storageKey));
-    if (!raw) return [];
-    const parsed = JSON.parse(raw);
-    if (!Array.isArray(parsed)) return [];
-    return parsed.filter(isValidItemShape);
-  } catch {
-    return [];
-  }
+/** Apptile's engine kept the numeric id; everything else here is the GID. */
+function toProductGid(id: string): string {
+  return /^\d+$/.test(id) ? `${PRODUCT_GID}${id}` : id;
 }
 
-async function saveToStorage(): Promise<void> {
-  if (!state.storage) return;
-  const serialized = JSON.stringify(state.items.map(stripHydrated));
-  try {
-    await Promise.resolve(state.storage.setItem(state.storageKey, serialized));
-  } catch {
-    // Storage full or unavailable — in-memory state stays correct regardless.
-  }
+function numericId(gid: string): string {
+  return gid.startsWith(PRODUCT_GID) ? gid.slice(PRODUCT_GID.length) : gid;
 }
 
-/** Drops the hydrated `product` before persisting — it is large and refreshable. */
-function stripHydrated(item: WishlistItem): Omit<WishlistItem, 'product'> {
-  return { productId: item.productId, basic: item.basic, addedAt: item.addedAt };
+function isStoredProduct(v: unknown, productId: string): v is Product {
+  const p = v as Partial<Product> | null;
+  return !!p && typeof p === 'object' && p.id === productId && typeof p.handle === 'string' && !!p.priceRange;
 }
 
-function isValidItemShape(v: any): v is WishlistItem {
-  return (
-    v && typeof v === 'object' &&
-    typeof v.productId === 'string' &&
-    typeof v.addedAt === 'number' &&
-    v.basic && typeof v.basic === 'object'
-  );
+/**
+ * What is kept of a product: everything a card and a product page's instant view use, without the
+ * gallery (images past the first, media), which a product page fetches anyway. `hasVideo` stays.
+ */
+function trimProduct(p: Product): Product {
+  return { ...p, images: p.images.slice(0, 1), media: [], mediaContentTypes: [] };
+}
+
+const stored = createStoredList<WishlistItem>({
+  idOf: (item) => item.productId,
+  addedAt: (item) => item.addedAt,
+  read(v) {
+    if (!v || typeof v !== 'object') return null;
+    const e = v as Record<string, unknown>;
+    const rawId =
+      typeof e.productId === 'string' ? e.productId : typeof e.id === 'string' || typeof e.id === 'number' ? String(e.id) : '';
+    if (!rawId) return null;
+    const productId = toProductGid(rawId);
+    const basic: WishlistItem['basic'] = e.basic && typeof e.basic === 'object' ? { ...(e.basic as WishlistItem['basic']) } : {};
+    if (!basic.handle && typeof e.handle === 'string') basic.handle = e.handle;
+    const product = e.product === null ? null : isStoredProduct(e.product, productId) ? e.product : undefined;
+    return { productId, basic, addedAt: typeof e.addedAt === 'number' ? e.addedAt : 0, product };
+  },
+  write(item, details) {
+    const entry: Record<string, unknown> = {
+      productId: item.productId,
+      id: numericId(item.productId),
+      handle: item.basic.handle ?? item.product?.handle,
+      basic: item.basic,
+      addedAt: item.addedAt,
+    };
+    if (item.product === null) entry.product = null;
+    else if (details !== undefined) entry.product = details;
+    return entry;
+  },
+  detailsOf: (item) => (item.product ? trimProduct(item.product) : undefined),
+});
+
+async function saveToStorage(): Promise<boolean> {
+  return stored.save(state.items);
 }
 
 function rebuildIndex(): void {
@@ -128,11 +153,16 @@ async function fetchProductsByIds(ids: string[]): Promise<Array<Product | null>>
 }
 
 async function init(opts?: WishlistInitOptions): Promise<WishlistItem[]> {
-  state.storage    = opts?.storage    ?? defaultStorage();
-  state.storageKey = opts?.storageKey ?? DEFAULT_STORAGE_KEY;
-  state.batchSize  = Math.max(1, Math.min(250, opts?.batchSize ?? DEFAULT_BATCH_SIZE));
-  state.items      = await loadFromStorage();
+  stored.open(opts?.storage ?? defaultStorage(), opts?.storageKey ?? DEFAULT_STORAGE_KEY);
+  state.batchSize = Math.max(1, Math.min(250, opts?.batchSize ?? DEFAULT_BATCH_SIZE));
+  state.items     = await stored.mergeOnce(await stored.load(), opts?.migrateFrom ?? []);
   rebuildIndex();
+  // A saved product opened offline still gets its product page's instant view: what was stored seeds
+  // the product store wherever it has nothing newer.
+  rememberProducts(
+    state.items.map((item) => item.product).filter((p): p is Product => !!p && !peekProduct(p.id)),
+    'base',
+  );
   state.ready = true;
 
   if (opts?.hydrateOnInit !== false && state.items.length > 0) {
@@ -210,9 +240,7 @@ function count(): number {
 async function clear(): Promise<void> {
   state.items = [];
   state.index.clear();
-  if (state.storage) {
-    try { await Promise.resolve(state.storage.removeItem(state.storageKey)); } catch { /* ignore */ }
-  }
+  await stored.clear();
   notify();
 }
 

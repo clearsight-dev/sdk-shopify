@@ -18,6 +18,7 @@ import type {
   Product,
   ProductMedia,
   ProductMediaKind,
+  ProductVariant,
   ShopifyProductsAPI,
 } from './types';
 
@@ -84,6 +85,8 @@ function toMedia(nodes: any[]): ProductMedia[] {
       kind,
       alt: node.alt ?? node.image?.altText ?? null,
       posterUrl: node.image?.url ?? node.previewImage?.url ?? null,
+      width: (node.image ?? node.previewImage)?.width ?? null,
+      height: (node.image ?? node.previewImage)?.height ?? null,
       videoUrl: kind === 'video' ? pickVideoUrl(node.sources) : null,
       embeddedUrl: kind === 'external-video' ? (node.embeddedUrl ?? null) : null,
     };
@@ -153,6 +156,16 @@ async function byIds(
   return out;
 }
 
+/**
+ * A product's variant as the SDK returns it: Shopify's fields, with the first selling-plan allocation
+ * as `sellingPlan` (`{ id, name }`, or null when the store enrolled it in none).
+ */
+function normalizeProductVariant(node: any): ProductVariant {
+  const { sellingPlanAllocations, ...variant } = node ?? {};
+  const plan = sellingPlanAllocations?.nodes?.[0]?.sellingPlan ?? null;
+  return { ...variant, sellingPlan: plan ? { id: plan.id, name: plan.name } : null };
+}
+
 export function normalizeProduct(p: any): Product {
   const mediaTypes: string[] = (p.media?.nodes ?? [])
     .map((node: { mediaContentType?: string }) => node?.mediaContentType)
@@ -180,7 +193,7 @@ export function normalizeProduct(p: any): Product {
         }
       : null,
     options: p.options ?? [],
-    variants: p.variants?.nodes ?? [],
+    variants: (p.variants?.nodes ?? []).map(normalizeProductVariant),
     images: p.images?.nodes ?? [],
     featuredImage: p.featuredImage ?? null,
     onlineStoreUrl: p.onlineStoreUrl ?? null,

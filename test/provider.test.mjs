@@ -206,7 +206,7 @@ check('login success sets the session and emits', () => {
   assert.equal(api.customer.loggedIn, true);
   assert.equal(api.customer.customer.email, 'a@b.c');
   assert.equal(api.customer.accessToken, 'tok_1');
-  assert.equal(localStorage.getItem('shopify:customer-token:v1'), 'tok_1');
+  assert.equal(localStorage.getItem('auth.storefrontToken'), 'tok_1');
   const [e] = take();
   assert.equal(e.type, 'auth:loginSuccess');
   assert.equal(e.message, 'Welcome back!');
@@ -215,7 +215,7 @@ check('login success sets the session and emits', () => {
 await runAct(async () => { await api.customer.logout(); });
 check('logout clears the session, storage, and emits', () => {
   assert.equal(api.customer.loggedIn, false);
-  assert.equal(localStorage.getItem('shopify:customer-token:v1'), null);
+  assert.equal(localStorage.getItem('auth.storefrontToken'), null);
   assert.equal(take()[0].type, 'auth:logout');
 });
 
@@ -312,6 +312,7 @@ check('an expired token is dropped silently, storage cleared, no auth event', ()
   assert.equal(api.customer.loggedIn, false);
   assert.equal(api.customer.restoring, false);
   assert.equal(localStorage.getItem('shopify:customer-token:v1'), null);
+  assert.equal(localStorage.getItem('auth.storefrontToken'), null);
   assert.equal(events.filter((e) => e.type.startsWith('auth:')).length, 0);
 });
 global.fetch = realFetch;

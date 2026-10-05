@@ -94,8 +94,8 @@ await check('passed: every call sends it as $imageTransform', async () => {
 await check('the fragments ask for url(transform: $imageTransform), media included', async () => {
   const q = last('ProductByHandle').query;
   assert.match(q, /fragment ImageFields on Image \{[\s\S]*?url\(transform: \$imageTransform\)/);
-  assert.match(q, /previewImage \{ url\(transform: \$imageTransform\) \}/);
-  assert.match(q, /\.\.\. on MediaImage \{ id image \{ url\(transform: \$imageTransform\) altText \} \}/);
+  assert.match(q, /previewImage \{ url\(transform: \$imageTransform\) width height \}/);
+  assert.match(q, /\.\.\. on MediaImage \{ id image \{ url\(transform: \$imageTransform\) altText width height \} \}/);
   assert.equal((q.match(/\$imageTransform: ImageTransformInput/g) || []).length, 1, 'declared exactly once');
 });
 

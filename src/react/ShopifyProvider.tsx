@@ -10,13 +10,18 @@ import {
 } from "react";
 import { shopify } from "../shopify";
 import { isConfigured, setConfig } from "../client";
-import { toLineSnapshot } from "../cart";
+import { addGiftCardsKeepingBuyer, toLineSnapshot } from "../cart";
+import { prepareCheckout, type CheckoutPreparation, type PrepareCheckoutOptions } from "../checkout";
 import { wouldExceedLineLimit, maxLineItems } from "../cartPolicy";
-import { classifyAuthFailure, isOutOfStockError, isUserErrorRejection } from "../errors";
+import { quantityInCart, withinCeiling } from "../productPage";
+import { isOutOfStockError, isUserErrorRejection } from "../errors";
 import { limitExceededMessage, message, setMessageResolver } from "../messages";
 import { ShopifyError } from "../types";
+import { createCustomerSession, type CustomerSession, type ProfileChanges, type SessionState, type SignupInput } from "../auth/session";
 import type {
   AlertMessageKey,
+  AuthMethod,
+  AuthOptions,
   AlertMessages,
   Cart,
   CartLine,
@@ -29,10 +34,13 @@ import type {
   CartPolicy,
   CartWriteResult,
   Customer,
-  CustomerAccessToken,
   MessageResolver,
   Product,
   ShopifyConfig,
+  SignInAttempt,
+  StoreCreditOptions,
+  WaitlistEntryInput,
+  WaitlistItem,
   WishlistItem,
   WishlistStorageAdapter,
 } from "../types";
@@ -80,8 +88,13 @@ interface CartState {
   /**
    * Returns the resulting cart, `null` when nothing landed. One unsellable line fails the whole
    * `cartLinesAdd`, so a rejected batch is retried line by line and the successes are kept.
+   *
+   * `options.quiet`: the caller reports the outcome itself. Every `cartGuard.beforeAdd` is passed it
+   * (so the guard says nothing about a refusal), and the one `cart:outOfStock` the line-by-line retry
+   * raises for the lines Shopify refused is not emitted. `cart:add` (something landed) and
+   * `cart:limitExceeded` (the line limit refused the whole batch) still are.
    */
-  addLines:           (inputs: CartLineInput[]) => Promise<Cart | null>;
+  addLines:           (inputs: CartLineInput[], options?: { quiet?: boolean }) => Promise<Cart | null>;
   /**
    * `false` when a `cartGuard` cancelled the increase. `attributes` REPLACE the line's set —
    * Shopify does not merge them — so omit the argument to leave them untouched.
@@ -105,6 +118,25 @@ interface CartState {
     countryCode?: string;
     customerAccessToken?: string;
   }) => Promise<boolean>;
+  /**
+   * Adds gift-card codes to the cart and keeps the cards already on it (`cartGiftCardCodesAdd`), in
+   * the cart's write queue like every other write. Returns the cart; null when there is no cart yet
+   * (none is created for this).
+   *
+   * Shopify takes a gift card only on a cart with a country, so a cart without one gets the
+   * provider's `config.country` (else the shop's) first, keeping its email and, when signed in, the
+   * shopper's link. A cart that has a country keeps its buyer identity untouched.
+   *
+   * Throws a `ShopifyError` when Shopify refuses a code (its `userErrors`), and also when it answers
+   * without applying one, which it does without an error (`code: 'GIFT_CARD_NOT_APPLIED'`, the cart
+   * still updated). Gift cards change no lines, so `cartGuard` isn't asked.
+   */
+  addGiftCardCodes: (codes: string[]) => Promise<Cart | null>;
+  /**
+   * Takes the given gift cards off the cart by their `AppliedGiftCard.id` (not the code), leaving every
+   * other card on it, in the write queue. Null when there is no cart.
+   */
+  removeGiftCards: (appliedGiftCardIds: string[]) => Promise<Cart | null>;
   /** Re-reads the cart and returns it, so a caller need not wait for the re-render. */
   refresh:            () => Promise<Cart | null>;
   /**
@@ -131,35 +163,76 @@ interface WishlistState {
   refresh:      () => Promise<void>;
 }
 
+/** The sizes or colours the shopper is waiting on, kept on the device (see `WaitlistItem`). */
+interface WaitlistState {
+  items:   WaitlistItem[];
+  /** The variant ids waited on, in `items` order. The same array until the list changes. */
+  ids:     string[];
+  count:   number;
+  has:     (variantId: string) => boolean;
+  /** Emits `waitlist:add` ("Added to waitlist"). */
+  add:     (entry: WaitlistEntryInput) => Promise<void>;
+  /** Emits `waitlist:remove`, which carries no message: removing raises no toast. */
+  remove:  (variantId: string) => Promise<void>;
+  /** Fetches every variant again; rejects, changing nothing, when it can't (offline). */
+  refresh: () => Promise<void>;
+}
+
 /**
- * The customer session, so the four Login alerts have somewhere to originate.
- * `shopify.customer.*` stays available for everything else; this owns only what
- * a session needs — the token, who it belongs to, and the events.
+ * The shopper's session, for both ways of signing in: email and password (`login`, `signup`,
+ * `recoverPassword`) and Shopify's web sign-in (`signIn`, `startSignIn`). `auth.method` on the
+ * provider says which one the app offers now; `sessionKind` says which one the current session is.
+ * The session itself lives in `auth/session.ts`; base cases in test/auth-*.test.mjs.
  */
 interface CustomerState {
   customer: Customer | null;
-  /** True once a stored token has been exchanged for a profile. */
+  /**
+   * A session exists. Offline on app open it can be true while `customer` is still null: the
+   * profile loads on the next `refresh()`.
+   */
   loggedIn: boolean;
-  /** The stored access token, for callers that need it (Tile Credit, checkout). */
+  /** The current access token, possibly stale. Callers that send it somewhere use `getAccessToken()`. */
   accessToken: string | null;
   loading: boolean;
-  /** Restoring a stored token on mount — distinct from "logged out". */
+  /** Reading a stored session on app open, as distinct from "signed out". */
   restoring: boolean;
-  /** `false` on bad credentials, which emits `auth:loginFailed`. Everything else throws. */
+  /** Which sign-in the app offers now: `auth.method`, `password` when unset. */
+  method: AuthMethod;
+  /** How the current session was signed in; null when signed out. */
+  sessionKind: AuthMethod | null;
+  /** Password sign-in. `false` on bad credentials, which emits `auth:loginFailed`. Everything else throws. */
   login:  (email: string, password: string) => Promise<boolean>;
-  signup: (input: {
-    email: string;
-    password: string;
-    firstName?: string;
-    lastName?: string;
-    acceptsMarketing?: boolean;
-  }) => Promise<boolean>;
-  /** Always resolves — Shopify refusing the token delete still ends the local session. */
+  signup: (input: SignupInput) => Promise<boolean>;
+  /** Always resolves: Shopify being unreachable still ends the local session. */
   logout: () => Promise<void>;
   /** Emits `auth:recoverSent`. Shopify does not reveal whether the email exists. */
   recoverPassword: (email: string) => Promise<void>;
-  /** Re-reads the profile for the stored token. Null if the token no longer resolves. */
+  /** Re-reads the profile. Null when signed out or the session ended. */
   refresh: () => Promise<Customer | null>;
+  /**
+   * Changes the name and email marketing consent, for either kind of session, sending only what
+   * differs from `customer`. `true` once Shopify accepted it all, with `customer` showing the new
+   * values. `false` when signed out, refused or offline (logged with `console.warn`). Never throws.
+   */
+  updateProfile: (changes: ProfileChanges) => Promise<boolean>;
+  /**
+   * Shopify web sign-in in the system browser sheet (`auth.openAuthSession`). `false` when the
+   * shopper backs out (no event) or Shopify refuses (`auth:loginFailed`). Throws when offline.
+   */
+  signIn: () => Promise<boolean>;
+  /** Shopify web sign-in in the app's own web view. See `SignInAttempt`. */
+  startSignIn: () => SignInAttempt;
+  /** A usable access token, refreshed when needed. Null when signed out or the session ended. */
+  getAccessToken: () => Promise<string | null>;
+  /**
+   * A token renewed now, even if the current one looks valid: for a service that just answered 401
+   * (Tile Credit does). A Shopify session refreshes, sharing a refresh already on its way; a password
+   * session can't renew, so null. It never signs the shopper out; only Shopify refusing the refresh
+   * ends the session, as it would anyway. Throws when offline.
+   */
+  renewAccessToken: () => Promise<string | null>;
+  /** A Customer Account API GraphQL call for the signed-in shopper (`shopify` sessions only). */
+  request: <T>(query: string, variables?: Record<string, unknown>) => Promise<T>;
 }
 
 /**
@@ -167,10 +240,21 @@ interface CustomerState {
  * webview reports it here and gets the configured copy on the event, rather than
  * every app hard-coding "Your order has been placed".
  *
- * A `checkout.observe(url)` helper that classifies the return URL is the next
- * piece of work; this is the seam it will emit through.
+ * Before it opens, `prepare` gets the cart ready (SDK move 6); the page's address says when the order
+ * is placed (`isOrderPlacedUrl`, `../checkout`).
  */
 interface CheckoutState {
+  /**
+   * Gets the cart ready for checkout: reads it again, checks for a reservation that ran out
+   * (`options.hasLapsedHold`), attaches the signed-in shopper with the cart's country, lands the
+   * cart's attribution and the provider's `cartAttributes` (with 0.9.1's attribution), and reports
+   * the start. Answers `ready`,
+   * `empty`, `lapsedHold` or `failed` (`prepareCheckout` in `../checkout` has the rule). Never throws.
+   * Going to the checkout page is the app's, on `ready`.
+   */
+  prepare: (options?: PrepareCheckoutOptions) => Promise<CheckoutPreparation>;
+  /** This hook's `prepare` is running (for a spinner on the button that started it). */
+  preparing: boolean;
   /**
    * Call as checkout opens for the shared cart. A checked-out cart reads back null exactly like an
    * expired one, so without this a missed `reportOrderPlaced` would refill the cart on next launch
@@ -188,17 +272,22 @@ interface ShopifyContextType {
   error:    string | null;
   cart:     CartState;
   wishlist: WishlistState;
+  waitlist: WaitlistState;
   customer: CustomerState;
-  checkout: CheckoutState;
+  /** `useCheckout()` adds `preparing`, which is each caller's own. */
+  checkout: Omit<CheckoutState, "preparing">;
+  /** The app's store-credit choice, read by `useStoreCredit`. */
+  storeCredit: StoreCreditOptions | null;
   /** Resolved alert copy, for labelling UI that isn't a toast — e.g. the
    *  empty-wishlist placeholder (`wishlist.empty`), which has no event. */
   message:  (key: AlertMessageKey) => string;
+  /** Every event the provider raises, for `useShopifyEvents` (0.10). */
+  events: { subscribe: (listener: (event: ShopifyEvent) => void) => () => void };
 }
 
 const ShopifyContext = createContext<ShopifyContextType | undefined>(undefined);
 
 const CART_STORAGE_KEY = "shopify:cart-id:v1";
-const CUSTOMER_TOKEN_KEY = "shopify:customer-token:v1";
 const CART_LINES_KEY = "shopify:cart-lines:v1";
 const CHECKOUT_STARTED_KEY = "shopify:checkout-started-cart-id:v1";
 
@@ -291,15 +380,20 @@ export type ShopifyEventType =
   | "cart:update"
   | "cart:remove"
   | "cart:limitExceeded"
+  | "cart:stockLimit"
   | "cart:outOfStock"
   | "cart:buyerIdentity"
   | "wishlist:add"
   | "wishlist:remove"
+  | "waitlist:add"
+  | "waitlist:remove"
   | "auth:loginSuccess"
   | "auth:loginFailed"
   | "auth:signup"
   | "auth:logout"
   | "auth:recoverSent"
+  /** A session Shopify stopped accepting, while the app was in use. No message: a host may route to sign-in. */
+  | "auth:sessionExpired"
   | "checkout:orderPlaced"
   | "checkout:paymentFailed";
 
@@ -317,6 +411,57 @@ export interface ShopifyEvent {
   messageKey?: AlertMessageKey;
   /** Present on failures. `ShopifyError.errors` carries the Shopify codes. */
   error?: unknown;
+  /**
+   * The cart after the write, on `cart:add`, `cart:update` and `cart:remove` (0.10). A listener can
+   * report from it straight away: React's `useCart().cart` hasn't caught up when the event arrives.
+   */
+  cart?: Cart;
+  /**
+   * The lines the write changed, on the same three events (0.10): usually one; an `addLines` that
+   * landed several lines lists each once. Empty when the line wasn't in the cart the write started from.
+   */
+  changedLines?: CartLineChange[];
+  /** The product saved or unsaved, on `wishlist:add` and `wishlist:remove` (0.10). */
+  productId?: string;
+  /**
+   * The signed-in customer, on `auth:loginSuccess` (0.10). Null when their profile hadn't loaded when
+   * the sign-in finished: `useCustomer().customer` has it once it does.
+   */
+  customer?: Customer | null;
+  /** How that session signed in (`useCustomer().sessionKind`), on `auth:loginSuccess` (0.10). */
+  sessionKind?: AuthMethod | null;
+}
+
+/** One cart line a write changed, on `ShopifyEvent.changedLines`. */
+export interface CartLineChange {
+  /** The line after the write. For a line the write took out of the cart, the line as it was. */
+  line: CartLine;
+  /** Units added (above 0) or taken away (below 0). 0 when only the line's attributes changed. */
+  quantityChange: number;
+}
+
+/** What `emit` attaches to an event besides its type. */
+interface EventDetails {
+  error?: unknown;
+  cart?: Cart;
+  changedLines?: CartLineChange[];
+  productId?: string;
+}
+
+/**
+ * What an add changed: each line the inputs landed on, once, with the units added to it (two
+ * inputs that landed on one line, same variant and attributes, are counted together).
+ */
+function changesForAdds(cart: Cart, inputs: CartLineInput[]): CartLineChange[] {
+  const changes: CartLineChange[] = [];
+  for (const input of inputs) {
+    const line = lineFor(cart, input);
+    if (!line) continue;
+    const sameLine = changes.find((change) => change.line.id === line.id);
+    if (sameLine) sameLine.quantityChange += input.quantity;
+    else changes.push({ line, quantityChange: input.quantity });
+  }
+  return changes;
 }
 
 /** Alert-carrying events and the message key each resolves. */
@@ -324,9 +469,11 @@ const EVENT_MESSAGE: Partial<Record<ShopifyEventType, AlertMessageKey>> = {
   "cart:add": "cart.added",
   "cart:remove": "cart.removed",
   "cart:limitExceeded": "cart.limitExceeded",
+  "cart:stockLimit": "cart.noMoreStock",
   "cart:outOfStock": "cart.outOfStock",
   "wishlist:add": "wishlist.added",
   "wishlist:remove": "wishlist.removed",
+  "waitlist:add": "waitlist.added",
   "auth:loginSuccess": "auth.loginSuccess",
   "auth:loginFailed": "auth.loginFailed",
   "auth:logout": "auth.loggedOut",
@@ -337,6 +484,7 @@ const EVENT_MESSAGE: Partial<Record<ShopifyEventType, AlertMessageKey>> = {
 
 const ERROR_EVENTS: ReadonlySet<ShopifyEventType> = new Set<ShopifyEventType>([
   "cart:limitExceeded",
+  "cart:stockLimit",
   "cart:outOfStock",
   "auth:loginFailed",
   "checkout:paymentFailed",
@@ -356,6 +504,14 @@ export interface ShopifyProviderProps {
   cartGuard?: CartLineGuard;
   /** See `WishlistInitOptions.keepDeleted`. Recommended for a shopper-facing wishlist. */
   wishlistKeepDeleted?: boolean;
+  /** See `WishlistInitOptions.storageKey`: an app moving from Apptile's engine passes its old key. */
+  wishlistStorageKey?: string;
+  /** See `WishlistInitOptions.migrateFrom`: keys an earlier app kept its wishlist under. */
+  wishlistMigrateFrom?: string[];
+  /** See `WaitlistInitOptions.storageKey`: an app moving from Apptile's engine passes its old key. */
+  waitlistStorageKey?: string;
+  /** See `WaitlistInitOptions.migrateFrom`: keys an earlier app kept its waitlist under. */
+  waitlistMigrateFrom?: string[];
   /**
    * Alert copy, outside `config` so a Live Layer publish can change it without
    * re-running `init` (which would re-load the shop and re-create the cart).
@@ -376,6 +532,13 @@ export interface ShopifyProviderProps {
    * sets it here or the cart goes out anonymous.
    */
   cartAttributes?: CartAttribute[];
+  /**
+   * How shoppers sign in. Unset: email and password only, as before. `method` can change while the
+   * app runs: `password` for App Store review, `shopify` for shoppers.
+   */
+  auth?: AuthOptions;
+  /** Where store credit comes from, for `useStoreCredit`. Unset: the app shows none. */
+  storeCredit?: StoreCreditOptions;
 }
 
 function defaultStorage(): WishlistStorageAdapter | null {
@@ -392,21 +555,28 @@ export function ShopifyProvider({
   onEvent,
   cartGuard,
   wishlistKeepDeleted,
+  wishlistStorageKey,
+  wishlistMigrateFrom,
+  waitlistStorageKey,
+  waitlistMigrateFrom,
   messages,
   translate,
   cartPolicy,
   cartAttributes,
+  auth,
+  storeCredit,
 }: ShopifyProviderProps) {
   const [ready, setReady]           = useState(false);
   const [error, setError]           = useState<string | null>(null);
   const [cart, setCart]             = useState<Cart | null>(null);
+  // The cart as of the newest write, for a write that waited in the queue behind others.
+  const latestCart                  = useRef<Cart | null>(null);
+  latestCart.current = cart;
   const [cartLoading, setCartLoad]  = useState(false);
   const [wlItems, setWlItems]       = useState<WishlistItem[]>([]);
-  const [customer, setCustomer]     = useState<Customer | null>(null);
-  const [token, setToken]           = useState<string | null>(null);
-  const [authLoading, setAuthLoad]  = useState(false);
-  const [restoring, setRestoring]   = useState(true);
   const wlUnsubRef                  = useRef<(() => void) | null>(null);
+  const [wtItems, setWtItems]       = useState<WaitlistItem[]>([]);
+  const wtUnsubRef                  = useRef<(() => void) | null>(null);
 
   const storageRef = useRef<WishlistStorageAdapter | null>(null);
   storageRef.current = storage ?? defaultStorage();
@@ -420,15 +590,22 @@ export function ShopifyProvider({
   const onEventRef = useRef<((event: ShopifyEvent) => void) | undefined>(onEvent);
   onEventRef.current = onEvent;
 
+  /** Listeners added with `useShopifyEvents`, told after `onEvent`, in the order they subscribed. */
+  const eventListeners = useRef(new Set<(event: ShopifyEvent) => void>());
+  /** Declared before `emit`, which reads the signed-in customer from it for `auth:loginSuccess`. */
+  const sessionRef = useRef<CustomerSession | null>(null);
+
   /**
-   * Resolves the copy for `type` and hands the event to the host. A throwing
-   * listener must not fail the write that triggered it — the mutation already
-   * landed, so swallowing here is the only honest option.
+   * Resolves the copy for `type` and hands the event to the host's `onEvent`, then to every
+   * `useShopifyEvents` listener. A throwing listener must not fail the write that triggered it —
+   * the mutation already landed, so swallowing here is the only honest option.
    */
-  const emit = useCallback((type: ShopifyEventType, error?: unknown) => {
+  const emit = useCallback((type: ShopifyEventType, details?: EventDetails) => {
     const listener = onEventRef.current;
-    if (!listener) return;
+    if (!listener && eventListeners.current.size === 0) return;
     const key = EVENT_MESSAGE[type];
+    // The session has already taken the new customer when it announces the sign-in.
+    const signedIn = type === "auth:loginSuccess" ? sessionRef.current?.getState() : undefined;
     const max = maxLineItems();
     const event: ShopifyEvent = {
       type,
@@ -442,14 +619,61 @@ export function ShopifyProvider({
                 : message(key),
           }
         : {}),
-      ...(error === undefined ? {} : { error }),
+      ...(details?.error === undefined ? {} : { error: details.error }),
+      ...(details?.cart ? { cart: details.cart } : {}),
+      ...(details?.changedLines ? { changedLines: details.changedLines } : {}),
+      ...(details?.productId ? { productId: details.productId } : {}),
+      ...(signedIn ? { customer: signedIn.customer, sessionKind: signedIn.kind } : {}),
     };
-    try {
-      listener(event);
-    } catch (listenerError) {
-      console.warn("[ShopifyProvider] onEvent threw", listenerError);
+    if (listener) {
+      try {
+        listener(event);
+      } catch (listenerError) {
+        console.warn("[ShopifyProvider] onEvent threw", listenerError);
+      }
+    }
+    for (const eventListener of [...eventListeners.current]) {
+      try {
+        eventListener(event);
+      } catch (listenerError) {
+        console.warn("[ShopifyProvider] a useShopifyEvents listener threw", listenerError);
+      }
     }
   }, []);
+
+  const subscribeToEvents = useCallback((eventListener: (event: ShopifyEvent) => void) => {
+    eventListeners.current.add(eventListener);
+    return () => {
+      eventListeners.current.delete(eventListener);
+    };
+  }, []);
+  const events = useMemo(() => ({ subscribe: subscribeToEvents }), [subscribeToEvents]);
+
+  // ── Customer session ────────────────────────────────────────────────────────
+  // One per provider, created on first render. `auth` is read through a ref on every use, so a Live
+  // Layer publish that flips `auth.method` applies at once and leaves the current session alone.
+  const authRef = useRef<AuthOptions | undefined>(auth);
+  authRef.current = auth;
+  const configRef = useRef(config);
+  configRef.current = config;
+  if (!sessionRef.current) {
+    sessionRef.current = createCustomerSession({
+      storage: () => authRef.current?.secureStorage ?? storageRef.current,
+      legacyStorage: () => storageRef.current,
+      options: () => authRef.current,
+      apiVersion: () => configRef.current.apiVersion,
+      emit: (type, error) => emit(type, error === undefined ? undefined : { error }),
+    });
+  }
+  const session = sessionRef.current;
+  const [sessionState, setSessionState] = useState<SessionState>(session.getState);
+  useEffect(() => {
+    setSessionState(session.getState());
+    const unsubscribe = session.subscribe(() => setSessionState(session.getState()));
+    // Not gated on the shop loading: a stored session is restored offline too.
+    void session.restore();
+    return unsubscribe;
+  }, [session]);
 
   /**
    * Alert copy and cart rules, re-applied whenever the host passes new ones so a
@@ -544,14 +768,20 @@ export function ShopifyProvider({
     }
   }, []);
 
-  const approveAdd = useCallback(async (input: CartLineInput): Promise<CartLineInput | null> => {
+  const approveAdd = useCallback(async (
+    input: CartLineInput,
+    options?: { quiet?: boolean },
+  ): Promise<CartLineInput | null> => {
     const guard = guardRef.current;
     if (!guard?.beforeAdd) return input;
-    return runGuard(() => guard.beforeAdd!(input), input);
+    return runGuard(() => guard.beforeAdd!(input, options), input);
   }, [runGuard]);
 
-  /** Hands back units the guard approved for a write that then failed. */
-  const releaseRejected = useCallback((input: CartLineInput) => {
+  /**
+   * Hands back units the guard approved for a write that then didn't land. An add passes its approved
+   * input (the guard's receipt rides on its attributes); an increase passes the line it was to grow.
+   */
+  const releaseRejected = useCallback((input: CartLineInput, line: CartLine | null = null) => {
     const guard = guardRef.current;
     if (!guard?.onReleased) return;
     void runGuard(
@@ -560,7 +790,8 @@ export function ShopifyProvider({
           variantId: input.merchandiseId,
           quantity: input.quantity,
           reason: "rejected",
-          line: null,
+          line,
+          ...(line ? {} : { input }),
           cart: null,
         }),
       undefined,
@@ -589,6 +820,37 @@ export function ShopifyProvider({
         await shopify.init(config);
         reapplyAlertConfig();
 
+        // The wishlist first, on its own: it is on the device, so it loads with no network, and a
+        // cart that can't load (offline) must not take it down with it.
+        try {
+          const initialItems = await shopify.wishlist.init({
+            storage: storageRef.current ?? undefined,
+            storageKey: wishlistStorageKey,
+            migrateFrom: wishlistMigrateFrom,
+            keepDeleted: wishlistKeepDeleted,
+          });
+          if (mounted) setWlItems(initialItems);
+          wlUnsubRef.current = shopify.wishlist.onChange((items) => {
+            if (mounted) setWlItems(items);
+          });
+        } catch (e) {
+          console.error("[ShopifyProvider] wishlist init failed", e);
+        }
+        // The waitlist the same way, for the same reason.
+        try {
+          const initialWaitlist = await shopify.waitlist.init({
+            storage: storageRef.current ?? undefined,
+            storageKey: waitlistStorageKey,
+            migrateFrom: waitlistMigrateFrom,
+          });
+          if (mounted) setWtItems(initialWaitlist);
+          wtUnsubRef.current = shopify.waitlist.onChange((items) => {
+            if (mounted) setWtItems(items);
+          });
+        } catch (e) {
+          console.error("[ShopifyProvider] waitlist init failed", e);
+        }
+
         setCartLoad(true);
         try {
           const s = storageRef.current;
@@ -611,42 +873,11 @@ export function ShopifyProvider({
           if (mounted) setCartLoad(false);
         }
 
-        const initialItems = await shopify.wishlist.init({
-          storage: storageRef.current ?? undefined,
-          keepDeleted: wishlistKeepDeleted,
-        });
-        if (mounted) setWlItems(initialItems);
-        wlUnsubRef.current = shopify.wishlist.onChange((items) => {
-          if (mounted) setWlItems(items);
-        });
-
-        // Restore a stored session. A token that no longer resolves is dropped
-        // silently — an expired login is not a failed one, and firing
-        // `auth:loginFailed` on app open would toast at a shopper who did nothing.
-        try {
-          const s = storageRef.current;
-          const savedToken = s ? await Promise.resolve(s.getItem(CUSTOMER_TOKEN_KEY)) : null;
-          if (savedToken) {
-            const profile = await shopify.customer.profile(savedToken);
-            if (mounted && profile) {
-              setCustomer(profile);
-              setToken(savedToken);
-            } else if (s && !profile) {
-              await Promise.resolve(s.removeItem(CUSTOMER_TOKEN_KEY));
-            }
-          }
-        } catch (sessionError) {
-          console.warn("[ShopifyProvider] session restore failed", sessionError);
-        } finally {
-          if (mounted) setRestoring(false);
-        }
-
         if (mounted) setReady(true);
       } catch (e) {
         console.error("[ShopifyProvider] init failed", e);
         if (mounted) {
           setError(e instanceof Error ? e.message : String(e));
-          setRestoring(false);
           // Ready so downstream UIs render an error state rather than an indefinite spinner.
           setReady(true);
         }
@@ -655,6 +886,7 @@ export function ShopifyProvider({
     return () => {
       mounted = false;
       wlUnsubRef.current?.();
+      wtUnsubRef.current?.();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -721,6 +953,7 @@ export function ShopifyProvider({
   }, [config.country]);
 
   const persistCart = useCallback(async (next: Cart | null) => {
+    latestCart.current = next;
     setCart(next);
     const s = storageRef.current;
     if (!s) return;
@@ -743,19 +976,30 @@ export function ShopifyProvider({
    */
   const reportCartFailure = useCallback((failure: unknown): boolean => {
     if (isOutOfStockError(failure)) {
-      emit("cart:outOfStock", failure);
+      emit("cart:outOfStock", { error: failure });
       return true;
     }
     return false;
   }, [emit]);
 
   const cartAddLine = useCallback(async (input: CartLineInput): Promise<CartWriteResult> => {
+    // The variant's stock, when the caller knows it: Shopify would accept the
+    // add and clamp it silently, so the shopper would be told it worked. Before
+    // the guard, so a guard that reserves stock (Cart Hold) never reserves for an
+    // add that is then refused.
+    if (input.maxQuantity != null && !withinCeiling(input.maxQuantity, quantityInCart(cart, input.merchandiseId), input.quantity)) {
+      emit("cart:stockLimit");
+      return { ok: false, reason: "stock", message: message("cart.noMoreStock"), cart };
+    }
+
     const approved = await approveAdd(input);
     if (!approved) return { ok: false, reason: "guard", cart };
 
     // Checked before the write so a refusal costs no round trip, and so the
     // shopper reads the configured message rather than a Shopify error.
     if (wouldExceedLineLimit(cart, [approved])) {
+      // The guard may have reserved stock for this add; it won't land, so that goes back.
+      releaseRejected(approved);
       emit("cart:limitExceeded");
       const max = maxLineItems();
       return {
@@ -768,9 +1012,10 @@ export function ShopifyProvider({
 
     setCartLoad(true);
     try {
-      const id = await ensureCartId();
       let next: Cart;
       try {
+        // Inside the catch: a cart that can't be created is an add that didn't land.
+        const id = await ensureCartId();
         next = await serialize(() => shopify.cart.addLines(id, [approved]));
       } catch (addError) {
         releaseRejected(approved);
@@ -779,7 +1024,7 @@ export function ShopifyProvider({
       }
       await persistCart(next);
       await clearCheckoutStarted(storageRef.current);
-      emit("cart:add");
+      emit("cart:add", { cart: next, changedLines: changesForAdds(next, [approved]) });
       announceLanded(approved, next);
       return { ok: true, cart: next };
     } finally {
@@ -787,10 +1032,13 @@ export function ShopifyProvider({
     }
   }, [cart, approveAdd, releaseRejected, announceLanded, ensureCartId, persistCart, emit, reportCartFailure, serialize]);
 
-  const cartAddLines = useCallback(async (requested: CartLineInput[]): Promise<Cart | null> => {
+  const cartAddLines = useCallback(async (
+    requested: CartLineInput[],
+    options?: { quiet?: boolean },
+  ): Promise<Cart | null> => {
     if (requested.length === 0) return cart;
     // Vetted up front so a guard's veto does not cost the other lines their fast path.
-    const inputs = (await Promise.all(requested.map(approveAdd))).filter(
+    const inputs = (await Promise.all(requested.map((input) => approveAdd(input, options)))).filter(
       (input): input is CartLineInput => input !== null,
     );
     if (inputs.length === 0) return null;
@@ -798,13 +1046,21 @@ export function ShopifyProvider({
     // The whole batch is judged against the limit, not line by line — landing
     // half a "add these 5" is worse than refusing it with the message.
     if (wouldExceedLineLimit(cart, inputs)) {
+      inputs.forEach((input) => releaseRejected(input));
       emit("cart:limitExceeded");
       return null;
     }
 
     setCartLoad(true);
     try {
-      const id = await ensureCartId();
+      let id: string;
+      try {
+        id = await ensureCartId();
+      } catch (createError) {
+        inputs.forEach((input) => releaseRejected(input));
+        reportCartFailure(createError);
+        throw createError;
+      }
       let next: Cart | null = null;
       // Which inputs landed, so the guard hears about exactly those.
       let landed: CartLineInput[] = [];
@@ -815,7 +1071,7 @@ export function ShopifyProvider({
         // A transport or GraphQL failure would fail all N the same way, so retrying it would turn
         // one dead request into N and still end at null. Only line rejections are worth retrying.
         if (!isLineRejection(batchError)) {
-          inputs.forEach(releaseRejected);
+          inputs.forEach((input) => releaseRejected(input));
           reportCartFailure(batchError);
           throw batchError;
         }
@@ -833,15 +1089,15 @@ export function ShopifyProvider({
             if (isOutOfStockError(lineError)) anyOutOfStock = true;
             // Anything but a rejection means the retry itself is failing, so stop.
             if (!isLineRejection(lineError)) {
-              inputs.slice(i + 1).forEach(releaseRejected);
+              inputs.slice(i + 1).forEach((rest) => releaseRejected(rest));
               reportCartFailure(lineError);
               throw lineError;
             }
           }
         }
         // One alert for the batch: N unsellable lines is one thing that went
-        // wrong from the shopper's side, not N toasts.
-        if (anyOutOfStock) emit("cart:outOfStock", batchError);
+        // wrong from the shopper's side, not N toasts. None when quiet: the caller reports it.
+        if (anyOutOfStock && !options?.quiet) emit("cart:outOfStock", { error: batchError });
         // Every line individually rejected. Surface the original rather than an empty success,
         // which reads as "nothing to add" instead of "none of this is sellable".
         if (landed.length === 0) throw batchError;
@@ -849,8 +1105,8 @@ export function ShopifyProvider({
       if (next) {
         await persistCart(next);
         await clearCheckoutStarted(storageRef.current);
-        emit("cart:add");
         const settled = next;
+        emit("cart:add", { cart: settled, changedLines: changesForAdds(settled, landed) });
         landed.forEach((input) => announceLanded(input, settled));
       }
       return next;
@@ -887,13 +1143,22 @@ export function ShopifyProvider({
     const previous = cart.lines.find((line) => line.id === lineId) ?? null;
     const delta = previous ? quantity - previous.quantity : 0;
 
+    // Attributes REPLACE the line's set, so the caller's new set keeps the line's private
+    // (`_`-prefixed) attributes it didn't mention: those belong to the app's integrations (Cart
+    // Hold's expiry stamp is one), not to whoever is editing the visible ones.
+    const kept = attributes && previous
+      ? previous.attributes.filter((old) => old.key.startsWith("_") && !attributes.some((next) => next.key === old.key))
+      : [];
+    const nextAttributes = attributes ? [...attributes, ...kept] : undefined;
+
     // Only an increase can be vetted; a decrease is reported after the fact, once Shopify has
     // actually taken the units back.
-    let update: CartLineUpdateInput = { id: lineId, quantity, ...(attributes ? { attributes } : {}) };
+    let update: CartLineUpdateInput = { id: lineId, quantity, ...(nextAttributes ? { attributes: nextAttributes } : {}) };
     if (previous && delta > 0 && guard?.beforeIncrease) {
       const approved = await runGuard(() => guard.beforeIncrease!(previous, quantity), update);
       if (!approved) return false;
-      update = approved;
+      // The guard's answer wins, but attributes it didn't return are the caller's, not dropped.
+      update = { ...approved, ...(approved.attributes === undefined && nextAttributes ? { attributes: nextAttributes } : {}) };
     }
 
     setCartLoad(true);
@@ -903,7 +1168,7 @@ export function ShopifyProvider({
         next = await serialize(() => shopify.cart.updateLines(cart.id, [update]));
       } catch (updateError) {
         if (previous && delta > 0) {
-          releaseRejected({ merchandiseId: previous.merchandise.id, quantity: delta });
+          releaseRejected({ merchandiseId: previous.merchandise.id, quantity: delta }, previous);
         }
         reportCartFailure(updateError);
         throw updateError;
@@ -912,7 +1177,12 @@ export function ShopifyProvider({
       await clearCheckoutStarted(storageRef.current);
       // A quantity change is not one of the panel's alerts — emitted as a state
       // signal so a host can refresh a badge, with no copy attached.
-      emit("cart:update");
+      // The line as it is now; gone at 0, so the line as it was.
+      const lineNow = next.lines.find((line) => line.id === lineId) ?? previous;
+      emit("cart:update", {
+        cart: next,
+        changedLines: previous && lineNow ? [{ line: lineNow, quantityChange: update.quantity - previous.quantity }] : [],
+      });
       if (previous && delta < 0 && guard?.onReleased) {
         void runGuard(
           () =>
@@ -943,7 +1213,10 @@ export function ShopifyProvider({
       await clearCheckoutStarted(storageRef.current);
       // The panel's "Removed From Cart" alert. Previously nothing fired here, so
       // the configured copy had no trigger at all.
-      emit("cart:remove");
+      emit("cart:remove", {
+        cart: next,
+        changedLines: previous ? [{ line: previous, quantityChange: -previous.quantity }] : [],
+      });
       if (previous && guard?.onReleased) {
         void runGuard(
           () =>
@@ -986,6 +1259,43 @@ export function ShopifyProvider({
     }
   }, [cart, persistCart, serialize]);
 
+  const cartAddGiftCardCodes = useCallback(async (codes: string[]): Promise<Cart | null> => {
+    if (!cart?.id || codes.length === 0) return cart ?? null;
+    setCartLoad(true);
+    try {
+      const { cart: next, notApplied } = await serialize(async () => {
+        const current = latestCart.current ?? cart;
+        const signedIn = session.getState().kind !== null;
+        return addGiftCardsKeepingBuyer(current, codes, {
+          countryCode: async () => config.country || (await shopify.shop.countryCode()) || "US",
+          // Signed in: the identity write keeps the cart linked to the shopper (it replaces the identity).
+          customerAccessToken: signedIn ? await session.getAccessToken().catch(() => null) : null,
+        });
+      });
+      await persistCart(next);
+      if (notApplied.length) {
+        const message = `Shopify didn't apply the gift card ending in ${notApplied.map((code) => code.slice(-4)).join(", ")}`;
+        throw new ShopifyError(message, [{ field: ["giftCardCodes"], message, code: "GIFT_CARD_NOT_APPLIED" }]);
+      }
+      return next;
+    } finally {
+      setCartLoad(false);
+    }
+  }, [cart, config.country, persistCart, serialize, session]);
+
+  const cartRemoveGiftCards = useCallback(async (appliedGiftCardIds: string[]): Promise<Cart | null> => {
+    if (!cart?.id) return null;
+    if (appliedGiftCardIds.length === 0) return cart;
+    setCartLoad(true);
+    try {
+      const next = await serialize(() => shopify.cart.removeGiftCardCodes(cart.id, appliedGiftCardIds));
+      await persistCart(next);
+      return next;
+    } finally {
+      setCartLoad(false);
+    }
+  }, [cart, persistCart, serialize]);
+
   const cartRefresh = useCallback(async (): Promise<Cart | null> => {
     if (!cart?.id) return null;
     const next = await shopify.cart.get(cart.id);
@@ -1008,16 +1318,19 @@ export function ShopifyProvider({
 
   // The wishlist module owns storage and hydration; these just wrap the mutating methods and
   // rely on onChange to keep React in sync.
-  const wlAdd     = useCallback(async (p: Product | string) => { await (shopify.wishlist.add as any)(p); emit("wishlist:add"); }, [emit]);
+  const wlAdd     = useCallback(async (p: Product | string) => {
+    await (shopify.wishlist.add as any)(p);
+    emit("wishlist:add", { productId: typeof p === "string" ? p : p.id });
+  }, [emit]);
   // `remove` emits too. It used not to, so "Removed From Wishlist" only ever
   // fired via `toggle` — a dedicated remove button showed nothing.
   const wlRemove  = useCallback(async (id: string)          => {
     const removed = await shopify.wishlist.remove(id);
-    if (removed) emit("wishlist:remove");
+    if (removed) emit("wishlist:remove", { productId: id });
   }, [emit]);
   const wlToggle  = useCallback(async (p: Product | string) => {
     const nowSaved = await (shopify.wishlist.toggle as any)(p);
-    emit(nowSaved ? "wishlist:add" : "wishlist:remove");
+    emit(nowSaved ? "wishlist:add" : "wishlist:remove", { productId: typeof p === "string" ? p : p.id });
     return nowSaved;
   }, [emit]);
   const wlClear   = useCallback(async ()                    => { await shopify.wishlist.clear(); },    []);
@@ -1025,116 +1338,14 @@ export function ShopifyProvider({
   const wlHas     = useCallback((id: string)                => shopify.wishlist.has(id),               []);
   const wlIds     = useMemo(() => wlItems.map((item) => item.productId), [wlItems]);
 
-  // ── Customer session ────────────────────────────────────────────────────────
-  // Wraps `shopify.customer` with token persistence and the four Login alerts.
-  // Bad credentials resolve `false` rather than throwing: it is an expected
-  // answer to a login form, and every caller would otherwise need a try/catch to
-  // tell it apart from the store being unreachable (which still throws).
-
-  const persistToken = useCallback(async (next: string | null) => {
-    setToken(next);
-    const s = storageRef.current;
-    if (!s) return;
-    if (next) await Promise.resolve(s.setItem(CUSTOMER_TOKEN_KEY, next));
-    else await Promise.resolve(s.removeItem(CUSTOMER_TOKEN_KEY));
-  }, []);
-
-  const authLogin = useCallback(async (email: string, password: string): Promise<boolean> => {
-    setAuthLoad(true);
-    try {
-      let accessToken: string;
-      try {
-        const minted = await shopify.customer.login({ email, password });
-        accessToken = minted.accessToken;
-      } catch (loginError) {
-        // Only a credential problem is a "Login Failed" toast; a network failure
-        // is not the shopper's mistake, so it propagates instead.
-        if (classifyAuthFailure(loginError) === "unknown") throw loginError;
-        emit("auth:loginFailed", loginError);
-        return false;
-      }
-      const profile = await shopify.customer.profile(accessToken);
-      await persistToken(accessToken);
-      setCustomer(profile);
-      emit("auth:loginSuccess");
-      return true;
-    } finally {
-      setAuthLoad(false);
-    }
-  }, [emit, persistToken]);
-
-  const authSignup = useCallback(async (input: {
-    email: string;
-    password: string;
-    firstName?: string;
-    lastName?: string;
-    acceptsMarketing?: boolean;
-  }): Promise<boolean> => {
-    setAuthLoad(true);
-    try {
-      let created: { customer: Customer; accessToken: CustomerAccessToken };
-      try {
-        created = await shopify.customer.signup(input);
-      } catch (signupError) {
-        if (classifyAuthFailure(signupError) === "unknown") throw signupError;
-        emit("auth:loginFailed", signupError);
-        return false;
-      }
-      await persistToken(created.accessToken.accessToken);
-      setCustomer(created.customer);
-      // Signup mints a token, so the shopper IS logged in — both events fire, and
-      // a host that only toasts on `auth:loginSuccess` still says the right thing.
-      emit("auth:signup");
-      emit("auth:loginSuccess");
-      return true;
-    } finally {
-      setAuthLoad(false);
-    }
-  }, [emit, persistToken]);
-
-  const authLogout = useCallback(async (): Promise<void> => {
-    const current = token;
-    setAuthLoad(true);
-    try {
-      if (current) {
-        try {
-          await shopify.customer.logout(current);
-        } catch (logoutError) {
-          // The local session ends regardless — leaving a shopper "logged in"
-          // because Shopify was unreachable is the worse failure.
-          console.warn("[ShopifyProvider] token delete failed; clearing locally", logoutError);
-        }
-      }
-      await persistToken(null);
-      setCustomer(null);
-      emit("auth:logout");
-    } finally {
-      setAuthLoad(false);
-    }
-  }, [token, emit, persistToken]);
-
-  const authRecover = useCallback(async (email: string): Promise<void> => {
-    setAuthLoad(true);
-    try {
-      await shopify.customer.recoverPassword(email);
-      emit("auth:recoverSent");
-    } finally {
-      setAuthLoad(false);
-    }
+  // The waitlist module owns storage and fetching, as the wishlist's does.
+  const wtAdd     = useCallback(async (entry: WaitlistEntryInput) => { await shopify.waitlist.add(entry); emit("waitlist:add"); }, [emit]);
+  const wtRemove  = useCallback(async (variantId: string) => {
+    if (await shopify.waitlist.remove(variantId)) emit("waitlist:remove");
   }, [emit]);
-
-  const authRefresh = useCallback(async (): Promise<Customer | null> => {
-    if (!token) return null;
-    const profile = await shopify.customer.profile(token);
-    if (!profile) {
-      // Token expired or revoked. Clear it silently — see the mount restore.
-      await persistToken(null);
-      setCustomer(null);
-      return null;
-    }
-    setCustomer(profile);
-    return profile;
-  }, [token, persistToken]);
+  const wtRefresh = useCallback(async () => { await shopify.waitlist.refresh(); }, []);
+  const wtHas     = useCallback((variantId: string) => shopify.waitlist.has(variantId), []);
+  const wtIds     = useMemo(() => wtItems.map((item) => item.variantId), [wtItems]);
 
   // ── Checkout outcome ────────────────────────────────────────────────────────
 
@@ -1142,7 +1353,8 @@ export function ShopifyProvider({
     orderId?: string;
     orderNumber?: string | number;
   }): Promise<void> => {
-    emit("checkout:orderPlaced", details);
+    // The order's details travel in `error`, where hosts have always read them.
+    emit("checkout:orderPlaced", { error: details });
     // The old cart is spent once an order exists; keeping it would show the
     // shopper their purchased items still sitting in the bag.
     try {
@@ -1165,12 +1377,35 @@ export function ShopifyProvider({
   }, []);
 
   const checkoutPaymentFailed = useCallback((paymentError?: unknown): void => {
-    emit("checkout:paymentFailed", paymentError);
+    emit("checkout:paymentFailed", { error: paymentError });
   }, [emit]);
+
+  // Every step handed in from here, so `prepareCheckout` is tested without React (test/checkout-prepare).
+  const checkoutPrepare = useCallback((options?: PrepareCheckoutOptions): Promise<CheckoutPreparation> =>
+    prepareCheckout({
+      readCartAgain: cartRefresh,
+      // A read that fails carries on with the cart in hand ("Carry on", 2026-10-06).
+      cartAlreadyLoaded: () => latestCart.current,
+      signedIn: sessionState.kind !== null,
+      email: sessionState.customer?.email ?? null,
+      getAccessToken: session.getAccessToken,
+      setBuyerIdentity: cartSetBuyerIdentity,
+      reportCheckoutStarted: checkoutStarted,
+      // No attribution in this build (it comes with 0.9.1's flushAttribution and ensureCartAttributes),
+      // so the cart isn't labelled here. When merging onto origin/main, pass both as the trial merge does.
+    }, options), [cartRefresh, cartSetBuyerIdentity, checkoutStarted, sessionState.kind, sessionState.customer?.email, session]);
+
+  const authMethod: AuthMethod = auth?.method ?? "password";
+  // By its fields, so a host passing a fresh object each render doesn't rebuild the context.
+  const storeCreditOptions = useMemo<StoreCreditOptions | null>(
+    () => (storeCredit ? { source: storeCredit.source, tileCreditBaseUrl: storeCredit.tileCreditBaseUrl } : null),
+    [storeCredit?.source, storeCredit?.tileCreditBaseUrl],
+  );
 
   const value = useMemo<ShopifyContextType>(() => ({
     ready, error,
     message,
+    events,
     cart: {
       cart, loading: cartLoading, itemCount: cart?.totalQuantity ?? 0,
       lineCount:          cart?.lines.length ?? 0,
@@ -1182,6 +1417,8 @@ export function ShopifyProvider({
       applyDiscountCodes: cartApplyDiscounts,
       updateNote: cartUpdateNote,
       setBuyerIdentity:   cartSetBuyerIdentity,
+      addGiftCardCodes:   cartAddGiftCardCodes,
+      removeGiftCards:    cartRemoveGiftCards,
       refresh:            cartRefresh,
       adopt:              cartAdopt,
       reset:              cartReset,
@@ -1198,31 +1435,51 @@ export function ShopifyProvider({
       clear:        wlClear,
       refresh:      wlRefresh,
     },
+    waitlist: {
+      items:   wtItems,
+      ids:     wtIds,
+      count:   wtItems.length,
+      has:     wtHas,
+      add:     wtAdd,
+      remove:  wtRemove,
+      refresh: wtRefresh,
+    },
     customer: {
-      customer,
-      loggedIn:    !!customer,
-      accessToken: token,
-      loading:     authLoading,
-      restoring,
-      login:           authLogin,
-      signup:          authSignup,
-      logout:          authLogout,
-      recoverPassword: authRecover,
-      refresh:         authRefresh,
+      customer:    sessionState.customer,
+      loggedIn:    sessionState.kind !== null,
+      accessToken: sessionState.accessToken,
+      loading:     sessionState.loading,
+      restoring:   sessionState.restoring,
+      method:      authMethod,
+      sessionKind: sessionState.kind,
+      login:           session.login,
+      signup:          session.signup,
+      logout:          session.logout,
+      recoverPassword: session.recoverPassword,
+      refresh:         session.refresh,
+      updateProfile:   session.updateProfile,
+      signIn:          session.signIn,
+      startSignIn:     session.startSignIn,
+      getAccessToken:  session.getAccessToken,
+      renewAccessToken: session.renewAccessToken,
+      request:         session.customerAccountRequest,
     },
     checkout: {
+      prepare:             checkoutPrepare,
       reportCheckoutStarted: checkoutStarted,
       reportOrderPlaced:   checkoutOrderPlaced,
       reportPaymentFailed: checkoutPaymentFailed,
     },
+    storeCredit: storeCreditOptions,
   }), [
-    ready, error,
+    ready, error, events,
     // A new policy changes `cart.maxLineItems`, so the memo must see it.
     resolvedPolicy,
-    cart, cartLoading, cartAddLine, cartAddLines, cartUpdateLine, cartRemoveLine, cartApplyDiscounts, cartUpdateNote, cartSetBuyerIdentity, cartRefresh, cartAdopt, cartReset,
+    cart, cartLoading, cartAddLine, cartAddLines, cartUpdateLine, cartRemoveLine, cartApplyDiscounts, cartUpdateNote, cartSetBuyerIdentity, cartAddGiftCardCodes, cartRemoveGiftCards, cartRefresh, cartAdopt, cartReset,
     wlItems, wlIds, wlHas, wlAdd, wlRemove, wlToggle, wlClear, wlRefresh,
-    customer, token, authLoading, restoring, authLogin, authSignup, authLogout, authRecover, authRefresh,
-    checkoutStarted, checkoutOrderPlaced, checkoutPaymentFailed,
+    wtItems, wtIds, wtHas, wtAdd, wtRemove, wtRefresh,
+    sessionState, session, authMethod, storeCreditOptions,
+    checkoutStarted, checkoutOrderPlaced, checkoutPaymentFailed, checkoutPrepare,
   ]);
 
   return <ShopifyContext.Provider value={value}>{children}</ShopifyContext.Provider>;
@@ -1242,14 +1499,49 @@ export function useWishlist(): WishlistState {
   return useShopify().wishlist;
 }
 
+export function useWaitlist(): WaitlistState {
+  return useShopify().waitlist;
+}
+
 /** Customer session — the source of the four Login alerts. */
 export function useCustomer(): CustomerState {
   return useShopify().customer;
 }
 
-/** Reports a hosted-checkout outcome so the two Checkout alerts can fire. */
+/**
+ * Gets the cart ready before checkout opens (`prepare`, with this caller's own `preparing`), and
+ * reports a hosted-checkout outcome so the two Checkout alerts can fire.
+ */
 export function useCheckout(): CheckoutState {
-  return useShopify().checkout;
+  const checkout = useShopify().checkout;
+  // Each caller's own, so only the button that started it shows a spinner.
+  const [preparing, setPreparing] = useState(false);
+  // Read when called, so `prepare` keeps one identity while the cart changes.
+  const latestPrepare = useRef(checkout.prepare);
+  latestPrepare.current = checkout.prepare;
+  const prepare = useCallback(async (options?: PrepareCheckoutOptions): Promise<CheckoutPreparation> => {
+    setPreparing(true);
+    try {
+      return await latestPrepare.current(options);
+    } finally {
+      setPreparing(false);
+    }
+  }, []);
+  return useMemo(() => ({ ...checkout, prepare, preparing }), [checkout, prepare, preparing]);
+}
+
+/**
+ * Hears every event the provider raises, from anywhere inside it (0.10): the same events `onEvent`
+ * gets, told right after it, in the order they happen. Cart events carry the cart and the lines they
+ * changed, so a listener reports from the event rather than waiting for `useCart()` to catch up. The
+ * listener is read when an event fires, so a new function each render is fine. It starts hearing once
+ * the component has mounted and stops when it unmounts.
+ */
+export function useShopifyEvents(listener: (event: ShopifyEvent) => void): void {
+  const { events } = useShopify();
+  const latestListener = useRef(listener);
+  latestListener.current = listener;
+  useEffect(() => events.subscribe((event) => latestListener.current(event)), [events]);
 }
 
 /**
@@ -1260,4 +1552,4 @@ export function useShopifyMessage(): (key: AlertMessageKey) => string {
   return useShopify().message;
 }
 
-export type { CartState, WishlistState, CustomerState, CheckoutState };
+export type { CartState, WishlistState, WaitlistState, CustomerState, CheckoutState };

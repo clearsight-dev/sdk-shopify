@@ -71,7 +71,7 @@ const CONFIG = { storeDomain: 'shop.myshopify.com', storefrontAccessToken: 't', 
 const wait = (ms) => new Promise((r) => setTimeout(r, ms));
 /** What a cold start looks like: the process forgot everything, the device kept its store. */
 const coldStart = () => { store.resetProductStoreMemory(); clearRequestCache(); };
-const storedKeys = () => Object.keys(localStorage).filter((k) => k.startsWith('tiledev.sdk-shopify:v1:'));
+const storedKeys = () => Object.keys(localStorage).filter((k) => k.startsWith('tiledev.sdk-shopify:v3:'));
 
 let pass = 0;
 const check = async (label, fn) => { await fn(); pass++; console.log('  ✓', label); };
@@ -129,6 +129,10 @@ console.log('product store');
 await shopify.init(CONFIG);
 
 await check('a collection read records the base keys of every product, and only those', async () => {
+  // Left by earlier SDKs (schema v1, and v2 whose variants had no sellingPlan): cleared by the
+  // session's prune, checked further down.
+  localStorage.setItem('tiledev.sdk-shopify:v1:abc:b:gid://shopify/Product/1', '{"b":{},"t":1}');
+  localStorage.setItem('tiledev.sdk-shopify:v2:abc:b:gid://shopify/Product/1', '{"b":{},"t":1}');
   await shopify.collections.products('new-arrivals', { first: 12 });
   const entry = peekProduct('p-1');
   assert.ok(entry, 'known after a collection read');
@@ -136,6 +140,17 @@ await check('a collection read records the base keys of every product, and only 
   assert.equal(entry.base.title, 'Product 1');
   assert.equal(entry.full, null);
   assert.equal(peekProduct('gid://shopify/Product/2')?.handle, 'p-2', 'found by GID as well as handle');
+});
+
+await check('a list read keeps what the picker and description need, not only title, image and price', async () => {
+  const base = peekProduct('p-1')?.base;
+  assert.equal(base?.variants.length, 1);
+  assert.equal(base?.variants[0].id, 'gid://shopify/ProductVariant/1');
+  assert.deepEqual(base?.options, []);
+  assert.equal(typeof base?.description, 'string');
+  assert.equal(typeof base?.descriptionHtml, 'string');
+  assert.equal(typeof base?.availableForSale, 'boolean');
+  assert.ok(Array.isArray(base?.tags));
 });
 
 await check('the base keys survive a cold start: read back from the device', async () => {
@@ -148,6 +163,14 @@ await check('a product read records the full product, which also survives a cold
   await shopify.products.byHandle('p-1');
   assert.equal(peekProduct('p-1')?.full?.variants.length, 2);
   coldStart();
+  assert.equal(peekProduct('p-1')?.full?.variants.length, 2);
+});
+
+await check('cold start, then a grid read, then the page: the full product from the device still counts', async () => {
+  await shopify.products.byHandle('p-1');
+  coldStart();
+  // The grid loads first after a launch, recording base keys into an empty memory.
+  await shopify.collections.products('new-arrivals', { first: 12 });
   assert.equal(peekProduct('p-1')?.full?.variants.length, 2);
 });
 
@@ -209,7 +232,8 @@ await check('tapped in a grid: the FIRST render already has title, image and pri
   assert.equal(first.level, 'base');
   assert.equal(first.loading, false);
   assert.equal(first.refreshing, true);
-  assert.equal(first.product, null, 'no variants yet');
+  assert.equal(first.product, null, 'not the full product yet (the gallery media)');
+  assert.equal(first.preview?.variants.length, 1, 'but the picker can render: the variants came with the grid');
   const done = pdp.last();
   assert.equal(done.level, 'full');
   assert.equal(done.product?.variants.length, 2);
@@ -240,6 +264,13 @@ await check('never seen (a deep link): loading, then the full product', async ()
   assert.equal(pdp.renders[0].preview, null);
   assert.equal(pdp.last().level, 'full');
   await pdp.unmount();
+});
+
+await check('keys from earlier schemas (v1, v2) are cleared from the device, off the hot path', async () => {
+  await wait(3100); // the session's prune runs 3 s after the first read
+  assert.equal(localStorage.getItem('tiledev.sdk-shopify:v1:abc:b:gid://shopify/Product/1'), null);
+  assert.equal(localStorage.getItem('tiledev.sdk-shopify:v2:abc:b:gid://shopify/Product/1'), null);
+  assert.ok(storedKeys().length > 0, 'the current schema is kept');
 });
 
 await check('a product Shopify no longer has: notFound', async () => {

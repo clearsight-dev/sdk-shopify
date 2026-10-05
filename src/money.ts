@@ -66,6 +66,54 @@ export function formatMoney(money: Money | null | undefined): string {
   return `${symbol}${renderAmount(num, 'amount')}${suffix}`;
 }
 
+/**
+ * An amount a shopper typed, in whole cents, or null when it isn't one. For a field where money is
+ * typed, so the field and whoever acts on it read it the same way.
+ *
+ * - **Accepted:** `1500`, `1,500`, `1500.5`, `$1,500.00`, ` 25 `, `€12,50` (a comma before one or two
+ *   final digits is a decimal comma, as a phone's decimal key types in some regions), `1.500,00`. A
+ *   currency sign or a space anywhere is ignored. More than two decimals round to the nearest cent.
+ * - **Refused (null):** nothing typed, a letter (`12abc`, `USD 10`), a minus sign, two decimal points
+ *   (`1.2.3`), or a number too long to be money.
+ * - **Grouping:** with both `,` and `.`, the last one is the decimal point and the other groups. One
+ *   `,` before exactly three digits groups (`1,500` is 1500, which old Amore read as 1.5), and so do
+ *   several (`1,500,000`). A `.` alone is always the decimal point (`1.500` is 1.5).
+ *
+ * Zero is an answer (0), not an error: whoever acts on it decides that zero can't be applied.
+ */
+export function typedAmountToCents(typed: string | null | undefined): number | null {
+  if (typeof typed !== 'string') return null;
+  const text = typed.trim();
+  if (!text || /[A-Za-z]/.test(text) || /[-\u2212]/.test(text)) return null;
+  const kept = text.replace(/[^\d.,]/g, '');
+  if (!/\d/.test(kept)) return null;
+
+  const lastDot = kept.lastIndexOf('.');
+  const lastComma = kept.lastIndexOf(',');
+  const dots = kept.split('.').length - 1;
+  const commas = kept.split(',').length - 1;
+  let decimalAt = -1;
+  if (dots > 0 && commas > 0) {
+    // The last mark is the decimal point, so it appears once; the other one only groups.
+    decimalAt = Math.max(lastDot, lastComma);
+    if (kept.split(kept[decimalAt]).length - 1 > 1) return null;
+  } else if (dots > 1) {
+    return null;
+  } else if (dots === 1) {
+    decimalAt = lastDot;
+  } else if (commas === 1) {
+    decimalAt = kept.length - lastComma - 1 === 3 ? -1 : lastComma;
+  }
+
+  const whole = (decimalAt === -1 ? kept : kept.slice(0, decimalAt)).replace(/[.,]/g, '');
+  const fraction = decimalAt === -1 ? '' : kept.slice(decimalAt + 1);
+  if (/[.,]/.test(fraction)) return null;
+  if (whole.length > 13) return null;
+  const firstThree = (fraction + '000').slice(0, 3);
+  const cents = Number(whole || '0') * 100 + Math.round(Number(firstThree) / 10);
+  return Number.isSafeInteger(cents) ? cents : null;
+}
+
 /** Shop's IP-localized country (e.g. `"US"`). Fetched once on demand and
  *  cached — used as the fallback countryCode for gift-card apply. */
 let cachedCountryCode: string | null = null;

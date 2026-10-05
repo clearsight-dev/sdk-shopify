@@ -40,7 +40,7 @@ export interface ShopifyConfig {
    * the cart it keeps (line thumbnails) and the wishlist it rehydrates. Omitted: original URLs.
    * A transform passed to a call directly (`cart.get(id, { imageTransform })`) wins.
    */
-  imageTransforms?: { cart?: ImageTransform; wishlist?: ImageTransform };
+  imageTransforms?: { cart?: ImageTransform; wishlist?: ImageTransform; waitlist?: ImageTransform };
 }
 
 /**
@@ -83,10 +83,12 @@ export type AlertMessageKey =
   | 'cart.added'
   | 'cart.removed'
   | 'cart.limitExceeded'
+  | 'cart.noMoreStock'
   | 'cart.outOfStock'
   | 'wishlist.added'
   | 'wishlist.removed'
   | 'wishlist.empty'
+  | 'waitlist.added'
   | 'auth.loginSuccess'
   | 'auth.loginFailed'
   | 'auth.loggedOut'
@@ -136,6 +138,12 @@ export interface ProductMedia {
   alt: string | null;
   /** Still frame — Shopify provides one for videos too, so it doubles as a poster. */
   posterUrl: string | null;
+  /**
+   * The still's original size in px (its shape, whatever `imageTransform` asked for). Null when
+   * Shopify has none, or the product came from a cache written before these were stored.
+   */
+  width: number | null;
+  height: number | null;
   /** Playable file for `Video`; null for images and external video. */
   videoUrl: string | null;
   /** YouTube/Vimeo embed for `ExternalVideo`; null otherwise. */
@@ -165,6 +173,13 @@ export interface ProductVariant {
   compareAtPrice: Money | null;
   selectedOptions: ProductSelectedOption[];
   image: Image | null;
+  /**
+   * The pre-order plan the store enrolled this variant in (its first selling-plan allocation), or
+   * null when it has none. Add with `sellingPlanId: sellingPlan.id` to pre-order it. Set by every
+   * product read (products, collections, search, recommendations, `byIds`) and by `variants.byIds`;
+   * absent on a cart line's `merchandise` (the line has `sellingPlanId`), hence optional.
+   */
+  sellingPlan?: Pick<SellingPlan, 'id' | 'name'> | null;
 }
 
 /** A pre-order/deferred-payment plan the store has enrolled a variant in. */
@@ -184,6 +199,12 @@ export interface StandaloneVariant extends ProductVariant {
     handle: string;
     featuredImage: Image | null;
     hasVideo: boolean;
+    /**
+     * The product's tags, e.g. for an app's `isBlocked` rule (an auction's `SEARCH-BLOCKED`) on a waitlist
+     * card (`waitlistActionFor`; SDK move 6). Missing on a variant stored before 0.10 read it, until the
+     * list reads it again.
+     */
+    tags?: string[];
   };
   /** Present only when the store has enrolled this variant for pre-order. */
   sellingPlan: SellingPlan | null;
@@ -270,6 +291,12 @@ export interface CartLine {
   attributes: CartLineAttribute[];
   /** SellingPlan GID the line was added under; null for a one-off purchase. */
   sellingPlanId: string | null;
+  /**
+   * The plan the line was bought on (a pre-order), with what checkout takes now and what is left to
+   * pay later, for the whole line; null for a one-off purchase. Optional, as a cart read before the
+   * SDK asked for it has none: treat a missing amount as unknown, never as zero.
+   */
+  sellingPlan?: CartLineSellingPlan | null;
   /** Needed to render a name and link back to the PDP — `merchandise.title` is only the option value. */
   product: { id: string; title: string; handle: string } | null;
   cost: {
@@ -279,13 +306,29 @@ export interface CartLine {
   };
 }
 
+/**
+ * A cart line's selling plan and how its payment splits. For a pre-authorize plan, checkout takes
+ * nothing (`checkoutCharge` is 0) and the whole price is charged later (`remainingBalance`).
+ *
+ * Both amounts are for the whole line. Shopify answers them per unit (checked 2026-10-05 on a line
+ * of 2 at $250 on a pre-authorize plan: $0 and $250), so the SDK multiplies them by the quantity.
+ */
+export interface CartLineSellingPlan {
+  id: string;
+  name: string;
+  /** What checkout charges for the line now. Null when Shopify didn't say. */
+  checkoutCharge: Money | null;
+  /** What is charged for the line later (when it ships, for a pre-order). Null when Shopify didn't say. */
+  remainingBalance: Money | null;
+}
+
 export interface CartDiscountCode {
   code: string;
   applicable: boolean;
 }
 
 /** One gift card applied to a cart. Pass `.id` to `cartGiftCardCodesRemove`
- *  when removing (NOT the raw code). See docs section 5.5. */
+ *  when removing (NOT the raw code). */
 export interface AppliedGiftCard {
   id: string;
   lastCharacters: string;
@@ -350,6 +393,13 @@ export interface CartLineInput {
   attributes?: CartLineAttribute[];
   /** SellingPlan GID. Passing it is what makes checkout authorise rather than capture. */
   sellingPlanId?: string | null;
+  /**
+   * The most of this variant the cart may hold, usually its stock (`stockCeiling(variant)`). Checked
+   * before the write, because Shopify answers 200 to an add past the stock level and clamps it
+   * silently. A refusal is `reason: 'stock'` with the `cart.noMoreStock` alert. Never sent to Shopify.
+   * Omitted or null: no ceiling.
+   */
+  maxQuantity?: number | null;
 }
 
 /** What a cart line needs to be re-created on a new cart — see `toLineSnapshot`. */
@@ -375,9 +425,13 @@ export interface CartLineUpdateInput {
 export interface CartLineGuard {
   /**
    * Return the input, optionally decorated, to proceed; `null` to cancel. A decorated add is not
-   * merged into an existing line for the same variant, so it yields a line per add.
+   * merged into an existing line for the same variant, so it yields a line per add. The returned
+   * `quantity` is what is added (a guard may lower it to the stock it could reserve).
+   *
+   * `options.quiet`: the caller reports the outcome itself (Buy again's one summary), so the guard
+   * should say nothing about a refusal. It still decides as usual. Set by `addLines(inputs, { quiet })`.
    */
-  beforeAdd?(input: CartLineInput): MaybePromise<CartLineInput | null>;
+  beforeAdd?(input: CartLineInput, options?: { quiet?: boolean }): MaybePromise<CartLineInput | null>;
   /** Only increases are offered — a decrease is reported through `onReleased` instead. */
   beforeIncrease?(line: CartLine, nextQuantity: number): MaybePromise<CartLineUpdateInput | null>;
   /** Reporting only; cannot affect the cart. */
@@ -398,10 +452,18 @@ export interface CartLineReleasedEvent {
   variantId: string;
   /** How many units left the cart. For a removal, the whole line. */
   quantity: number;
-  /** `rejected` means the guard approved the write and Shopify refused it, so nothing was held. */
+  /**
+   * `rejected`: the guard approved the write and it didn't land (Shopify refused it, the cart limit
+   * refused it, or the cart couldn't be created), so whatever the guard reserved for it goes back.
+   */
   reason: 'decreased' | 'removed' | 'rejected';
-  /** The line as it was before the write. Null for a rejected add, which never became one. */
+  /**
+   * The line as it was before the write. For a rejected increase, the line that was to grow; null
+   * for a rejected add, which never became one.
+   */
   line: CartLine | null;
+  /** A rejected add: the input as the guard approved it, with any attributes it added (its receipt). */
+  input?: CartLineInput;
   cart: Cart | null;
 }
 
@@ -412,7 +474,8 @@ export type MaybePromise<T> = T | Promise<T>;
  * `maxLineItems` policy, `outOfStock` Shopify refusing an unsellable line.
  * `no-cart` means there was nothing to write to.
  */
-export type CartRejectionReason = 'guard' | 'limit' | 'outOfStock' | 'no-cart';
+/** `stock`: the add would pass the variant's stock (`CartLineInput.maxQuantity`), checked before the write. */
+export type CartRejectionReason = 'guard' | 'limit' | 'stock' | 'outOfStock' | 'no-cart';
 
 /**
  * The outcome of a cart write. Returned instead of a bare boolean so a caller
@@ -474,6 +537,162 @@ export interface CustomerAccessToken {
   expiresAt: string;
 }
 
+// Auth — the two ways a shopper signs in
+
+/**
+ * - `password`: email and password, Shopify's classic customer accounts (Storefront
+ *   `customerAccessToken`). Also what an App Store reviewer signs in with: a review account needs a
+ *   password, and Shopify's web sign-in sends a one-time code to an inbox the reviewer can't read.
+ * - `shopify`: Shopify's hosted web sign-in, new customer accounts (Customer Account API, OAuth 2
+ *   with PKCE, passwordless).
+ */
+export type AuthMethod = 'password' | 'shopify';
+
+/** The app's Customer Account API client (Shopify admin → Settings → Customer accounts → Headless or Hydrogen). */
+export interface CustomerAccountConfig {
+  /** The number in `shopify.com/<shopId>/account`. */
+  shopId: string;
+  /** The client's id. Register the client as Public (mobile app): there is no secret, PKCE stands in for it. */
+  clientId: string;
+  /** Default `shop.<shopId>.app://callback`, the form Shopify allows for a mobile client. The app registers the scheme. */
+  redirectUri?: string;
+  /** Customer Account API version. Default: `ShopifyConfig.apiVersion`, else `2025-07`. */
+  apiVersion?: string;
+  /** Default `openid email customer-account-api:full`. */
+  scopes?: string[];
+  /** Language of Shopify's sign-in page (`ui_locales`), e.g. `fr`. */
+  locale?: string;
+}
+
+/**
+ * Where session tokens are kept. On a device, pass the keychain (expo-secure-store); AsyncStorage
+ * is plain text on disk. Without one, the provider's `storage` is used.
+ */
+export interface SecureStorageAdapter {
+  getItem(key: string): string | null | Promise<string | null>;
+  setItem(key: string, value: string): void | Promise<void>;
+  removeItem(key: string): void | Promise<void>;
+}
+
+/**
+ * Opens Shopify's sign-in page in the system browser sheet and resolves with the URL it redirected
+ * to. expo-web-browser's `openAuthSessionAsync` fits as is:
+ * `(url, redirectUri) => WebBrowser.openAuthSessionAsync(url, redirectUri, { preferEphemeralSession: true })`.
+ * Any result but `success` with a `url` is the shopper backing out.
+ */
+export type OpenAuthSession = (url: string, redirectUri: string) => Promise<{ type: string; url?: string }>;
+
+/** `n` cryptographically secure random bytes, e.g. expo-crypto's `getRandomBytes`. */
+export type RandomBytes = (byteCount: number) => Uint8Array;
+
+export interface AuthOptions {
+  /**
+   * Which sign-in the app offers now. It can change while the app runs (a Live Layer publish):
+   * `password` while the app is in App Store review, `shopify` for shoppers. A shopper already
+   * signed in stays signed in when it changes; `CustomerState.sessionKind` says which kind they have.
+   */
+  method: AuthMethod;
+  /** Required for `shopify`. */
+  customerAccount?: CustomerAccountConfig;
+  secureStorage?: SecureStorageAdapter;
+  /** Required for `customer.signIn()`, the system sheet. An in-app web view uses `customer.startSignIn()` instead. */
+  openAuthSession?: OpenAuthSession;
+  /** Required for `shopify`. Defaults to `crypto.getRandomValues` where the engine has it (web); Hermes doesn't. */
+  random?: RandomBytes;
+}
+
+/**
+ * A Shopify web sign-in in progress, for an app that shows the page in its own web view rather than
+ * the system sheet: load `url`, and when the web view is about to load a URL for which
+ * `isCallback(url)` is true, stop it and pass that URL to `finish`.
+ */
+export interface SignInAttempt {
+  url: string;
+  redirectUri: string;
+  isCallback(url: string): boolean;
+  /** Signs in. `false` when Shopify refused it (`auth:loginFailed` fires) or this attempt is stale. Throws when the store can't be reached. */
+  finish(callbackUrl: string): Promise<boolean>;
+  /** The shopper closed the web view. Later `finish` calls return false. */
+  cancel(): void;
+}
+
+/** Where the shopper's store credit comes from: chosen per app on `ShopifyProvider`. */
+export interface StoreCreditOptions {
+  /**
+   * - `shopify`: Shopify's own store credit (`storeCreditAccounts`). Readable only through the
+   *   Customer Account API, so only for a `shopify` sign-in.
+   * - `tile`: Tile Credit, the tile-credit service's wallet. Works with either sign-in.
+   */
+  source: 'shopify' | 'tile';
+  /** Tile Credit service URL. Default `https://tile-credit.apptile.io`. */
+  tileCreditBaseUrl?: string;
+}
+
+/**
+ * Where store credit stands on the cart (`useCartStoreCredit().status`):
+ * - `hidden`: nothing to show: no store credit chosen, signed out, or a source this session can't read.
+ * - `loading`: the balance is being read for the first time.
+ * - `ready`: the balance is known and none of it is on the cart: `apply` can run.
+ * - `applying`: an `apply` is on its way.
+ * - `applied`: the app's card is on the cart: `remove` can run.
+ * - `removing`: a `remove` is on its way.
+ * - `atCheckout`: Shopify's store credit, which only Shopify's checkout can take: no actions.
+ * - `error`: the balance couldn't be read (`error` says why); `refresh` tries again.
+ */
+export type CartStoreCreditStatus =
+  | 'hidden'
+  | 'loading'
+  | 'ready'
+  | 'applying'
+  | 'applied'
+  | 'removing'
+  | 'atCheckout'
+  | 'error';
+
+/**
+ * What a line of store-credit history was, the same words for either source, so a screen words each
+ * one itself (`useStoreCreditHistory`).
+ *
+ * - `signupBonus`, `liveShowReward`, `orderReward`: Tile Credit's own grants.
+ * - `addedByStore`, `removedByStore`: the store changed the balance by hand.
+ * - `spent`: used at checkout. `refunded`: given back (a refund to store credit, or a payment that
+ *   was voided). `expired`: credit that ran out.
+ * - `added`, `removed`: anything else, by which way it moved the balance.
+ */
+export type StoreCreditEntryKind =
+  | 'signupBonus'
+  | 'liveShowReward'
+  | 'orderReward'
+  | 'addedByStore'
+  | 'removedByStore'
+  | 'spent'
+  | 'refunded'
+  | 'expired'
+  | 'added'
+  | 'removed';
+
+/** One line of the shopper's store-credit history, from either source. */
+export interface StoreCreditEntry {
+  /** Unique within the history. */
+  id: string;
+  kind: StoreCreditEntryKind;
+  /** True when it added to the balance; false when it took from it. */
+  isCredit: boolean;
+  /** How much, never negative: `isCredit` says which way it went. */
+  amount: Money;
+  /** ISO 8601. */
+  createdAt: string;
+  /** When this credit runs out; null when it doesn't, or for a line that took credit away. */
+  expiresAt: string | null;
+  /**
+   * The store's own words for a change it made by hand (Tile Credit's `reason`), when they read as a
+   * sentence; null for everything else, and always for Shopify's store credit, which has none.
+   */
+  note: string | null;
+  /** The order it came from, as the shopper knows it (`#1043`), when the source names it. */
+  orderName: string | null;
+}
+
 // Orders
 
 export interface OrderLineItem {
@@ -502,6 +721,71 @@ export interface Order {
   phone: string | null;
   shippingAddress: Address | null;
   lineItems: OrderLineItem[];
+}
+
+/**
+ * Where an order has got to, for a status badge. Cancelled wins over everything; otherwise it follows
+ * Shopify's fulfilment status: `FULFILLED`, `PARTIALLY_FULFILLED`, and every other value (unfulfilled,
+ * on hold, scheduled, …) reads as `confirmed`.
+ */
+export type OrderProgress = 'confirmed' | 'partiallyFulfilled' | 'fulfilled' | 'cancelled';
+
+/**
+ * One past order, as `useOrders` lists it, the same for both sign-ins: Shopify's sign-in reads the
+ * Customer Account API, email and password the Storefront API.
+ */
+export interface OrderSummary {
+  /** GID. Pass it to `useOrder`. */
+  id: string;
+  /** As the shopper knows it, e.g. `#1001`. */
+  name: string;
+  /** ISO 8601. */
+  processedAt: string;
+  progress: OrderProgress;
+  /** ISO 8601; null unless cancelled. */
+  cancelledAt: string | null;
+  totalPrice: Money;
+  /** Units ordered (the quantities added up). A list row counts the first 30 lines of an order. */
+  itemCount: number;
+  /** Shopify's order status page: tracking, addresses and returns. */
+  statusPageUrl: string | null;
+}
+
+/** One line of an order, as bought. */
+export interface OrderLine {
+  title: string;
+  /** e.g. `S / Blush`; null for a product with one variant. */
+  variantTitle: string | null;
+  quantity: number;
+  imageUrl: string | null;
+  /** The price of one, before discounts. */
+  unitPrice: Money | null;
+  /** The line's total before discounts (`unitPrice` × `quantity`). */
+  totalPrice: Money | null;
+  /** For Buy again; null when the variant no longer exists. */
+  variantId: string | null;
+}
+
+/**
+ * One order in full, as `useOrder` reads it. Tracking, addresses and returns are on Shopify's status
+ * page (`statusPageUrl`).
+ *
+ * The totals read like a receipt: `subtotal` is the items before discounts, and `subtotal` minus
+ * `totalDiscount` is what Shopify charged for them. `totalDiscount`, `totalTax` and `totalRefunded`
+ * are null when there is none, so a screen shows those rows only when they say something;
+ * `totalShipping` keeps a zero, which is free shipping.
+ */
+export interface OrderDetails extends OrderSummary {
+  lineItems: OrderLine[];
+  /** The lines' totals before discounts. */
+  subtotal: Money | null;
+  totalShipping: Money | null;
+  totalTax: Money | null;
+  /** Every discount on the items, line and order level together. */
+  totalDiscount: Money | null;
+  totalRefunded: Money | null;
+  /** The codes the shopper entered, e.g. `["WELCOME10"]`; automatic discounts have none. */
+  discountCodes: string[];
 }
 
 // Blogs / Articles
@@ -679,13 +963,22 @@ export interface TileCreditRedeemResult {
   balanceCents: number;
 }
 
+/**
+ * What went wrong, from the service's HTTP status, plus one the cart adds:
+ * - `unauthorized` (401): no token, a token the service refused even after one renewal, or a shop the
+ *   service doesn't know. The SDK never signs the shopper out over it.
+ * - `validation` (400): an amount under the store's minimum or over its maximum (`details.min`/`max`).
+ * - `insufficient_balance` (402): more than the shopper has.
+ * - `cart_refused`: the card was made, but Shopify didn't put it on the cart (it refused it, or
+ *   answered without applying it). Nothing was charged: a card only reserves the credit.
+ * - `network`: the service couldn't be reached, or took longer than `timeoutMs`.
+ */
 export type TileCreditErrorCode =
   | 'unauthorized' | 'forbidden' | 'not_found' | 'validation'
   | 'conflict' | 'insufficient_balance' | 'shopify_upstream'
-  | 'rate_limited' | 'internal' | 'network';
+  | 'rate_limited' | 'internal' | 'network' | 'cart_refused';
 
-/** Normalized error class. Branch on `.code`, not `.message`.
- *  See docs section 7.1 for the taxonomy and UX guidance. */
+/** Normalized error class. Branch on `.code`, not `.message`: the codes are on `TileCreditErrorCode`. */
 export class TileCreditError extends Error {
   public readonly code: TileCreditErrorCode;
   public readonly status?: number;
@@ -700,10 +993,27 @@ export class TileCreditError extends Error {
 }
 
 export interface TileCreditConfig {
-  /** Cloud Run URL, no trailing slash. */
+  /** The service, no trailing slash. Default `https://tile-credit.apptile.io`. */
   baseUrl?: string;
-  /** `shcat_…` (Customer Accounts API) OR classic Storefront customer token. */
-  customerAccessToken: string;
+  /**
+   * Called before every request for the shopper's token: `shcat_…` (Customer Account API) or a
+   * classic Storefront customer token. Null means signed out: the call fails `unauthorized` without
+   * reaching the service. `ShopifyProvider`'s `customer.getAccessToken` is one (it refreshes an
+   * expiring token first).
+   */
+  getAccessToken?: () => Promise<string | null>;
+  /**
+   * Called once when the service answers 401, for a token renewed now even if the old one looked
+   * valid; the request is then sent again with it. Null, or left out: no second try. It never signs
+   * anyone out, as a 401 can also mean the service doesn't know the shop. `customer.renewAccessToken`
+   * is one.
+   */
+  renewAccessToken?: () => Promise<string | null>;
+  /**
+   * A fixed token, for a caller that holds one itself. It goes stale and is never renewed: prefer
+   * `getAccessToken`. One of the two is required.
+   */
+  customerAccessToken?: string;
   /** `{shop}.myshopify.com` — case-insensitive; lower-cased internally. */
   shopDomain: string;
   /** Cancels every in-flight request when aborted. */
@@ -736,7 +1046,7 @@ export interface TileCreditAPI {
   listGiftCards(): Promise<{ giftCards: TileCreditIssuedGiftCard[] }>;
   getConfig(): Promise<TileCreditPublicConfig>;
   redeem(input: TileCreditRedeemInput): Promise<TileCreditRedeemResult>;
-  /** Ledger + gift-cards joined into one history feed. See docs §4.6.
+  /** Ledger + gift-cards joined into one history feed.
    *  Note: this issues TWO requests (ledger + list-gift-cards) in parallel;
    *  use `getLedger` on its own if you don't need the card metadata. */
   getHistory(opts?: { limit?: number; before?: string }): Promise<TileCreditHistoryPage>;
@@ -821,11 +1131,26 @@ export interface ShopifyCartAPI {
     identity: { email?: string; countryCode?: string; customerAccessToken?: string },
     opts?: ImageOptions
   ): Promise<Cart>;
-  /** Apply one or more gift-card codes to a cart. Idempotent per code.
-   *  Requires `buyerIdentity.countryCode` on the cart — Shopify rejects
-   *  gift cards with `INVALID_PAYMENT` otherwise. Callers should set the
-   *  country first (see `setBuyerIdentity` / shop default via `shop.load`). */
+  /**
+   * REPLACES the cart's gift cards with `codes` (`cartGiftCardCodesUpdate`): any card already on the
+   * cart and not in `codes` comes off. To add a card and keep the others, use `addGiftCardCodes`.
+   * Needs `buyerIdentity.countryCode` on the cart.
+   */
   applyGiftCardCodes(cartId: string, codes: string[], opts?: ImageOptions): Promise<Cart>;
+  /**
+   * Adds gift-card codes, keeping the cards already on the cart (`cartGiftCardCodesAdd`). Needs
+   * `buyerIdentity.countryCode` on the cart.
+   *
+   * **Shopify can answer without applying a code, and without an error** (a code it doesn't know came
+   * back with no `userErrors` and no warnings, checked on the Storefront API 2026-07): look for each
+   * code's last characters in `appliedGiftCards` afterwards. `useCart().addGiftCardCodes` does, and
+   * throws when one is missing.
+   *
+   * The mutation exists in every Storefront API version Shopify still serves: a request for an older
+   * version than the oldest supported one is answered as that one (2024-01 to 2025-07 were all served
+   * as 2025-10 on 2026-10-05, `x-shopify-api-version`), so no version check is needed.
+   */
+  addGiftCardCodes(cartId: string, codes: string[], opts?: ImageOptions): Promise<Cart>;
   /** Remove gift cards by their AppliedGiftCard.id (NOT the raw code). */
   removeGiftCardCodes(cartId: string, appliedGiftCardIds: string[], opts?: ImageOptions): Promise<Cart>;
   /**
@@ -849,6 +1174,8 @@ export interface ShopifyCustomerAPI {
     acceptsMarketing?: boolean;
   }): Promise<{ customer: Customer; accessToken: CustomerAccessToken }>;
   login(input: { email: string; password: string }): Promise<CustomerAccessToken>;
+  /** A fresh token for one that hasn't expired yet. Throws when Shopify won't renew it. */
+  renew(accessToken: string): Promise<CustomerAccessToken>;
   logout(accessToken: string): Promise<void>;
   profile(accessToken: string): Promise<Customer | null>;
   recoverPassword(email: string): Promise<void>;
@@ -891,8 +1218,10 @@ export interface WishlistItem {
   /** ms epoch. */
   addedAt: number;
   /**
-   * Hydrated by `init()` / `refresh()`. `undefined` = not fetched yet, `null` = no longer resolves
-   * upstream (the entry is purged unless `keepDeleted` is set).
+   * The product as last fetched, stored with the entry so the list draws offline (images past the
+   * first and the media list are not kept; `hasVideo` is). Updated by `add(product)` and `refresh()`.
+   * `undefined` = never fetched (an entry saved by id, or one past the storage budget), `null` = no
+   * longer resolves upstream (the entry is purged unless `keepDeleted` is set).
    */
   product?: Product | null;
 }
@@ -900,8 +1229,18 @@ export interface WishlistItem {
 export interface WishlistInitOptions {
   /** Defaults to `window.localStorage` on web, no-op elsewhere. */
   storage?: WishlistStorageAdapter;
-  /** Defaults to `tile:shopify:wishlist:v1`. */
+  /**
+   * Defaults to `tile:shopify:wishlist:v1`. An app moving from Apptile's engine passes its old key
+   * (`<apptile app id>_WishlistProducts`): entries are read in either shape and written in one both
+   * understand.
+   */
   storageKey?: string;
+  /**
+   * Keys an earlier app kept its wishlist under, merged into `storageKey` once each and left as they
+   * were. Entries not saved yet are added, newest first. Reads sdk-shopify's `{ productId, basic,
+   * addedAt }` and Apptile's `{ id, handle }` (a numeric product id).
+   */
+  migrateFrom?: string[];
   /** Product IDs per hydration request. Default 100, near Shopify's query cost ceiling. */
   batchSize?: number;
   /** Default `true`. False for lazy hydration — call `refresh()` on your own schedule. */
@@ -919,6 +1258,71 @@ export interface WishlistRefreshOptions {
    * longer available" state. Default `false`: they are dropped from storage.
    */
   keepDeleted?: boolean;
+}
+
+/**
+ * One size or colour a shopper is waiting on (sold out, or held in other carts), kept on the device
+ * like the wishlist. Keyed by variant: you wait on a size, and pre-order is decided per variant.
+ */
+export interface WaitlistItem {
+  /** The variant's GID: the list's key. */
+  variantId: string;
+  /** Known once the variant has been fetched: Apptile's engine stored only the product's handle. */
+  productId?: string;
+  productHandle?: string;
+  /** ms epoch; 0 for an entry an earlier app stored without a date. */
+  addedAt: number;
+  /**
+   * The variant as last fetched (stock, price, pre-order plan, its product's card fields), stored
+   * with the entry so the list draws offline. `undefined` = never fetched, `null` = the store no
+   * longer has it: kept, in case it comes back, for the screen to leave out.
+   */
+  variant?: StandaloneVariant | null;
+}
+
+/** Joining: a variant by id, with its fetched details when the caller has them. */
+export interface WaitlistEntryInput {
+  variantId: string;
+  productId?: string;
+  productHandle?: string;
+  variant?: StandaloneVariant;
+}
+
+export interface WaitlistInitOptions {
+  /** Defaults to `window.localStorage` on web, no-op elsewhere. */
+  storage?: WishlistStorageAdapter;
+  /**
+   * Defaults to `tile:shopify:waitlist:v1`. An app moving from Apptile's engine passes its old key
+   * (`<apptile app id>_WaitlistProducts`, entries `{ id, handle }`: the numeric variant id and the
+   * product's handle).
+   */
+  storageKey?: string;
+  /**
+   * Keys an earlier app kept its waitlist under, merged into `storageKey` once each and left as they
+   * were. Also reads `{ variantId, productId, addedAt }` (an ISO date or ms).
+   */
+  migrateFrom?: string[];
+  /** Variant IDs per request. Default 100. */
+  batchSize?: number;
+  /** Default `true`. False for lazy fetching — call `refresh()` on your own schedule. */
+  hydrateOnInit?: boolean;
+}
+
+export type WaitlistChangeListener = (items: WaitlistItem[]) => void;
+
+export interface ShopifyWaitlistAPI {
+  init(opts?: WaitlistInitOptions): Promise<WaitlistItem[]>;
+  isReady(): boolean;
+  /** Joins. Joining a variant already on the list moves it to the front, dated now. */
+  add(entry: WaitlistEntryInput): Promise<WaitlistItem>;
+  remove(variantId: string): Promise<boolean>;
+  has(variantId: string): boolean;
+  list(): WaitlistItem[];
+  count(): number;
+  clear(): Promise<void>;
+  /** Fetches every variant again (stock, price, pre-order plan). Rejects, changing nothing, when it can't. */
+  refresh(): Promise<WaitlistItem[]>;
+  onChange(listener: WaitlistChangeListener): () => void;
 }
 
 export type WishlistChangeListener = (items: WishlistItem[]) => void;
@@ -959,6 +1363,7 @@ export interface ShopifyIntegration {
   customer: ShopifyCustomerAPI;
   blogs: ShopifyBlogsAPI;
   wishlist: ShopifyWishlistAPI;
+  waitlist: ShopifyWaitlistAPI;
   /** Money format and currency, loaded at init. */
   shop: {
     load(): Promise<{ moneyFormat: string | null; currencyCode: string | null }>;
@@ -983,33 +1388,38 @@ export interface ShopifyIntegration {
     setPolicy(policy?: CartPolicy | null): void;
   };
   /**
-   * Tile Credit — customer wallet + gift-card mint + cart apply.
-   * Configure once per customer session; see `TileCreditClient` docs
-   * for the full flow. `null` until `shopify.tileCredit.configure(...)`.
+   * Tile Credit without React: one client shared by whoever configures it. A React app uses
+   * `useCartStoreCredit` and `useStoreCredit` instead, which build their own client from the
+   * provider's session.
    */
   tileCredit: {
-    /** Bind a customer session to Tile Credit. Rebuild the client on
-     *  logout / new customer. Safe to call multiple times — it replaces
-     *  the underlying client instance. */
+    /** Bind a customer session to Tile Credit. Pass `getAccessToken` (and `renewAccessToken`) so the
+     *  token stays fresh; a fixed `customerAccessToken` needs a new `configure` for each token. Safe to
+     *  call multiple times — it replaces the underlying client instance. */
     configure(config: TileCreditConfig): TileCreditAPI;
     /** The active client, or `null` when `configure` hasn't been called. */
     client(): TileCreditAPI | null;
     /**
-     * Redeem then apply to a Shopify cart in one call — mints a gift card,
-     * ensures the cart has a `buyerIdentity.countryCode` (belt + suspenders
-     * even if already set), and applies the code. Returns the mint result
-     * AND the updated cart. Docs section 5.7.
+     * @deprecated Use `useCartStoreCredit()`: it keeps one Apply at a time, finds its card on the cart
+     * and writes through the provider's cart queue. Kept for callers without React.
+     *
+     * Mints a gift card and adds it to the cart, keeping the cart's other gift cards. The cart's
+     * country is set only when it has none, with its email kept (and the shopper linked again when
+     * `customerAccessToken` is passed). Throws `TileCreditError('cart_refused')` when Shopify didn't put
+     * the card on the cart.
      */
     redeemAndApplyToCart(opts: {
       cartId: string;
       amountCents: number;
-      /** Persist BEFORE the call for crash-safe retries. Auto-generated
-       *  if omitted (loses that guarantee — see docs section 8). */
+      /** The same key returns the same card, so a retry of one attempt never mints a second.
+       *  Auto-generated if omitted. */
       idempotencyKey?: string;
       reason?: string;
-      /** ISO country to set on the cart if missing. Defaults to the
+      /** ISO country to set on the cart if it has none. Defaults to the
        *  shop's `localization.country.isoCode`. */
       countryFallback?: string;
+      /** The signed-in shopper's token, so setting the country keeps the cart linked to them. */
+      customerAccessToken?: string;
     }): Promise<{ redeemed: TileCreditRedeemResult; cart: Cart }>;
   };
 }
