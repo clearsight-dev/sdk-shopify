@@ -15,6 +15,7 @@
  */
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { isConfigured } from '../client';
+import { isPriceFilterInput } from '../filters';
 import { peekList, rememberList } from '../productStore';
 import { useShopify } from './ShopifyProvider';
 import type { Filter, PageInfo, Product, ProductFilter } from '../types';
@@ -138,6 +139,23 @@ export function useProductFeed(source: FeedSource): ProductFeedResult {
   ];
   // Filters and sort objects are rebuilt every render; the effect keys on their serialisation.
   const filterKey = allFilters.length ? JSON.stringify(allFilters) : '';
+
+  /**
+   * The feed's whole price range, from its last read made without a price filter. Once a price filter
+   * is applied, Shopify answers the `PRICE_RANGE` facet with the applied range itself (`{min:20,max:40}`
+   * for a 20–40 filter, read from the store 2026-10-08), and a sheet that takes that for the whole range
+   * drops the price filter on its next Apply (`priceFilterInput` treats bounds at the range's ends as no
+   * bound): applying "In stock" after a price removed the price (fixed 2026-10-08, 0.10.1). So while a price
+   * filter is selected, the feed keeps offering the whole range it saw before.
+   */
+  const wholePriceFacet = useRef<{ feed: string; facet: Filter } | null>(null);
+  const feedKey = source.id ? `${source.id}|${source.paramsKey}` : null;
+  const priceSelected = selectedFilters.some(isPriceFilterInput);
+  const rememberWholePriceRange = (filters: Filter[]) => {
+    if (priceSelected || !feedKey) return;
+    const facet = filters.find((filter) => filter.type === 'PRICE_RANGE');
+    if (facet) wholePriceFacet.current = { feed: feedKey, facet };
+  };
   const listKey = source.id ? `${source.id}|${source.paramsKey}|${filterKey}` : null;
 
   // First render: the cached page, if there is one, so the grid paints on frame one.
@@ -170,6 +188,7 @@ export function useProductFeed(source: FeedSource): ProductFeedResult {
     if (cached && !fresh && Date.now() - cached.at < REVALIDATE_AFTER_MS) {
       // Recent enough: show it and page on from its cursor, without a network read.
       cursor.current = cached.pageInfo.endCursor;
+      rememberWholePriceRange(cached.filters);
       setState(fromList(cached, false));
       return;
     }
@@ -187,6 +206,7 @@ export function useProductFeed(source: FeedSource): ProductFeedResult {
       .then((page) => {
         if (requestId.current !== id) return;
         cursor.current = page.pageInfo.endCursor;
+        rememberWholePriceRange(page.filters ?? []);
         rememberList(listKey, {
           products: page.nodes,
           pageInfo: page.pageInfo,
@@ -274,8 +294,17 @@ export function useProductFeed(source: FeedSource): ProductFeedResult {
     setAttempt((n) => n + 1);
   }, []);
 
+  const whole = wholePriceFacet.current;
+  const availableFilters =
+    priceSelected && whole && whole.feed === feedKey
+      ? state.availableFilters.some((filter) => filter.type === 'PRICE_RANGE')
+        ? state.availableFilters.map((filter) => (filter.type === 'PRICE_RANGE' ? whole.facet : filter))
+        : [...state.availableFilters, whole.facet]
+      : state.availableFilters;
+
   return {
     ...state,
+    availableFilters,
     loadMore,
     retry: refresh,
     refresh,

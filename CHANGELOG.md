@@ -1,5 +1,22 @@
 # Changelog
 
+## 0.10.1 (2026-10-08)
+
+### Fix: applying another filter after a price filter removed the price filter
+
+Found on Amore (2026-10-08): on a collection, set a price range, apply, then tick "In stock" and apply
+again: the price filter was gone. Once a price filter is applied, Shopify answers the `PRICE_RANGE`
+facet with the applied range itself (`{min:20,max:40}` for a 20–40 filter, read from the store). The
+filter sheet took that for the collection's whole range, so on the next Apply both bounds sat at the
+range's ends and `priceFilterInput` read them as "no bound".
+
+`useProductFeed` now remembers the feed's whole `PRICE_RANGE` facet from its last read made without a
+price filter, and while a price filter is selected `availableFilters` offers that one instead (added
+when Shopify leaves the facet out). A feed opened with a price filter already selected has nothing to
+remember and offers Shopify's facet, as before. No API change.
+
+`test/collection-filters.test.mjs`: 4 checks (567 in all).
+
 ## 0.10.0 (2026-10-06)
 
 This file starts with 0.10. It lists the logic moved here from the apps (SDK moves 1, 6 and 7); the

@@ -35,13 +35,19 @@ global.fetch = async (_url, init) => {
   if (name === 'CartGet' || query.includes('cart(id:')) return reply({ cart: emptyCart });
   if (name === 'CollectionProducts') {
     reads.push({ handle: variables.handle, filters: variables.filters ?? null });
+    // As the store answers (read 2026-10-08): the whole range unfiltered, the applied range once a price
+    // filter is on.
+    const applied = (variables.filters ?? []).find((f) => f.price)?.price;
+    const priceFacet = { id: 'filter.v.price', label: 'Price', type: 'PRICE_RANGE',
+      values: [{ id: 'filter.v.price', label: 'Price', count: 0,
+                 input: JSON.stringify({ price: applied ? { min: applied.min ?? 0, max: applied.max ?? 250 } : { min: 0, max: 250 } }) }] };
     return reply({ collection: {
       handle: variables.handle, title: variables.handle,
       products: {
         nodes: [],
         pageInfo: { hasNextPage: false, hasPreviousPage: false, startCursor: null, endCursor: null },
         filters: [{ id: 'filter.v.availability', label: 'Availability', type: 'LIST',
-                    values: [{ id: 'in-stock', label: 'In stock', count: 3, input: IN_STOCK }] }],
+                    values: [{ id: 'in-stock', label: 'In stock', count: 3, input: IN_STOCK }] }, priceFacet],
       },
     } });
   }
@@ -138,6 +144,30 @@ check('refresh re-reads the first page, like retry', () => {
   assert.equal(reads.length, beforeRefresh + 1);
   assert.equal(last().handle, 'shoes');
   assert.equal(feed.retry, feed.refresh);
+});
+
+// Fixed 2026-10-08 (0.10.1): with a price filter on, Shopify's price facet is the applied range, and the
+// sheet's next Apply dropped the price filter. The feed keeps the whole range while a price is selected.
+const { priceRange: rangeOf, priceFilterInput: priceInput } = await import('../dist/index.js');
+const priceFacet = () => feed.availableFilters.find((f) => f.type === 'PRICE_RANGE');
+check('unfiltered, the price facet is the whole range', () => {
+  assert.deepEqual(rangeOf(priceFacet()), { min: 0, max: 250 });
+});
+const twentyToForty = priceInput(20, 40, rangeOf(priceFacet()));
+await act(() => feed.setFilters([twentyToForty]));
+check('with a price filter on, the feed still offers the whole range (not the applied 20–40)', () => {
+  assert.ok(last().filters.some((f) => f.price?.min === 20 && f.price?.max === 40));
+  assert.deepEqual(rangeOf(priceFacet()), { min: 0, max: 250 });
+});
+// The sheet's Apply with "In stock" added: it rebuilds the price input against the range it was given.
+await act(() => feed.setFilters([IN_STOCK, priceInput(20, 40, rangeOf(priceFacet()))]));
+check('adding "In stock" keeps the price filter (it was dropped before 0.10.1)', () => {
+  assert.ok(last().filters.some((f) => f.price?.min === 20 && f.price?.max === 40), JSON.stringify(last().filters));
+  assert.ok(last().filters.some((f) => f.available === true));
+});
+await act(() => feed.clearFilters());
+check('cleared, the facet is the whole range again, from the store', () => {
+  assert.deepEqual(rangeOf(priceFacet()), { min: 0, max: 250 });
 });
 
 await runAct(async () => { root.unmount(); });

@@ -185,6 +185,9 @@ feed.refresh();         // pull-to-refresh (retry is the same call, for an error
   `PRICE_RANGE` facet's bounds, and `priceFilterInput(min, max, range)` encodes the shopper's range
   (`{"price":{"min":20,"max":100}}`), or returns null when it wouldn't narrow anything. Pass it to
   `setFilters` with the other inputs; `parsePriceFilterInput` reads one back to pre-fill fields.
+  While a price filter is selected, `availableFilters`' `PRICE_RANGE` facet is the feed's whole range,
+  from its last read without one (0.10.1): Shopify answers it with the applied range itself, and a sheet
+  that took that for the whole range dropped the price filter on its next Apply.
 - Scrolling, navigation and the sheet's open state stay in the app; the hook only knows Shopify.
 
 ### One network call per identical read
