@@ -16,6 +16,7 @@ import {
 import type {
   AppliedGiftCard,
   Cart,
+  CartLineDiscount,
   CartLineInput,
   CartLineSellingPlan,
   CartLineSnapshot,
@@ -69,6 +70,18 @@ function lineSellingPlan(allocation: any, quantity: number): CartLineSellingPlan
   };
 }
 
+/** A line's discount allocations as `CartLine.discounts`; none when Shopify sent none. */
+function lineDiscounts(allocations: any): CartLineDiscount[] {
+  if (!Array.isArray(allocations)) return [];
+  return allocations
+    .filter((allocation) => allocation?.discountedAmount)
+    .map((allocation) => ({
+      amount: allocation.discountedAmount,
+      code: allocation.code ?? null,
+      title: allocation.title ?? null,
+    }));
+}
+
 function normalize(c: any): Cart {
   return {
     id: c.id,
@@ -92,6 +105,7 @@ function normalize(c: any): Cart {
       merchandise: line.merchandise,
       product: line.merchandise?.product ?? null,
       cost: line.cost,
+      discounts: lineDiscounts(line.discountAllocations),
     })),
     cost: c.cost,
     discountCodes: c.discountCodes ?? [],

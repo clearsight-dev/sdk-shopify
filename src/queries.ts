@@ -168,6 +168,14 @@ export const CART_FRAGMENT = /* GraphQL */ `
           amountPerQuantity { ...MoneyFields }
           compareAtAmountPerQuantity { ...MoneyFields }
         }
+        # What each discount takes off the line, and the code (or name) it came from. One code's value
+        # can be spread over several lines: a giveaway code over two lines of its size (2026-10-08).
+        discountAllocations {
+          discountedAmount { ...MoneyFields }
+          ... on CartCodeDiscountAllocation { code }
+          ... on CartAutomaticDiscountAllocation { title }
+          ... on CartCustomDiscountAllocation { title }
+        }
         merchandise {
           ... on ProductVariant {
             ...VariantFields

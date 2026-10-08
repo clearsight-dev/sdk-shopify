@@ -305,6 +305,22 @@ export interface CartLine {
     amountPerQuantity: Money;
     compareAtAmountPerQuantity: Money | null;
   };
+  /**
+   * What each discount takes off this line, and where it came from. One code's value can be spread
+   * over several lines, so a line can carry part of a code meant for another (a giveaway code over two
+   * lines of its size, 2026-10-08). Optional, as a cart read before the SDK asked for it has none.
+   */
+  discounts?: CartLineDiscount[];
+}
+
+/** One discount's share of a cart line (Shopify's `discountAllocations`). */
+export interface CartLineDiscount {
+  /** What it takes off the whole line. */
+  amount: Money;
+  /** The discount code it came from; null for an automatic or custom discount. */
+  code: string | null;
+  /** An automatic or custom discount's name; null for a code. */
+  title: string | null;
 }
 
 /**
