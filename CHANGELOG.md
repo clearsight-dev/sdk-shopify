@@ -1,5 +1,28 @@
 # Changelog
 
+## 0.11.0 (2026-10-08)
+
+### New: link tags on the cart (`linkTags`)
+
+Decided 2026-10-08 by the Head of Engineering, for order attribution: a link that opens the app with
+`ref` or `utm…` tags (`?ref=brandi10&utm_source=instagram&utm_medium=influencer&utm_campaign=fall_drop`)
+has them saved on the phone for a set number of days and put on the cart, so the order's attributes
+say which link the shopper came from. Additive and off by default: nothing changes for an app that
+doesn't pass `linkTags`.
+
+- **`ShopifyProvider`'s `linkTags={{ keepDays, getInitialUrl, subscribe }}`**: the app hands in its
+  links (React Native's `Linking`); the SDK imports nothing from React Native. `keepDays` 0 is off.
+- **The last link wins** (decided the same day): its tags replace the saved ones, and every older tag on
+  the cart. **Tags that ran out stay on a cart that already has them** ("Leave them on"); new carts
+  don't get them.
+- On new carts, the current cart, a stored cart once it loads, an adopted cart, and again in
+  `useCheckout().prepare()`'s labelling step. `useCart().saveLinkTags(url)` for links the app routes
+  itself.
+- `links.trackingTags.v1` in the provider's storage. Pure helpers exported: `linkTagsFrom`,
+  `isLinkTagKey`, `liveLinkTags`, `withLinkTags`, `cartHasLinkTags`, `readSavedLinkTags`.
+- `useCart().adopt` now returns the cart as it is after the tags went on (the same cart otherwise).
+- Tests: `test/link-tags.test.mjs` (12) and `test/link-tags-provider.test.mjs` (16). 595 checks.
+
 ## 0.10.1 (2026-10-08)
 
 ### Fix: applying another filter after a price filter removed the price filter

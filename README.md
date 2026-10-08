@@ -974,6 +974,44 @@ updateLine(lineId, 3, undefined, { source: { type: 'replay', showId: streamingId
 - `shopify.cart.updateAttributes` still replaces the whole set: send the cart's current attributes,
   `_apptile_attribution` included.
 
+### Which link the shopper came from: link tags (0.11.0)
+
+Off by default. With `linkTags`, the provider saves the `ref` and `utm…` tags of each link that opens
+the app (an influencer's `https://store.com/collections/new-drops?ref=brandi10&utm_source=instagram`)
+and puts them on the cart, so the order's attributes say where the shopper came from. The app hands it
+its links; the SDK doesn't import React Native.
+
+```tsx
+import { Linking } from 'react-native';
+
+const getInitialUrl = () => Linking.getInitialURL();
+// The same function every render: a new one subscribes again.
+const subscribe = (onLink: (url: string) => void) => {
+  const subscription = Linking.addEventListener('url', ({ url }) => onLink(url));
+  return () => subscription.remove();
+};
+
+<ShopifyProvider config={config} linkTags={{ keepDays: 7, getInitialUrl, subscribe }}>
+```
+
+- **Tags:** every query parameter whose name starts with `utm` or `ref`, in any case (`ref`,
+  `ref_code`, `referrer`, `utm_source`, …), decoded, as the link spells them; not `fbclid`, `gclid`
+  or a product's `variant`. At most 20, each value cut to 255 characters. A link with none changes
+  nothing.
+- **The last link wins:** a newer link's tags replace the saved ones and restart the clock, and on the
+  cart replace every older tag (an older link's `utm_content` goes too). Other attributes are kept.
+- **Kept `keepDays` from the link:** new carts get them for that long, a cart that already has them keeps
+  them afterwards, through checkout (decided 2026-10-08, Head of Engineering: "Leave them on"). The days
+  are read when the tags are used, so a changed setting applies to tags already saved. 0 is off.
+- **Where:** on a cart created after the link; on the current cart at once; on a stored cart once it
+  loads; on an adopted cart; and again at `useCheckout().prepare()`, so a write that failed lands then.
+  Each queued behind pending cart writes; no request when the cart already has them.
+- **On the phone:** `links.trackingTags.v1` in the provider's `storage`, `{ savedAt, tags }`.
+- **`useCart().saveLinkTags(url)`** for a link the app routes itself: true when the tags were saved.
+- Pure helpers: `linkTagsFrom(url)`, `isLinkTagKey`, `liveLinkTags`, `withLinkTags`, `cartHasLinkTags`,
+  `readSavedLinkTags`. Tests: `test/link-tags.test.mjs` (12 checks) and
+  `test/link-tags-provider.test.mjs` (16, the real provider).
+
 ## Tile Credit
 
 Tile Credit is Apptile's store-credit wallet: a service (`https://tile-credit.apptile.io`) that holds each

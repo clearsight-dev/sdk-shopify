@@ -1,6 +1,6 @@
 {
   "name": "@tiledev/sdk-shopify",
-  "version": "0.10.1",
+  "version": "0.11.0",
   "description": "Type-safe Shopify Storefront API client for React Native (web, iOS, Android). Products, collections, cart, customer session, blogs, a local-storage-backed wishlist, and configurable shopper alerts. Zero deps beyond fetch.",
   "license": "MIT",
   "sideEffects": false,
@@ -26,7 +26,7 @@
     "clean": "rm -rf dist",
     "build": "npm run clean && tsc -p tsconfig.json",
     "lint": "tsc --noEmit",
-    "test": "npm run build && node test/alerts.test.mjs && node test/provider.test.mjs && node test/cart-snapshot.test.mjs && node test/collection-filters.test.mjs && node test/request-cache.test.mjs && node test/product-store.test.mjs && node test/image-transform.test.mjs && node test/alert-settings.test.mjs && node test/product-page.test.mjs && node test/auth-password.test.mjs && node test/auth-shopify.test.mjs && node test/auth-provider.test.mjs && node test/auth-profile.test.mjs && node test/cart-guard.test.mjs && node test/wishlist-offline.test.mjs && node test/waitlist.test.mjs && node test/orders.test.mjs && node test/store-credit-history.test.mjs && node test/tile-credit-client.test.mjs && node test/cart-gift-cards.test.mjs && node test/cart-store-credit.test.mjs && node test/selling-plan.test.mjs && node test/attribution.test.mjs && node test/attribution-provider.test.mjs && node test/checkout.test.mjs && node test/checkout-prepare.test.mjs && node test/latest-order.test.mjs && node test/app-discount-code.test.mjs && node test/purchase-rules.test.mjs && node test/product-page-source.test.mjs && node test/shopify-events.test.mjs"
+    "test": "npm run build && node test/alerts.test.mjs && node test/provider.test.mjs && node test/cart-snapshot.test.mjs && node test/collection-filters.test.mjs && node test/request-cache.test.mjs && node test/product-store.test.mjs && node test/image-transform.test.mjs && node test/alert-settings.test.mjs && node test/product-page.test.mjs && node test/auth-password.test.mjs && node test/auth-shopify.test.mjs && node test/auth-provider.test.mjs && node test/auth-profile.test.mjs && node test/cart-guard.test.mjs && node test/wishlist-offline.test.mjs && node test/waitlist.test.mjs && node test/orders.test.mjs && node test/store-credit-history.test.mjs && node test/tile-credit-client.test.mjs && node test/cart-gift-cards.test.mjs && node test/cart-store-credit.test.mjs && node test/selling-plan.test.mjs && node test/attribution.test.mjs && node test/attribution-provider.test.mjs && node test/link-tags.test.mjs && node test/link-tags-provider.test.mjs && node test/checkout.test.mjs && node test/checkout-prepare.test.mjs && node test/latest-order.test.mjs && node test/app-discount-code.test.mjs && node test/purchase-rules.test.mjs && node test/product-page-source.test.mjs && node test/shopify-events.test.mjs"
   },
   "keywords": [
     "shopify",

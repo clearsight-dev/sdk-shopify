@@ -14,6 +14,16 @@ import { addGiftCardsKeepingBuyer, toLineSnapshot } from "../cart";
 import { prepareCheckout, type CheckoutPreparation, type PrepareCheckoutOptions } from "../checkout";
 import type { AttributionSource } from "../attribution";
 import { createAttributionRecorder } from "./attributionRecorder";
+import {
+  LINK_TAGS_STORAGE_KEY,
+  cartHasLinkTags,
+  linkTagsFrom,
+  liveLinkTags,
+  readSavedLinkTags,
+  withLinkTags,
+  type LinkTagOptions,
+  type SavedLinkTags,
+} from "../linkTags";
 import { wouldExceedLineLimit, maxLineItems } from "../cartPolicy";
 import { quantityInCart, withinCeiling } from "../productPage";
 import { isOutOfStockError, isUserErrorRejection } from "../errors";
@@ -166,6 +176,13 @@ interface CartState {
    * is already there. Never throws: false when it could not be written or there is no cart yet.
    */
   ensureCartAttributes: (pairs: CartAttribute[]) => Promise<boolean>;
+  /**
+   * Saves a link's `ref` and `utm…` tags and puts them on the cart, as for a link that reached
+   * `linkTags.subscribe` (0.11.0): for a link the app routes itself. True when the tags were saved;
+   * false when the link has none or `linkTags` is off. The cart write is tried again at checkout if it
+   * fails now. Never throws.
+   */
+  saveLinkTags: (url: string) => Promise<boolean>;
 }
 
 interface WishlistState {
@@ -564,6 +581,13 @@ export interface ShopifyProviderProps {
    * `_apptile_attribution` cart attribute, after each line write lands. Off by default.
    */
   attribution?: { enabled: boolean };
+  /**
+   * Saves the `ref` and `utm…` tags of each link that opens the app, and puts them on the cart, so the
+   * order says which link the shopper came from (0.11.0; see `linkTags.ts`). Off when unset or when
+   * `keepDays` is 0. The last link wins: a newer link's tags replace the older ones on the phone and on
+   * the cart. New carts get the tags for `keepDays`; a cart that already has them keeps them after that.
+   */
+  linkTags?: LinkTagOptions;
 }
 
 function defaultStorage(): WishlistStorageAdapter | null {
@@ -591,6 +615,7 @@ export function ShopifyProvider({
   auth,
   storeCredit,
   attribution,
+  linkTags,
 }: ShopifyProviderProps) {
   const [ready, setReady]           = useState(false);
   const [error, setError]           = useState<string | null>(null);
@@ -895,6 +920,22 @@ export function ShopifyProvider({
           console.error("[ShopifyProvider] waitlist init failed", e);
         }
 
+        // The last link's tags before the cart, so a cart created below already carries them; then the
+        // link the app was opened with, without waiting for it (0.11.0).
+        if (linkTagOptions.current) {
+          const s = storageRef.current;
+          const stored = s ? readSavedLinkTags(await Promise.resolve(s.getItem(LINK_TAGS_STORAGE_KEY)).catch(() => null)) : null;
+          // A link that arrived while storage was read is newer.
+          if (stored && !savedLinkTags.current) savedLinkTags.current = stored;
+          const opening = linkTagOptions.current.getInitialUrl;
+          if (opening) {
+            void Promise.resolve()
+              .then(opening)
+              .then((url) => (url ? saveLinkTagsRef.current(url) : false))
+              .catch(() => false);
+          }
+        }
+
         setCartLoad(true);
         try {
           const s = storageRef.current;
@@ -907,14 +948,16 @@ export function ShopifyProvider({
             const checkedOut = !!savedId && savedId === (await readCheckoutStarted(s));
             // A cart created now is already in the configured market — `@inContext` saw to that.
             next = checkedOut
-              ? await shopify.cart.create({ attributes: cartAttrsRef.current })
-              : await createFromSnapshot(await loadLineSnapshot(s), await recorder.restoreAttributes(cartAttrsRef.current));
+              ? await shopify.cart.create({ attributes: newCartAttributes() })
+              : await createFromSnapshot(await loadLineSnapshot(s), await recorder.restoreAttributes(newCartAttributes()));
             if (s) await Promise.resolve(s.setItem(CART_STORAGE_KEY, next.id));
           }
           await saveLineSnapshot(s, next);
           cartRef.current = next;
           await recorder.sync(next);
           if (mounted) setCart(next);
+          // A stored cart from before the last link, or a link that landed while the cart loaded.
+          void syncLinkTagsRef.current();
         } finally {
           if (mounted) setCartLoad(false);
         }
@@ -960,6 +1003,21 @@ export function ShopifyProvider({
    */
   const cartAttrsRef = useRef<CartAttribute[] | undefined>(cartAttributes);
   cartAttrsRef.current = cartAttributes;
+
+  // ── Link tags (0.11.0) ── In refs, so a new options object each render changes nothing.
+  const linkTagOptions = useRef<LinkTagOptions | undefined>(linkTags);
+  linkTagOptions.current = linkTags;
+  /** The last link's tags as saved. Whether they still count is decided each time they're used. */
+  const savedLinkTags = useRef<SavedLinkTags | null>(null);
+  const currentLinkTags = useCallback(
+    () => liveLinkTags(savedLinkTags.current, linkTagOptions.current?.keepDays ?? 0, Date.now()),
+    [],
+  );
+  /** What a new cart starts with: the provider's `cartAttributes` and the link tags that still count. */
+  const newCartAttributes = useCallback((): CartAttribute[] | undefined => {
+    const tags = currentLinkTags();
+    return tags ? withLinkTags(cartAttrsRef.current ?? [], tags) : cartAttrsRef.current;
+  }, [currentLinkTags]);
 
   /**
    * Backfills the configured attributes onto a cart that is missing them.
@@ -1016,7 +1074,7 @@ export function ShopifyProvider({
 
   const ensureCartId = useCallback(async (): Promise<string> => {
     if (cart?.id) return cart.id;
-    const created = await shopify.cart.create({ attributes: cartAttrsRef.current });
+    const created = await shopify.cart.create({ attributes: newCartAttributes() });
     await persistCart(created);
     return created.id;
   }, [cart, persistCart]);
@@ -1361,13 +1419,72 @@ export function ShopifyProvider({
     return next;
   }, [cart, persistCart]);
 
+  /**
+   * Makes the cart's link tags the saved ones that still count: a newer link's replace an older
+   * link's, and every other attribute is kept. Nothing when none still count, so tags that ran out stay
+   * on a cart that already has them (decided 2026-10-08, Head of Engineering: "Leave them on"). Queued
+   * behind pending cart writes; no request when the cart already has them. Never throws: false when
+   * the write failed or there's no cart yet.
+   */
+  const syncLinkTags = useCallback(async (): Promise<boolean> => {
+    const tags = currentLinkTags();
+    if (!tags) return true;
+    try {
+      return await serialize(async () => {
+        const current = cartRef.current;
+        if (!current) return false;
+        const have = current.attributes ?? [];
+        if (cartHasLinkTags(have, tags)) return true;
+        const next = await shopify.cart.updateAttributes(current.id, withLinkTags(have, tags));
+        await persistCart(next);
+        return true;
+      });
+    } catch (syncError) {
+      console.warn("[ShopifyProvider] link tags cart write failed", syncError);
+      return false;
+    }
+  }, [currentLinkTags, serialize, persistCart]);
+  const syncLinkTagsRef = useRef(syncLinkTags);
+  syncLinkTagsRef.current = syncLinkTags;
+
+  const saveLinkTags = useCallback(async (url: string): Promise<boolean> => {
+    if (!((linkTagOptions.current?.keepDays ?? 0) > 0)) return false;
+    const tags = linkTagsFrom(url);
+    if (!tags) return false;
+    const record: SavedLinkTags = { savedAt: Date.now(), tags };
+    savedLinkTags.current = record;
+    const s = storageRef.current;
+    if (s) {
+      await Promise.resolve(s.setItem(LINK_TAGS_STORAGE_KEY, JSON.stringify(record))).catch((saveError) =>
+        console.warn("[ShopifyProvider] link tags not saved", saveError),
+      );
+    }
+    await syncLinkTags();
+    return true;
+  }, [syncLinkTags]);
+  const saveLinkTagsRef = useRef(saveLinkTags);
+  saveLinkTagsRef.current = saveLinkTags;
+
+  // Each link that reaches the running app. The host passes the same `subscribe` every render.
+  const subscribeToLinks = linkTags?.subscribe;
+  useEffect(() => {
+    if (!subscribeToLinks) return;
+    return subscribeToLinks((url) => {
+      void saveLinkTagsRef.current(url);
+    });
+  }, [subscribeToLinks]);
+
   const cartAdopt = useCallback(async (cartId: string): Promise<Cart | null> => {
     // Adopted from the shopper's other device or the web store, so its market is not ours to assume.
     const fetched = await shopify.cart.get(cartId);
     const next = fetched ? await applyCartAttributes(await pinMarket(fetched)) : null;
-    if (next) await persistCart(next);
-    return next;
-  }, [persistCart, pinMarket, applyCartAttributes]);
+    if (next) {
+      await persistCart(next);
+      // This phone's link tags go with it, as on any cart of this phone's (0.11.0).
+      await syncLinkTags();
+    }
+    return cartRef.current ?? next;
+  }, [persistCart, pinMarket, applyCartAttributes, syncLinkTags]);
 
   const cartFlushAttribution = useCallback(() => recorder.flushPending(), [recorder]);
 
@@ -1390,7 +1507,7 @@ export function ShopifyProvider({
   }, [serialize, persistCart]);
 
   const cartReset = useCallback(async () => {
-    const created = await shopify.cart.create({ attributes: cartAttrsRef.current });
+    const created = await shopify.cart.create({ attributes: newCartAttributes() });
     await persistCart(created);
   }, [persistCart]);
 
@@ -1472,8 +1589,13 @@ export function ShopifyProvider({
       // The cart's attribution lands first, then the provider's own cartAttributes (Freckled Poppy's
       // labelCartForCheckout). Each queued behind pending cart writes.
       flushAttribution: cartFlushAttribution,
-      ensureCartAttributes: () => (cartAttrsRef.current?.length ? cartEnsureAttributes(cartAttrsRef.current) : Promise.resolve(true)),
-    }, options), [cartRefresh, cartSetBuyerIdentity, cartFlushAttribution, cartEnsureAttributes, checkoutStarted, sessionState.kind, sessionState.customer?.email, session]);
+      // Then the link tags that still count, a newer link's in place of an older one's (0.11.0).
+      ensureCartAttributes: async () => {
+        const fixed = cartAttrsRef.current?.length ? await cartEnsureAttributes(cartAttrsRef.current) : true;
+        const tagged = await syncLinkTags();
+        return fixed && tagged;
+      },
+    }, options), [cartRefresh, cartSetBuyerIdentity, cartFlushAttribution, cartEnsureAttributes, syncLinkTags, checkoutStarted, sessionState.kind, sessionState.customer?.email, session]);
 
   const authMethod: AuthMethod = auth?.method ?? "password";
   // By its fields, so a host passing a fresh object each render doesn't rebuild the context.
@@ -1504,6 +1626,7 @@ export function ShopifyProvider({
       reset:              cartReset,
       flushAttribution:   cartFlushAttribution,
       ensureCartAttributes: cartEnsureAttributes,
+      saveLinkTags,
     },
     wishlist: {
       items:        wlItems,
@@ -1557,7 +1680,7 @@ export function ShopifyProvider({
     ready, error, events,
     // A new policy changes `cart.maxLineItems`, so the memo must see it.
     resolvedPolicy,
-    cart, cartLoading, cartAddLine, cartAddLines, cartUpdateLine, cartRemoveLine, cartApplyDiscounts, cartUpdateNote, cartSetBuyerIdentity, cartAddGiftCardCodes, cartRemoveGiftCards, cartRefresh, cartAdopt, cartReset, cartFlushAttribution, cartEnsureAttributes,
+    cart, cartLoading, cartAddLine, cartAddLines, cartUpdateLine, cartRemoveLine, cartApplyDiscounts, cartUpdateNote, cartSetBuyerIdentity, cartAddGiftCardCodes, cartRemoveGiftCards, cartRefresh, cartAdopt, cartReset, cartFlushAttribution, cartEnsureAttributes, saveLinkTags,
     wlItems, wlIds, wlHas, wlAdd, wlRemove, wlToggle, wlClear, wlRefresh,
     wtItems, wtIds, wtHas, wtAdd, wtRemove, wtRefresh,
     sessionState, session, authMethod, storeCreditOptions,

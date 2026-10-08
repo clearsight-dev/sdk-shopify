@@ -13,6 +13,20 @@ export {
 } from './productStore';
 export { toLineSnapshot } from './cart';
 export {
+  LINK_TAGS_STORAGE_KEY,
+  LINK_TAG_MAX_COUNT,
+  LINK_TAG_MAX_LENGTH,
+  cartHasLinkTags,
+  isLinkTagKey,
+  linkTagsFrom,
+  liveLinkTags,
+  readSavedLinkTags,
+  withLinkTags,
+  type LinkTagOptions,
+  type LinkTags,
+  type SavedLinkTags,
+} from './linkTags';
+export {
   isOrderPlacedUrl,
   REPORT_ADDRESS_CHANGES_SCRIPT,
   CHECKOUT_LABEL_STEP_TIMEOUT_MS,
