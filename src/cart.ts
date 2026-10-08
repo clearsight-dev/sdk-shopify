@@ -16,7 +16,7 @@ import {
 import type {
   AppliedGiftCard,
   Cart,
-  CartLineDiscount,
+  CartDiscount,
   CartLineInput,
   CartLineSellingPlan,
   CartLineSnapshot,
@@ -70,8 +70,8 @@ function lineSellingPlan(allocation: any, quantity: number): CartLineSellingPlan
   };
 }
 
-/** A line's discount allocations as `CartLine.discounts`; none when Shopify sent none. */
-function lineDiscounts(allocations: any): CartLineDiscount[] {
+/** Discount allocations as `CartLine.discounts` or `Cart.discounts`; none when Shopify sent none. */
+function discountsOf(allocations: any): CartDiscount[] {
   if (!Array.isArray(allocations)) return [];
   return allocations
     .filter((allocation) => allocation?.discountedAmount)
@@ -79,6 +79,7 @@ function lineDiscounts(allocations: any): CartLineDiscount[] {
       amount: allocation.discountedAmount,
       code: allocation.code ?? null,
       title: allocation.title ?? null,
+      onShipping: allocation.targetType === 'SHIPPING_LINE',
     }));
 }
 
@@ -105,10 +106,11 @@ function normalize(c: any): Cart {
       merchandise: line.merchandise,
       product: line.merchandise?.product ?? null,
       cost: line.cost,
-      discounts: lineDiscounts(line.discountAllocations),
+      discounts: discountsOf(line.discountAllocations),
     })),
     cost: c.cost,
     discountCodes: c.discountCodes ?? [],
+    discounts: discountsOf(c.discountAllocations),
     appliedGiftCards: c.appliedGiftCards ?? [],
     createdAt: c.createdAt,
     updatedAt: c.updatedAt,

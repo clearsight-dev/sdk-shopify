@@ -346,9 +346,12 @@ const plan = line.sellingPlan;
 plan && `Pre-authorized at ${formatMoney(plan.checkoutCharge)}, pay ${formatMoney(plan.remainingBalance)} when it ships`;
 ```
 
-**A cart line's discounts** are `line.discounts`: `{ amount, code, title }` for each discount's share of
-the line (Shopify's `discountAllocations`), `code` for a discount code and `title` for an automatic or
-custom discount. One code's value can be spread over several lines: on Amore's store (2026-10-08) a $20
+**A cart line's discounts** are `line.discounts`: `{ amount, code, title, onShipping }` for each discount's
+share of the line (Shopify's `discountAllocations`), `code` for a discount code and `title` for an
+automatic or custom discount. **The whole cart's** (an order discount) are `cart.discounts`, the same
+shape. A line's own discounts are already off its price and the cart's subtotal; the cart's come off
+after it. `onShipping` marks a discount off shipping (`targetType` `SHIPPING_LINE`): Amore's automatic
+FREESHIP sits on every cart as $9.80 off shipping (2026-10-08) and takes nothing off what the cart shows. One code's value can be spread over several lines: on Amore's store (2026-10-08) a $20
 giveaway code for one size was split $10 and $10 over two lines of that size, so a line can carry part
 of a code meant for another. Empty when nothing is taken off; missing on a cart read before 0.12.
 

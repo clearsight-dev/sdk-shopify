@@ -142,6 +142,14 @@ export const CART_FRAGMENT = /* GraphQL */ `
       checkoutChargeAmount { ...MoneyFields }
     }
     discountCodes { code applicable }
+    # Discounts on the whole cart (an order discount); a line's own are on the line.
+    discountAllocations {
+      discountedAmount { ...MoneyFields }
+      targetType
+      ... on CartCodeDiscountAllocation { code }
+      ... on CartAutomaticDiscountAllocation { title }
+      ... on CartCustomDiscountAllocation { title }
+    }
     appliedGiftCards {
       id
       lastCharacters
@@ -172,6 +180,7 @@ export const CART_FRAGMENT = /* GraphQL */ `
         # can be spread over several lines: a giveaway code over two lines of its size (2026-10-08).
         discountAllocations {
           discountedAmount { ...MoneyFields }
+          targetType
           ... on CartCodeDiscountAllocation { code }
           ... on CartAutomaticDiscountAllocation { title }
           ... on CartCustomDiscountAllocation { title }

@@ -2,18 +2,22 @@
 
 ## 0.12.0 (2026-10-08)
 
-### New: each cart line's discounts (`line.discounts`)
+### New: each cart line's discounts (`line.discounts`) and the whole cart's (`cart.discounts`)
 
 Found on Amore (2026-10-08): a giveaway prize is made free with a discount code for its size, and when
 the cart holds a second line of that size Shopify spreads the code over both ($10 and $10 for a $20
 prize), so the prize line alone looked half-paid. Telling that apart needs each line's share of each
 discount, which the cart didn't ask for. Additive: nothing changes for an app that doesn't read it.
 
-- **`CartLine.discounts`**: `{ amount, code, title }[]`, each discount's share of the line, from
-  Shopify's `discountAllocations` (`code` for a code, `title` for an automatic or custom discount).
+- **`CartLine.discounts`**: `{ amount, code, title, onShipping }[]`, each discount's share of the line,
+  from Shopify's `discountAllocations` (`code` for a code, `title` for an automatic or custom discount).
   Empty when nothing is taken off; optional, as a cart read before this release has none.
+- **`Cart.discounts`**: the same, for discounts on the whole cart (an order discount). A line's own are
+  already off the subtotal; these come off after it.
+- **`onShipping`**: the discount is off shipping (Shopify's `targetType` `SHIPPING_LINE`). Amore's
+  automatic FREESHIP sits on every cart as $9.80 off shipping, before any shipping is charged.
 - Asked for on every cart read and write (the shared cart fragment).
-- Tests: `test/cart-line-discounts.test.mjs` (4). 599 checks.
+- Tests: `test/cart-line-discounts.test.mjs` (5). 600 checks.
 
 ## 0.11.0 (2026-10-08)
 

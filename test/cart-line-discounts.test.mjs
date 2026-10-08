@@ -1,5 +1,6 @@
-// Each cart line's discounts (`line.discounts`): what each discount takes off the line and which code
-// or discount it came from, read from Shopify's `discountAllocations`. Storefront stubbed at fetch.
+// Each cart line's discounts (`line.discounts`) and the whole cart's (`cart.discounts`): what each takes
+// off, which code or discount it came from, and whether it is off shipping, read from Shopify's
+// `discountAllocations`. Storefront stubbed at fetch.
 import assert from 'node:assert/strict';
 import { JSDOM } from 'jsdom';
 
@@ -19,10 +20,11 @@ const line = (id, discountAllocations) => ({
 // $10 over the prize and a paid line of the same size; a line with an automatic discount; a line with none;
 // and a line from an answer that didn't carry the field at all.
 let lines = [];
+let cartAllocations = [];
 const cart = () => ({
   id: 'gid://shopify/Cart/1', checkoutUrl: 'https://shop/checkout', totalQuantity: lines.length,
   lines: { nodes: lines }, cost: { subtotalAmount: money('20.0'), totalAmount: money('20.0') },
-  discountCodes: [{ code: 'GIVEAWAY-1791449255616', applicable: true }], appliedGiftCards: [], createdAt: '', updatedAt: '',
+  discountCodes: [{ code: 'GIVEAWAY-1791449255616', applicable: true }], discountAllocations: cartAllocations, appliedGiftCards: [], createdAt: '', updatedAt: '',
 });
 const sent = [];
 global.fetch = async (_url, init) => {
@@ -45,25 +47,27 @@ await check('the cart read asks for each line\'s discount allocations: the amoun
   lines = [];
   await shopify.cart.get('gid://shopify/Cart/1');
   const query = sent.find((s) => s.name === 'CartGet').query;
-  assert.match(query, /discountAllocations\s*\{\s*discountedAmount \{ \.\.\.MoneyFields \}/);
+  assert.match(query, /discountAllocations\s*\{\s*discountedAmount \{ \.\.\.MoneyFields \}\s*targetType/);
+  // Twice: on each line and on the whole cart.
+  assert.equal(query.match(/discountAllocations \{/g)?.length, 2);
   assert.match(query, /\.\.\. on CartCodeDiscountAllocation \{ code \}/);
   assert.match(query, /\.\.\. on CartAutomaticDiscountAllocation \{ title \}/);
   assert.match(query, /\.\.\. on CartCustomDiscountAllocation \{ title \}/);
 });
 
 await check('a code spread over two lines: each line carries its share and the code', async () => {
-  const code = [{ discountedAmount: money('10.0'), code: 'GIVEAWAY-1791449255616' }];
+  const code = [{ discountedAmount: money('10.0'), targetType: 'LINE_ITEM', code: 'GIVEAWAY-1791449255616' }];
   lines = [line(1, code), line(2, code)];
   const read = await shopify.cart.get('gid://shopify/Cart/1');
   for (const cartLine of read.lines) {
-    assert.deepEqual(cartLine.discounts, [{ amount: money('10.0'), code: 'GIVEAWAY-1791449255616', title: null }]);
+    assert.deepEqual(cartLine.discounts, [{ amount: money('10.0'), code: 'GIVEAWAY-1791449255616', title: null, onShipping: false }]);
   }
 });
 
 await check('an automatic discount has its name and no code; a line with nothing off has none', async () => {
-  lines = [line(1, [{ discountedAmount: money('2.0'), title: 'Fall sale' }]), line(2, [])];
+  lines = [line(1, [{ discountedAmount: money('2.0'), targetType: 'LINE_ITEM', title: 'Fall sale' }]), line(2, [])];
   const read = await shopify.cart.get('gid://shopify/Cart/1');
-  assert.deepEqual(read.lines[0].discounts, [{ amount: money('2.0'), code: null, title: 'Fall sale' }]);
+  assert.deepEqual(read.lines[0].discounts, [{ amount: money('2.0'), code: null, title: 'Fall sale', onShipping: false }]);
   assert.deepEqual(read.lines[1].discounts, []);
 });
 
@@ -72,6 +76,20 @@ await check('an answer without the field, or with an allocation missing its amou
   const read = await shopify.cart.get('gid://shopify/Cart/1');
   assert.deepEqual(read.lines[0].discounts, []);
   assert.deepEqual(read.lines[1].discounts, []);
+});
+
+await check("the whole cart's discounts, a free-shipping one marked as off shipping (Amore's FREESHIP, 2026-10-08)", async () => {
+  lines = [];
+  cartAllocations = [
+    { discountedAmount: money('9.8'), targetType: 'SHIPPING_LINE', title: 'FREESHIP' },
+    { discountedAmount: money('5.0'), targetType: 'LINE_ITEM', code: 'SAVE5' },
+  ];
+  const read = await shopify.cart.get('gid://shopify/Cart/1');
+  assert.deepEqual(read.discounts, [
+    { amount: money('9.8'), code: null, title: 'FREESHIP', onShipping: true },
+    { amount: money('5.0'), code: 'SAVE5', title: null, onShipping: false },
+  ]);
+  cartAllocations = [];
 });
 
 console.log(`\n${pass} checks passed`);

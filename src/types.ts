@@ -310,17 +310,22 @@ export interface CartLine {
    * over several lines, so a line can carry part of a code meant for another (a giveaway code over two
    * lines of its size, 2026-10-08). Optional, as a cart read before the SDK asked for it has none.
    */
-  discounts?: CartLineDiscount[];
+  discounts?: CartDiscount[];
 }
 
-/** One discount's share of a cart line (Shopify's `discountAllocations`). */
-export interface CartLineDiscount {
+/** One discount's share of a cart line, or of the whole cart (Shopify's `discountAllocations`). */
+export interface CartDiscount {
   /** What it takes off the whole line. */
   amount: Money;
   /** The discount code it came from; null for an automatic or custom discount. */
   code: string | null;
   /** An automatic or custom discount's name; null for a code. */
   title: string | null;
+  /**
+   * It is off shipping, not the items (Shopify's `targetType` `SHIPPING_LINE`): a free-shipping discount
+   * sits on the cart before any shipping is charged, so it takes nothing off what the cart shows.
+   */
+  onShipping: boolean;
 }
 
 /**
@@ -381,6 +386,12 @@ export interface Cart {
   lines: CartLine[];
   cost: CartCost;
   discountCodes: CartDiscountCode[];
+  /**
+   * Discounts on the whole cart (an order discount), not on any one line. A line's own discounts are in
+   * its `discounts` and already taken off its price and the cart's subtotal; these come off after the
+   * subtotal. Optional, as a cart read before 0.12 has none.
+   */
+  discounts?: CartDiscount[];
   /** Gift cards applied to this cart. Empty when none. Populated by
    *  cartGiftCardCodesUpdate/Remove; also included on plain `cart.get`. */
   appliedGiftCards: AppliedGiftCard[];
