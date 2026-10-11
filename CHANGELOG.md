@@ -1,5 +1,30 @@
 # Changelog
 
+## 0.9.3 (2026-10-12)
+
+### Fix: an add Shopify clamped to nothing no longer reads as added
+
+The same change as 0.13.1, for apps on 0.9. Shopify doesn't refuse an add past the stock: it answers ok
+and adds what is left, or nothing, and the add said `ok: true` either way (Freckled Poppy counted units
+itself with `addLanded` at each call site). Upgrading from 0.9.2 needs no code change; an app that
+toasts `result.message` for every `ok: false` except `'limit'` should skip `'clamped'` too (below).
+
+- **Every add is measured**: the variant's units across all lines of the cart Shopify returned, against
+  the cart it was written to (after a dead-cart replacement, the new cart before the retried add).
+- **`addLine`**: nothing landed is `ok: false`, `reason: 'clamped'` (new in `CartRejectionReason`), the
+  `cart.noMoreStock` copy, and the cart. Some landed is `ok: true` with `landedQuantity` below the
+  quantity asked. `CartWriteResult.landedQuantity` is new and set on every written add.
+- **`addLinesDetailed(inputs)`** (new): `CartLinesWriteResult` with `lines: CartAddOutcome[]` per input.
+  **`addLines` now returns `null` when nothing landed**, including a batch Shopify clamped to nothing;
+  0.9.2 returned the unchanged cart.
+- **New alert and event, as on 0.13**: `cart.noMoreStock` ("No more stock available", Settings panel
+  field `settings.alerts.cart.noMoreStock`) and `cart:stockLimit`, raised by a clamp with
+  `clamped: CartAddOutcome[]`. The clamped result carries the same copy, so an app that also toasts the
+  result's message would show it twice.
+- `cart:add` fires only when units landed. The guard's `onLanded` and the `_apptile_attribution` count
+  only landed units; the units cut go back through `onReleased` (`reason: 'rejected'`).
+- Tests: `test/add-landed.test.mjs` (19).
+
 ## 0.9.2 (2026-10-12)
 
 ### Fix: a cart that is gone in Shopify no longer breaks every cart write
