@@ -1,5 +1,30 @@
 # Changelog
 
+## 0.13.1 (2026-10-12)
+
+### Fix: an add Shopify clamped to nothing no longer reads as added
+
+Shopify doesn't refuse an add past the stock: it answers ok and adds what is left, or nothing. The add
+said `ok: true` either way, so every app had to count units itself (Freckled Poppy's `addLanded` at
+each call site). The SDK now counts them.
+
+- **Every add is measured**: the variant's units across all lines of the cart Shopify returned, against
+  the cart it was written to (after a dead-cart replacement, the new cart before the retried add, so a
+  rebuilt cart that already holds the item counts right).
+- **`addLine`**: nothing landed is `ok: false`, `reason: 'clamped'` (new in `CartRejectionReason`), the
+  `cart.noMoreStock` copy, and the cart. Some landed is `ok: true` with `landedQuantity` below the
+  quantity asked. `CartWriteResult.landedQuantity` is new and set on every written add.
+- **`addLinesDetailed(inputs, { quiet })`** (new): `CartLinesWriteResult`, `addLines`'s outcome with
+  `lines: CartAddOutcome[]` (`{ merchandiseId, requestedQuantity, landedQuantity }`) per input.
+  **`addLines` now returns `null` when nothing landed**, including a batch Shopify clamped to nothing;
+  0.13.0 returned the unchanged cart.
+- **Events**: a clamp raises `cart:stockLimit` (the `cart.noMoreStock` alert, as for `maxQuantity`)
+  with `clamped: CartAddOutcome[]`; not for a `quiet` `addLines`. `cart:add` fires only when units
+  landed, and its `changedLines` count what landed, not what was asked.
+- **Guard and attribution**: `onLanded` and the `_apptile_attribution` count only landed units; the
+  units cut go back through `onReleased` (`reason: 'rejected'`).
+- Tests: `test/add-landed.test.mjs` (19).
+
 ## 0.13.0 (2026-10-12)
 
 ### Fix: a cart that is gone in Shopify no longer breaks every cart write

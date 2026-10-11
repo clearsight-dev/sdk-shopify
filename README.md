@@ -417,6 +417,27 @@ before any `cartGuard` (so Cart Hold never reserves for an add that is then refu
 field at `settings.alerts.cart.noMoreStock`) and a `cart:stockLimit` event, so the app's toast shows
 it like every other alert. `maxQuantity` is never sent to Shopify.
 
+**Did the add land? (0.13.1)** The ceiling needs the caller to know the stock; when it doesn't, the
+clamp still happens. So every add now counts the variant's units across all of the cart's lines before
+and after the write (selling-plan and attribute-split lines included). After a gone cart was replaced,
+"before" is the new cart before the retried add, so a rebuilt cart that already holds the item is
+measured correctly.
+
+| Outcome | `addLine` result | Events |
+| --- | --- | --- |
+| Every unit landed | `ok: true`, `landedQuantity` = asked | `cart:add` |
+| Some landed (asked 3, got 1) | `ok: true`, `landedQuantity: 1` | `cart:add` for 1, `cart:stockLimit` |
+| None landed | `ok: false`, `reason: 'clamped'`, `cart.noMoreStock`'s copy, `landedQuantity: 0`, the cart | `cart:stockLimit` |
+
+`cart:stockLimit` from a clamp carries `clamped: { merchandiseId, requestedQuantity, landedQuantity }[]`.
+`cart:add`'s `changedLines`, the attribution and the guard's `onLanded` count only the units that landed;
+the guard gets the rest back through `onReleased` (`reason: 'rejected'`).
+
+`useCart().addLinesDetailed(inputs, { quiet })` is `addLines` with the same answer per input:
+`{ ok, reason?, message?, cart, landedQuantity, lines: CartAddOutcome[] }`, one entry per input in order
+(0 for one a guard vetoed). One `cart:stockLimit` for the batch, none when `quiet`. `addLines` returns
+its cart, and now `null` when nothing landed, a batch clamped to nothing included.
+
 ## Alerts & Toasts
 
 The editor's Settings panel configures the copy for 14 shopper-facing alerts. The

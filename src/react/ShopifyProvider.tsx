@@ -33,6 +33,8 @@ import { ShopifyError } from "../types";
 import { createCustomerSession, type CustomerSession, type ProfileChanges, type SessionState, type SignupInput } from "../auth/session";
 import type {
   AlertMessageKey,
+  CartAddOutcome,
+  CartLinesWriteResult,
   AuthMethod,
   AuthOptions,
   AlertMessages,
@@ -98,8 +100,9 @@ interface CartState {
    */
   addLine:            (input: CartLineInput) => Promise<CartWriteResult>;
   /**
-   * Returns the resulting cart, `null` when nothing landed. One unsellable line fails the whole
-   * `cartLinesAdd`, so a rejected batch is retried line by line and the successes are kept.
+   * `addLinesDetailed`'s cart: `null` when nothing landed, which now includes a batch Shopify clamped
+   * to nothing (0.13.1). One unsellable line fails the whole `cartLinesAdd`, so a rejected batch is
+   * retried line by line and the successes are kept.
    *
    * `options.quiet`: the caller reports the outcome itself. Every `cartGuard.beforeAdd` is passed it
    * (so the guard says nothing about a refusal), and the one `cart:outOfStock` the line-by-line retry
@@ -107,6 +110,14 @@ interface CartState {
    * `cart:limitExceeded` (the line limit refused the whole batch) still are.
    */
   addLines:           (inputs: CartLineInput[], options?: { quiet?: boolean }) => Promise<Cart | null>;
+  /**
+   * `addLines` with what each input really added (0.13.1): Shopify clamps an add past the stock without
+   * an error, so units are counted before and after. `ok` when any landed; nothing landed and some were
+   * clamped is `reason: 'clamped'` with `cart.noMoreStock`'s copy. A clamp raises `cart:stockLimit`
+   * (with `clamped`) unless `quiet`. A guard veto of every input is `reason: 'guard'`, the line limit
+   * `reason: 'limit'`. Shopify refusing the lines still throws, as for `addLines`.
+   */
+  addLinesDetailed:   (inputs: CartLineInput[], options?: { quiet?: boolean }) => Promise<CartLinesWriteResult>;
   /**
    * `false` when a `cartGuard` cancelled the increase. `attributes` REPLACE the line's set —
    * Shopify does not merge them — so omit the argument to leave them untouched. `opts.source` is
@@ -385,6 +396,8 @@ export interface ShopifyEvent {
   productId?: string;
   /** On `cart:recovered`: the cart that was gone, the one that replaced it (also `cart`), and why. */
   recovery?: CartRecovery;
+  /** On a `cart:stockLimit` raised by a clamp: each add Shopify cut short, with what landed (0.13.1). */
+  clamped?: CartAddOutcome[];
   /**
    * The signed-in customer, on `auth:loginSuccess` (0.10). Null when their profile hadn't loaded when
    * the sign-in finished: `useCustomer().customer` has it once it does.
@@ -411,6 +424,7 @@ interface EventDetails {
   changedLines?: CartLineChange[];
   productId?: string;
   recovery?: CartRecovery;
+  clamped?: CartAddOutcome[];
 }
 
 /**
@@ -427,6 +441,22 @@ function changesForAdds(cart: Cart, inputs: CartLineInput[]): CartLineChange[] {
     else changes.push({ line, quantityChange: input.quantity });
   }
   return changes;
+}
+
+/**
+ * What each input really added. Shopify clamps an add past the stock to an answer that adds nothing,
+ * so it is counted: the rise in each variant's units over `before`, across every line (selling-plan and
+ * attribute-split lines count), shared out in input order when inputs repeat a variant.
+ */
+function landedQuantities(before: Cart, after: Cart, inputs: CartLineInput[]): number[] {
+  const rise = new Map<string, number>();
+  return inputs.map(({ merchandiseId, quantity }) => {
+    const left = rise.get(merchandiseId)
+      ?? Math.max(0, quantityInCart(after, merchandiseId) - quantityInCart(before, merchandiseId));
+    const landed = Math.min(quantity, left);
+    rise.set(merchandiseId, left - landed);
+    return landed;
+  });
 }
 
 /** Alert-carrying events and the message key each resolves. */
@@ -603,6 +633,7 @@ export function ShopifyProvider({
       ...(details?.changedLines ? { changedLines: details.changedLines } : {}),
       ...(details?.productId ? { productId: details.productId } : {}),
       ...(details?.recovery ? { recovery: details.recovery } : {}),
+      ...(details?.clamped ? { clamped: details.clamped } : {}),
       ...(signedIn ? { customer: signedIn.customer, sessionKind: signedIn.kind } : {}),
     };
     if (listener) {
@@ -1040,6 +1071,18 @@ export function ShopifyProvider({
       }
     }), [serialize, recovery]);
 
+  /**
+   * `cartLinesAdd` with the cart it was written to: after a replacement that is the new cart before the
+   * retried add (empty, or rebuilt with these items in it), so what landed is measured against it.
+   * `cartRef` moves on inside the queue, so an add queued behind this one measures from its result.
+   */
+  const addMeasured = useCallback((lines: CartLineInput[], retryOnDeadCart: boolean) =>
+    writeCart(async (current) => {
+      const after = await shopify.cart.addLines(current.id, lines);
+      cartRef.current = after;
+      return { before: current, after };
+    }, { retryOnDeadCart }), [writeCart]);
+
   const ensureCartId = useCallback(async (): Promise<string> => {
     if (cart?.id) return cart.id;
     const created = await shopify.cart.create({ attributes: newCartAttributes() });
@@ -1090,44 +1133,71 @@ export function ShopifyProvider({
 
     setCartLoad(true);
     try {
-      let next: Cart;
+      let measured: { before: Cart; after: Cart };
       try {
         // Inside the catch: a cart that can't be created is an add that didn't land.
         await ensureCartId();
-        next = await writeCart((current) => shopify.cart.addLines(current.id, [approved]), { retryOnDeadCart: true });
+        measured = await addMeasured([approved], true);
       } catch (addError) {
         releaseRejected(approved);
         reportCartFailure(addError);
         throw addError;
       }
+      const next = measured.after;
+      const [landedQuantity] = landedQuantities(measured.before, next, [approved]);
       await persistCart(next);
       await recovery.clearCheckoutMark();
-      recorder.addInput(next.id, approved);
-      emit("cart:add", { cart: next, changedLines: changesForAdds(next, [approved]) });
-      announceLanded(approved, next);
-      return { ok: true, cart: next };
+      if (landedQuantity > 0) {
+        const landed = { ...approved, quantity: landedQuantity };
+        recorder.addInput(next.id, landed);
+        emit("cart:add", { cart: next, changedLines: changesForAdds(next, [landed]) });
+        announceLanded(landed, next);
+      }
+      if (landedQuantity < approved.quantity) {
+        // Units the guard held for the part Shopify cut go back.
+        releaseRejected({ ...approved, quantity: approved.quantity - landedQuantity });
+        emit("cart:stockLimit", {
+          clamped: [{ merchandiseId: approved.merchandiseId, requestedQuantity: approved.quantity, landedQuantity }],
+        });
+      }
+      if (landedQuantity === 0) {
+        return { ok: false, reason: "clamped", message: message("cart.noMoreStock"), cart: next, landedQuantity };
+      }
+      return { ok: true, cart: next, landedQuantity };
     } finally {
       setCartLoad(false);
     }
-  }, [cart, approveAdd, releaseRejected, announceLanded, ensureCartId, persistCart, emit, reportCartFailure, writeCart, recovery, recorder]);
+  }, [cart, approveAdd, releaseRejected, announceLanded, ensureCartId, persistCart, emit, reportCartFailure, addMeasured, recovery, recorder]);
 
-  const cartAddLines = useCallback(async (
+  const cartAddLinesDetailed = useCallback(async (
     requested: CartLineInput[],
     options?: { quiet?: boolean },
-  ): Promise<Cart | null> => {
-    if (requested.length === 0) return cart;
+  ): Promise<CartLinesWriteResult> => {
+    const outcomes = (landedFor: (index: number) => number): CartAddOutcome[] =>
+      requested.map((input, index) => ({
+        merchandiseId: input.merchandiseId,
+        requestedQuantity: input.quantity,
+        landedQuantity: landedFor(index),
+      }));
+    if (requested.length === 0) return { ok: true, cart, landedQuantity: 0, lines: [] };
     // Vetted up front so a guard's veto does not cost the other lines their fast path.
-    const inputs = (await Promise.all(requested.map((input) => approveAdd(input, options)))).filter(
-      (input): input is CartLineInput => input !== null,
-    );
-    if (inputs.length === 0) return null;
+    const approvals = await Promise.all(requested.map((input) => approveAdd(input, options)));
+    const inputs = approvals.filter((input): input is CartLineInput => input !== null);
+    if (inputs.length === 0) return { ok: false, reason: "guard", cart, lines: outcomes(() => 0) };
 
     // The whole batch is judged against the limit, not line by line — landing
     // half a "add these 5" is worse than refusing it with the message.
     if (wouldExceedLineLimit(cart, inputs)) {
       inputs.forEach((input) => releaseRejected(input));
       emit("cart:limitExceeded");
-      return null;
+      const max = maxLineItems();
+      return {
+        ok: false,
+        reason: "limit",
+        message: max !== null ? limitExceededMessage(max) : undefined,
+        cart,
+        lines: outcomes(() => 0),
+      };
     }
 
     setCartLoad(true);
@@ -1140,11 +1210,12 @@ export function ShopifyProvider({
         throw createError;
       }
       let next: Cart | null = null;
-      // Which inputs landed, so the guard hears about exactly those.
-      let landed: CartLineInput[] = [];
+      // Units each input really added (by its index in `inputs`); null for one Shopify refused.
+      const landedQuantity: (number | null)[] = inputs.map(() => null);
       try {
-        next = await writeCart((current) => shopify.cart.addLines(current.id, inputs), { retryOnDeadCart: true });
-        landed = inputs;
+        const measured = await addMeasured(inputs, true);
+        next = measured.after;
+        landedQuantities(measured.before, next, inputs).forEach((units, i) => { landedQuantity[i] = units; });
       } catch (batchError) {
         // A transport or GraphQL failure would fail all N the same way, so retrying it would turn
         // one dead request into N and still end at null. Only line rejections are worth retrying.
@@ -1161,8 +1232,9 @@ export function ShopifyProvider({
         for (let i = 0; i < inputs.length; i += 1) {
           const input = inputs[i];
           try {
-            next = await writeCart((current) => shopify.cart.addLines(current.id, [input]));
-            landed.push(input);
+            const measured = await addMeasured([input], false);
+            next = measured.after;
+            [landedQuantity[i]] = landedQuantities(measured.before, next, [input]);
           } catch (lineError) {
             releaseRejected(input);
             if (isOutOfStockError(lineError)) anyOutOfStock = true;
@@ -1180,22 +1252,52 @@ export function ShopifyProvider({
         if (anyOutOfStock && !options?.quiet) emit("cart:outOfStock", { error: batchError });
         // Every line individually rejected. Surface the original rather than an empty success,
         // which reads as "nothing to add" instead of "none of this is sellable".
-        if (landed.length === 0) throw batchError;
+        if (landedQuantity.every((units) => units === null)) throw batchError;
       }
+      const landed: CartLineInput[] = [];
+      const clamped: CartAddOutcome[] = [];
+      inputs.forEach((input, i) => {
+        const units = landedQuantity[i];
+        if (units === null) return;
+        if (units > 0) landed.push({ ...input, quantity: units });
+        if (units < input.quantity) {
+          // Units the guard held for the part Shopify cut go back.
+          releaseRejected({ ...input, quantity: input.quantity - units });
+          clamped.push({ merchandiseId: input.merchandiseId, requestedQuantity: input.quantity, landedQuantity: units });
+        }
+      });
       if (next) {
         await persistCart(next);
         await recovery.clearCheckoutMark();
-        const cartId = next.id;
-        landed.forEach((input) => recorder.addInput(cartId, input));
         const settled = next;
-        emit("cart:add", { cart: settled, changedLines: changesForAdds(settled, landed) });
+        landed.forEach((input) => recorder.addInput(settled.id, input));
+        if (landed.length) emit("cart:add", { cart: settled, changedLines: changesForAdds(settled, landed) });
         landed.forEach((input) => announceLanded(input, settled));
       }
-      return next;
+      if (clamped.length && !options?.quiet) emit("cart:stockLimit", { clamped });
+      // Back to the caller's inputs: a vetoed one landed nothing.
+      let approvedIndex = 0;
+      const lines = outcomes((index) => (approvals[index] === null ? 0 : landedQuantity[approvedIndex++] ?? 0));
+      const total = lines.reduce((sum, line) => sum + line.landedQuantity, 0);
+      if (total === 0) {
+        return clamped.length
+          ? { ok: false, reason: "clamped", message: message("cart.noMoreStock"), cart: next, landedQuantity: 0, lines }
+          : { ok: false, reason: "outOfStock", cart: next, landedQuantity: 0, lines };
+      }
+      return { ok: true, cart: next, landedQuantity: total, lines };
     } finally {
       setCartLoad(false);
     }
-  }, [cart, approveAdd, releaseRejected, announceLanded, ensureCartId, persistCart, emit, reportCartFailure, writeCart, recovery, recorder]);
+  }, [cart, approveAdd, releaseRejected, announceLanded, ensureCartId, persistCart, emit, reportCartFailure, addMeasured, recovery, recorder]);
+
+  const cartAddLines = useCallback(async (
+    requested: CartLineInput[],
+    options?: { quiet?: boolean },
+  ): Promise<Cart | null> => {
+    if (requested.length === 0) return cart;
+    const result = await cartAddLinesDetailed(requested, options);
+    return result.ok ? result.cart : null;
+  }, [cart, cartAddLinesDetailed]);
 
   const cartSetBuyerIdentity = useCallback(async (identity: {
     email?: string;
@@ -1581,6 +1683,7 @@ export function ShopifyProvider({
       maxLineItems:       maxLineItems(),
       addLine:            cartAddLine,
       addLines:           cartAddLines,
+      addLinesDetailed:   cartAddLinesDetailed,
       updateLine:         cartUpdateLine,
       removeLine:         cartRemoveLine,
       applyDiscountCodes: cartApplyDiscounts,
@@ -1647,7 +1750,7 @@ export function ShopifyProvider({
     ready, error, events,
     // A new policy changes `cart.maxLineItems`, so the memo must see it.
     resolvedPolicy,
-    cart, cartLoading, cartAddLine, cartAddLines, cartUpdateLine, cartRemoveLine, cartApplyDiscounts, cartUpdateNote, cartSetBuyerIdentity, cartAddGiftCardCodes, cartRemoveGiftCards, cartRefresh, cartAdopt, cartReset, cartFlushAttribution, cartEnsureAttributes, saveLinkTags,
+    cart, cartLoading, cartAddLine, cartAddLines, cartAddLinesDetailed, cartUpdateLine, cartRemoveLine, cartApplyDiscounts, cartUpdateNote, cartSetBuyerIdentity, cartAddGiftCardCodes, cartRemoveGiftCards, cartRefresh, cartAdopt, cartReset, cartFlushAttribution, cartEnsureAttributes, saveLinkTags,
     wlItems, wlIds, wlHas, wlAdd, wlRemove, wlToggle, wlClear, wlRefresh,
     wtItems, wtIds, wtHas, wtAdd, wtRemove, wtRefresh,
     sessionState, session, authMethod, storeCreditOptions,
