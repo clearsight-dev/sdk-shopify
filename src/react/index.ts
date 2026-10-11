@@ -9,6 +9,8 @@ export {
   type ShopifyProviderProps,
   type ShopifyEvent,
   type ShopifyEventType,
+  type CartRecovery,
+  type CartRecoveryReason,
   type CartState,
   type WishlistState,
   type CustomerState,

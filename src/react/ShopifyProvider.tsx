@@ -10,11 +10,11 @@ import {
 } from "react";
 import { shopify } from "../shopify";
 import { isConfigured, setConfig } from "../client";
-import { toLineSnapshot } from "../cart";
 import type { AttributionSource } from "../attribution";
 import { createAttributionRecorder } from "./attributionRecorder";
+import { CHECKOUT_STARTED_KEY, createCartRecovery, type CartRecovery } from "./cartRecovery";
 import { wouldExceedLineLimit, maxLineItems } from "../cartPolicy";
-import { classifyAuthFailure, isOutOfStockError, isUserErrorRejection } from "../errors";
+import { classifyAuthFailure, isMissingCartError, isOutOfStockError, isUserErrorRejection } from "../errors";
 import { limitExceededMessage, message, setMessageResolver } from "../messages";
 import { ShopifyError } from "../types";
 import type {
@@ -26,7 +26,6 @@ import type {
   CartLineAttribute,
   CartLineGuard,
   CartLineInput,
-  CartLineSnapshot,
   CartLineUpdateInput,
   CartPolicy,
   CartWriteResult,
@@ -219,84 +218,6 @@ const ShopifyContext = createContext<ShopifyContextType | undefined>(undefined);
 
 const CART_STORAGE_KEY = "shopify:cart-id:v1";
 const CUSTOMER_TOKEN_KEY = "shopify:customer-token:v1";
-const CART_LINES_KEY = "shopify:cart-lines:v1";
-const CHECKOUT_STARTED_KEY = "shopify:checkout-started-cart-id:v1";
-
-// Best-effort: the cart write that triggered it has already landed.
-async function saveLineSnapshot(s: WishlistStorageAdapter | null, next: Cart | null): Promise<void> {
-  if (!s) return;
-  try {
-    if (next) await Promise.resolve(s.setItem(CART_LINES_KEY, JSON.stringify(toLineSnapshot(next))));
-    else await Promise.resolve(s.removeItem(CART_LINES_KEY));
-  } catch (snapshotError) {
-    console.warn("[ShopifyProvider] cart line snapshot write failed", snapshotError);
-  }
-}
-
-async function readCheckoutStarted(s: WishlistStorageAdapter | null): Promise<string | null> {
-  if (!s) return null;
-  try {
-    return await Promise.resolve(s.getItem(CHECKOUT_STARTED_KEY));
-  } catch {
-    return null;
-  }
-}
-
-async function clearCheckoutStarted(s: WishlistStorageAdapter | null): Promise<void> {
-  if (!s) return;
-  try {
-    await Promise.resolve(s.removeItem(CHECKOUT_STARTED_KEY));
-  } catch (markError) {
-    console.warn("[ShopifyProvider] checkout mark clear failed", markError);
-  }
-}
-
-async function loadLineSnapshot(s: WishlistStorageAdapter | null): Promise<CartLineSnapshot[]> {
-  if (!s) return [];
-  try {
-    const raw = await Promise.resolve(s.getItem(CART_LINES_KEY));
-    const parsed: unknown = raw ? JSON.parse(raw) : [];
-    if (!Array.isArray(parsed)) return [];
-    return parsed.filter(
-      (line): line is CartLineSnapshot =>
-        typeof line?.merchandiseId === "string" && typeof line?.quantity === "number" && line.quantity > 0,
-    );
-  } catch {
-    return [];
-  }
-}
-
-/**
- * A new cart holding the lines of one that expired. One `cartCreate` when every line is still
- * sellable; a single refusal fails that whole create, so it is redone as an empty cart plus one add
- * per line, skipping the refused ones. Not a shopper add, so no guard runs and nothing is toasted.
- */
-async function createFromSnapshot(lines: CartLineSnapshot[], attributes?: CartAttribute[]): Promise<Cart> {
-  const inputs: CartLineInput[] = lines.map((line) => ({
-    merchandiseId: line.merchandiseId,
-    quantity: line.quantity,
-    attributes: line.attributes ?? [],
-    ...(line.sellingPlanId ? { sellingPlanId: line.sellingPlanId } : {}),
-  }));
-  if (inputs.length === 0) return shopify.cart.create({ attributes });
-  try {
-    return await shopify.cart.create({ attributes, lines: inputs });
-  } catch (createError) {
-    if (!isLineRejection(createError)) throw createError;
-  }
-  let next = await shopify.cart.create({ attributes });
-  for (const input of inputs) {
-    try {
-      next = await shopify.cart.addLines(next.id, [input]);
-    } catch (lineError) {
-      if (isLineRejection(lineError)) continue;
-      // A partly restored cart beats failing startup; the snapshot is rewritten from what landed.
-      console.warn("[ShopifyProvider] cart restore stopped early", lineError);
-      break;
-    }
-  }
-  return next;
-}
 
 /**
  * Everything the host may want to tell the shopper about. One event per alert the
@@ -313,6 +234,8 @@ export type ShopifyEventType =
   | "cart:limitExceeded"
   | "cart:outOfStock"
   | "cart:buyerIdentity"
+  /** The stored cart was gone in Shopify (ordered or expired) and a new one took its place. No message. */
+  | "cart:recovered"
   | "wishlist:add"
   | "wishlist:remove"
   | "auth:loginSuccess"
@@ -337,7 +260,13 @@ export interface ShopifyEvent {
   messageKey?: AlertMessageKey;
   /** Present on failures. `ShopifyError.errors` carries the Shopify codes. */
   error?: unknown;
+  /** The new cart, on `cart:recovered` (0.9.2). */
+  cart?: Cart;
+  /** On `cart:recovered`: the cart that was gone, the one that replaced it, and why (0.9.2). */
+  recovery?: CartRecovery;
 }
+
+export type { CartRecovery, CartRecoveryReason } from "./cartRecovery";
 
 /** Alert-carrying events and the message key each resolves. */
 const EVENT_MESSAGE: Partial<Record<ShopifyEventType, AlertMessageKey>> = {
@@ -451,7 +380,7 @@ export function ShopifyProvider({
    * listener must not fail the write that triggered it — the mutation already
    * landed, so swallowing here is the only honest option.
    */
-  const emit = useCallback((type: ShopifyEventType, error?: unknown) => {
+  const emit = useCallback((type: ShopifyEventType, error?: unknown, details?: { cart?: Cart; recovery?: CartRecovery }) => {
     const listener = onEventRef.current;
     if (!listener) return;
     const key = EVENT_MESSAGE[type];
@@ -469,6 +398,8 @@ export function ShopifyProvider({
           }
         : {}),
       ...(error === undefined ? {} : { error }),
+      ...(details?.cart ? { cart: details.cart } : {}),
+      ...(details?.recovery ? { recovery: details.recovery } : {}),
     };
     try {
       listener(event);
@@ -570,6 +501,18 @@ export function ShopifyProvider({
     });
   }
   const recorder = recorderRef.current;
+  const recoveryRef = useRef<ReturnType<typeof createCartRecovery> | null>(null);
+  if (!recoveryRef.current) {
+    recoveryRef.current = createCartRecovery({
+      storage: () => storageRef.current,
+      newCartAttributes: () => cartAttrsRef.current,
+      restoreAttributes: (base) => recorder.restoreAttributes(base),
+      current: () => cartRef.current,
+      persist: (next) => persistCartRef.current(next),
+      onRecovered: (recovered, next) => emit("cart:recovered", undefined, { cart: next, recovery: recovered }),
+    });
+  }
+  const recovery = recoveryRef.current;
   // The cart the last write returned, for work queued behind it that must not read a stale render.
   const cartRef = useRef<Cart | null>(null);
 
@@ -637,19 +580,18 @@ export function ShopifyProvider({
         try {
           const s = storageRef.current;
           const savedId = s ? await Promise.resolve(s.getItem(CART_STORAGE_KEY)) : null;
-          let next: Cart | null = null;
-          if (savedId) next = await shopify.cart.get(savedId);
+          const stored = savedId ? await shopify.cart.get(savedId) : null;
           // A stored cart predates this session, so it may have been created in another market.
-          if (next) next = await applyCartAttributes(await pinMarket(next));
+          let next = stored ? await applyCartAttributes(await pinMarket(stored)) : null;
           if (!next) {
-            const checkedOut = !!savedId && savedId === (await readCheckoutStarted(s));
             // A cart created now is already in the configured market — `@inContext` saw to that.
-            next = checkedOut
-              ? await shopify.cart.create({ attributes: cartAttrsRef.current })
-              : await createFromSnapshot(await loadLineSnapshot(s), await recorder.restoreAttributes(cartAttrsRef.current));
+            const replaced = await recovery.replace(savedId);
+            next = replaced.cart;
             if (s) await Promise.resolve(s.setItem(CART_STORAGE_KEY, next.id));
+            if (replaced.reason === "ordered") await recovery.clearCheckoutMark();
           }
-          await saveLineSnapshot(s, next);
+          // Both return the cart they were given when they wrote nothing.
+          await recovery.saveSnapshot(next, next !== stored);
           cartRef.current = next;
           await recorder.sync(next);
           if (mounted) setCart(next);
@@ -766,7 +708,8 @@ export function ShopifyProvider({
     }
   }, [config.country]);
 
-  const persistCart = useCallback(async (next: Cart | null) => {
+  /** `written: false` for a cart only read, which must not count as used (`saveSnapshot`). */
+  const persistCart = useCallback(async (next: Cart | null, written = true) => {
     setCart(next);
     cartRef.current = next;
     const synced = recorder.sync(next);
@@ -774,12 +717,39 @@ export function ShopifyProvider({
     if (s) {
       if (next) await Promise.resolve(s.setItem(CART_STORAGE_KEY, next.id));
       else await Promise.resolve(s.removeItem(CART_STORAGE_KEY));
-      await saveLineSnapshot(s, next);
     }
+    await recovery.saveSnapshot(next, written);
     await synced;
-  }, [recorder]);
+  }, [recorder, recovery]);
   const persistCartRef = useRef(persistCart);
   persistCartRef.current = persistCart;
+
+  /**
+   * Every cart write: queued, and made on the cart as it is when its turn comes (`cartRef`, not a
+   * render's), so a write from a callback made before a replacement lands on the replacement. When
+   * Shopify says the cart is gone it is replaced right here, before the queue moves on; then
+   * `retryOnDeadCart` writes once more on the new cart, and otherwise the original error is thrown.
+   * The replacement never queues anything itself, or it would wait on the write it runs inside.
+   */
+  const writeCart = useCallback(<T,>(
+    write: (current: Cart) => Promise<T>,
+    options?: { retryOnDeadCart?: boolean; noCart?: T },
+  ): Promise<T> =>
+    serialize(async () => {
+      const current = cartRef.current;
+      if (!current) {
+        if (options && "noCart" in options) return options.noCart as T;
+        throw new Error("[ShopifyProvider] there is no cart to write to");
+      }
+      try {
+        return await write(current);
+      } catch (failure) {
+        if (!isMissingCartError(failure)) throw failure;
+        const live = await recovery.recover(current.id, { confirm: true });
+        if (!live || !options?.retryOnDeadCart) throw failure;
+        return write(live);
+      }
+    }), [serialize, recovery]);
 
   const ensureCartId = useCallback(async (): Promise<string> => {
     if (cart?.id) return cart.id;
@@ -820,17 +790,17 @@ export function ShopifyProvider({
 
     setCartLoad(true);
     try {
-      const id = await ensureCartId();
+      await ensureCartId();
       let next: Cart;
       try {
-        next = await serialize(() => shopify.cart.addLines(id, [approved]));
+        next = await writeCart((current) => shopify.cart.addLines(current.id, [approved]), { retryOnDeadCart: true });
       } catch (addError) {
         releaseRejected(approved);
         reportCartFailure(addError);
         throw addError;
       }
       await persistCart(next);
-      await clearCheckoutStarted(storageRef.current);
+      await recovery.clearCheckoutMark();
       recorder.addInput(next.id, approved);
       emit("cart:add");
       announceLanded(approved, next);
@@ -838,7 +808,7 @@ export function ShopifyProvider({
     } finally {
       setCartLoad(false);
     }
-  }, [cart, approveAdd, releaseRejected, announceLanded, ensureCartId, persistCart, emit, reportCartFailure, serialize, recorder]);
+  }, [cart, approveAdd, releaseRejected, announceLanded, ensureCartId, persistCart, emit, reportCartFailure, writeCart, recovery, recorder]);
 
   const cartAddLines = useCallback(async (requested: CartLineInput[]): Promise<Cart | null> => {
     if (requested.length === 0) return cart;
@@ -857,17 +827,18 @@ export function ShopifyProvider({
 
     setCartLoad(true);
     try {
-      const id = await ensureCartId();
+      await ensureCartId();
       let next: Cart | null = null;
       // Which inputs landed, so the guard hears about exactly those.
       let landed: CartLineInput[] = [];
       try {
-        next = await serialize(() => shopify.cart.addLines(id, inputs));
+        next = await writeCart((current) => shopify.cart.addLines(current.id, inputs), { retryOnDeadCart: true });
         landed = inputs;
       } catch (batchError) {
         // A transport or GraphQL failure would fail all N the same way, so retrying it would turn
         // one dead request into N and still end at null. Only line rejections are worth retrying.
-        if (!isLineRejection(batchError)) {
+        // A gone cart that couldn't be replaced would fail each line the same way.
+        if (!isLineRejection(batchError) || isMissingCartError(batchError)) {
           inputs.forEach(releaseRejected);
           reportCartFailure(batchError);
           throw batchError;
@@ -879,13 +850,14 @@ export function ShopifyProvider({
         for (let i = 0; i < inputs.length; i += 1) {
           const input = inputs[i];
           try {
-            next = await serialize(() => shopify.cart.addLines(id, [input]));
+            next = await writeCart((current) => shopify.cart.addLines(current.id, [input]));
             landed.push(input);
           } catch (lineError) {
             releaseRejected(input);
             if (isOutOfStockError(lineError)) anyOutOfStock = true;
-            // Anything but a rejection means the retry itself is failing, so stop.
-            if (!isLineRejection(lineError)) {
+            // Anything but a rejection means the retry itself is failing, so stop. So does a gone cart:
+            // the lines that landed went with it, and the cart is already its replacement.
+            if (!isLineRejection(lineError) || isMissingCartError(lineError)) {
               inputs.slice(i + 1).forEach(releaseRejected);
               reportCartFailure(lineError);
               throw lineError;
@@ -901,7 +873,7 @@ export function ShopifyProvider({
       }
       if (next) {
         await persistCart(next);
-        await clearCheckoutStarted(storageRef.current);
+        await recovery.clearCheckoutMark();
         const cartId = next.id;
         landed.forEach((input) => recorder.addInput(cartId, input));
         emit("cart:add");
@@ -912,7 +884,7 @@ export function ShopifyProvider({
     } finally {
       setCartLoad(false);
     }
-  }, [cart, approveAdd, releaseRejected, announceLanded, ensureCartId, persistCart, emit, reportCartFailure, serialize, recorder]);
+  }, [cart, approveAdd, releaseRejected, announceLanded, ensureCartId, persistCart, emit, reportCartFailure, writeCart, recovery, recorder]);
 
   const cartSetBuyerIdentity = useCallback(async (identity: {
     email?: string;
@@ -923,14 +895,14 @@ export function ShopifyProvider({
     if (!cart?.id) return false;
     setCartLoad(true);
     try {
-      const next = await serialize(() => shopify.cart.setBuyerIdentity(cart.id, identity));
+      const next = await writeCart((current) => shopify.cart.setBuyerIdentity(current.id, identity));
       await persistCart(next);
       emit("cart:buyerIdentity");
       return true;
     } finally {
       setCartLoad(false);
     }
-  }, [cart, persistCart, emit, serialize]);
+  }, [cart, persistCart, emit, writeCart]);
 
   const cartUpdateLine = useCallback(async (
     lineId: string,
@@ -956,7 +928,7 @@ export function ShopifyProvider({
     try {
       let next: Cart;
       try {
-        next = await serialize(() => shopify.cart.updateLines(cart.id, [update]));
+        next = await writeCart((current) => shopify.cart.updateLines(current.id, [update]));
       } catch (updateError) {
         if (previous && delta > 0) {
           releaseRejected({ merchandiseId: previous.merchandise.id, quantity: delta });
@@ -965,7 +937,7 @@ export function ShopifyProvider({
         throw updateError;
       }
       await persistCart(next);
-      await clearCheckoutStarted(storageRef.current);
+      await recovery.clearCheckoutMark();
       recorder.changeLine(next.id, previous, previous ? update.quantity - previous.quantity : 0, opts?.source);
       // A quantity change is not one of the panel's alerts — emitted as a state
       // signal so a host can refresh a badge, with no copy attached.
@@ -987,7 +959,7 @@ export function ShopifyProvider({
     } finally {
       setCartLoad(false);
     }
-  }, [cart, persistCart, runGuard, releaseRejected, emit, reportCartFailure, serialize, recorder]);
+  }, [cart, persistCart, runGuard, releaseRejected, emit, reportCartFailure, writeCart, recovery, recorder]);
 
   const cartRemoveLine = useCallback(async (lineId: string) => {
     if (!cart?.id) return;
@@ -995,9 +967,9 @@ export function ShopifyProvider({
     const previous = cart.lines.find((line) => line.id === lineId) ?? null;
     setCartLoad(true);
     try {
-      const next = await serialize(() => shopify.cart.removeLines(cart.id, [lineId]));
+      const next = await writeCart((current) => shopify.cart.removeLines(current.id, [lineId]));
       await persistCart(next);
-      await clearCheckoutStarted(storageRef.current);
+      await recovery.clearCheckoutMark();
       recorder.changeLine(next.id, previous, -(previous?.quantity ?? 0));
       // The panel's "Removed From Cart" alert. Previously nothing fired here, so
       // the configured copy had no trigger at all.
@@ -1018,18 +990,18 @@ export function ShopifyProvider({
     } finally {
       setCartLoad(false);
     }
-  }, [cart, persistCart, runGuard, emit, serialize, recorder]);
+  }, [cart, persistCart, runGuard, emit, writeCart, recovery, recorder]);
 
   const cartApplyDiscounts = useCallback(async (codes: string[]) => {
     if (!cart?.id) return;
     setCartLoad(true);
     try {
-      const next = await serialize(() => shopify.cart.applyDiscountCodes(cart.id, codes));
+      const next = await writeCart((current) => shopify.cart.applyDiscountCodes(current.id, codes));
       await persistCart(next);
     } finally {
       setCartLoad(false);
     }
-  }, [cart, persistCart, serialize]);
+  }, [cart, persistCart, writeCart]);
 
   const cartUpdateNote = useCallback(async (note: string | null) => {
     if (!cart?.id) return;
@@ -1037,25 +1009,30 @@ export function ShopifyProvider({
     try {
       // Serialized with the line writes: a note landing between an add and its response would be
       // applied to a cart the provider is about to replace, and the note would vanish.
-      const next = await serialize(() => shopify.cart.updateNote(cart.id, note));
+      const next = await writeCart((current) => shopify.cart.updateNote(current.id, note));
       await persistCart(next);
     } finally {
       setCartLoad(false);
     }
-  }, [cart, persistCart, serialize]);
+  }, [cart, persistCart, writeCart]);
 
   const cartRefresh = useCallback(async (): Promise<Cart | null> => {
-    if (!cart?.id) return null;
-    const next = await shopify.cart.get(cart.id);
-    if (next) await persistCart(next);
-    return next;
-  }, [cart, persistCart]);
+    const id = cartRef.current?.id;
+    if (!id) return null;
+    const next = await shopify.cart.get(id);
+    if (next) {
+      await persistCart(next, false);
+      return next;
+    }
+    // Queued, so it can't run alongside a write's own replacement of the same cart.
+    return serialize(() => recovery.recover(id, { confirm: false }));
+  }, [persistCart, serialize, recovery]);
 
   const cartAdopt = useCallback(async (cartId: string): Promise<Cart | null> => {
     // Adopted from the shopper's other device or the web store, so its market is not ours to assume.
     const fetched = await shopify.cart.get(cartId);
     const next = fetched ? await applyCartAttributes(await pinMarket(fetched)) : null;
-    if (next) await persistCart(next);
+    if (next) await persistCart(next, next !== fetched);
     return next;
   }, [persistCart, pinMarket, applyCartAttributes]);
 
@@ -1063,21 +1040,18 @@ export function ShopifyProvider({
 
   const cartEnsureAttributes = useCallback(async (pairs: CartAttribute[]): Promise<boolean> => {
     try {
-      return await serialize(async () => {
-        const current = cartRef.current;
-        if (!current) return false;
+      return await writeCart(async (current) => {
         const have = current.attributes;
         if (pairs.every((pair) => have.some((a) => a.key === pair.key && a.value === pair.value))) return true;
         const keys = new Set(pairs.map((pair) => pair.key));
-        const next = await shopify.cart.updateAttributes(current.id, [...have.filter((a) => !keys.has(a.key)), ...pairs]);
-        await persistCart(next);
+        await persistCart(await shopify.cart.updateAttributes(current.id, [...have.filter((a) => !keys.has(a.key)), ...pairs]));
         return true;
-      });
+      }, { noCart: false });
     } catch (ensureError) {
       console.warn("[ShopifyProvider] cart attribute write failed", ensureError);
       return false;
     }
-  }, [serialize, persistCart]);
+  }, [writeCart, persistCart]);
 
   const cartReset = useCallback(async () => {
     const created = await shopify.cart.create({ attributes: cartAttrsRef.current });

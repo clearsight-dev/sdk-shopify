@@ -27,6 +27,15 @@ function messageMatches(errors: UserError[], pattern: RegExp): boolean {
 }
 
 /**
+ * True when a cart write was refused for its `cartId`: the cart is gone (turned into an order, or
+ * expired), and Shopify answered with a brand-new cart that must not be used. By field and code, as
+ * the message is localised; the provider reads the cart once to confirm before replacing it.
+ */
+export function isMissingCartError(error: unknown): boolean {
+  return userErrorsOf(error).some((e) => !!e.field?.includes('cartId') && e.code === 'INVALID');
+}
+
+/**
  * True when a cart write failed because the merchandise cannot be sold right
  * now. Shopify's own codes are checked first; the message sniff is the fallback
  * for the storefront responses that carry no code.
