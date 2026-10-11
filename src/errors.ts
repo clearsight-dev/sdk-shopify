@@ -45,6 +45,15 @@ export function isOutOfStockError(error: unknown): boolean {
 }
 
 /**
+ * True when a cart write was refused for its `cartId`: the cart is gone (turned into an order, or
+ * expired), and Shopify answered with a brand-new cart that must not be used. By field and code, as
+ * the message is localised; the provider reads the cart once to confirm before replacing it.
+ */
+export function isMissingCartError(error: unknown): boolean {
+  return userErrorsOf(error).some((e) => !!e.field?.includes('cartId') && e.code === 'INVALID');
+}
+
+/**
  * Which auth alert a failed customer mutation deserves. `invalid-credentials`
  * is Shopify's `UNIDENTIFIED_CUSTOMER`; everything else stays `unknown` so the
  * caller can decide between generic copy and the raw error.

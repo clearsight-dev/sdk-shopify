@@ -125,6 +125,7 @@ export {
 } from './alertSettings';
 export {
   classifyAuthFailure,
+  isMissingCartError,
   isOutOfStockError,
   isUserErrorRejection,
   userErrorsOf,
@@ -225,6 +226,8 @@ export {
   type ShopifyEvent,
   type ShopifyEventType,
   type CartLineChange,
+  type CartRecovery,
+  type CartRecoveryReason,
   type CartState,
   type WishlistState,
   type WaitlistState,
