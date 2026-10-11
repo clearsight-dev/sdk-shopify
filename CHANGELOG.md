@@ -1,5 +1,49 @@
 # Changelog
 
+## 0.13.0 (2026-10-12)
+
+### Fix: a cart that is gone in Shopify no longer breaks every cart write
+
+Found on Freckled Poppy (2026-10-11), during a live show: the stored cart had become an order (the app
+missed the order page) and every add failed until the app was relaunched. Shopify answers a write to a
+converted or expired cart with HTTP 200, a `cartId` userError (code `INVALID`) and a brand-new cart,
+which is never used. 0.12.0 handled this only at launch. Minor, not a patch: `refresh()` and the cart
+writes behave differently on a gone cart, and the launch rule changed (below).
+
+- **`isMissingCartError(error)`**: a userError on `cartId` with code `INVALID`. By field and code, not
+  the message, which Shopify localises. Exported from the root.
+- **One rule for the replacement cart, at launch and while the app runs** (`react/cartRecovery.ts`):
+  - the cart marked by `reportCheckoutStarted`: empty (`reason: 'ordered'`);
+  - last used more than 10 days ago (Shopify's cart expiry): rebuilt from the phone's line snapshot
+    (`'expired'`);
+  - otherwise: **empty** (`'missing'`). A cart used recently and gone was most likely bought, on
+    another device or the web, or after the checkout mark was cleared; rebuilding it would put bought
+    items back. **Changed at launch too**: 0.12.0 rebuilt every unmarked gone cart.
+  - "Last used" is a new record, `shopify:cart-activity:v1` (`{ cartId, at }`), written with the
+    line snapshot on every cart write that lands (a new cart counts). Reads (`refresh()`, launch,
+    `adopt` without a change) don't move it: Shopify's expiry runs from the cart's last change. A read
+    of a cart with no record yet (an install from before 0.13.0, an adopted cart) records Shopify's own
+    last change, `Cart.updatedAt`, so a cart that is then left alone past ten days is still rebuilt.
+    A cart gone before any record was made (never read since the upgrade) counts as recent: empty.
+- **While the app runs**, a write that Shopify refuses for its `cartId` reads the cart once to confirm
+  it is gone, then replaces it inside the cart's write queue, before the next write runs. Every write
+  now takes the cart id when its turn comes, not from the render it was called in, so a callback
+  captured before a replacement writes to the new cart (a signed-in shopper's `setBuyerIdentity` from
+  `prepare()` used to go to the old one).
+  - `addLine` / `addLines` write once more on the new cart. Every other write (update, remove, buyer
+    identity, discount codes, note, gift cards) throws the original error; `ensureCartAttributes`
+    answers false. `refresh()` reading the cart as gone returns the new cart (null if it couldn't be
+    made).
+  - When the cart changed meanwhile (`reset`, `adopt`), the replacement is dropped and the write uses
+    the current cart. At most 3 replacements a minute; past that, and when the
+    new cart can't be made, the write throws its original error and nothing retries by itself.
+  - The checkout mark is cleared after the new cart is stored, not before.
+- **New event `cart:recovered`**: `recovery: { deadCartId, newCartId, reason: 'ordered' | 'missing' |
+  'expired' }` and the new `cart`. Not raised at launch. Types `CartRecovery`, `CartRecoveryReason`.
+- Tests: `test/cart-recovery.test.mjs` (33); `cart-snapshot` and `attribution-provider` updated for the
+  new launch rule. Every test file now sets `navigator` with `Object.defineProperty`, so the suite runs
+  on Node 22.
+
 ## 0.12.0 (2026-10-08)
 
 ### New: each cart line's discounts (`line.discounts`) and the whole cart's (`cart.discounts`)

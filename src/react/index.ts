@@ -11,6 +11,8 @@ export {
   type ShopifyProviderProps,
   type ShopifyEvent,
   type CartLineChange,
+  type CartRecovery,
+  type CartRecoveryReason,
   type ShopifyEventType,
   type CartState,
   type WishlistState,
