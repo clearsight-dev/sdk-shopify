@@ -504,8 +504,11 @@ export type MaybePromise<T> = T | Promise<T>;
  * `maxLineItems` policy, `outOfStock` Shopify refusing an unsellable line.
  * `no-cart` means there was nothing to write to.
  */
-/** `stock`: the add would pass the variant's stock (`CartLineInput.maxQuantity`), checked before the write. */
-export type CartRejectionReason = 'guard' | 'limit' | 'stock' | 'outOfStock' | 'no-cart';
+/**
+ * `stock`: the add would pass the variant's stock (`CartLineInput.maxQuantity`), checked before the write.
+ * `clamped`: Shopify accepted the add but added nothing, its silent answer to an add past the stock (0.13.1).
+ */
+export type CartRejectionReason = 'guard' | 'limit' | 'stock' | 'outOfStock' | 'no-cart' | 'clamped';
 
 /**
  * The outcome of a cart write. Returned instead of a bare boolean so a caller
@@ -523,6 +526,27 @@ export interface CartWriteResult {
   message?: string;
   /** The cart as it stands after the write — unchanged on a refusal. */
   cart: Cart | null;
+  /**
+   * Units of the variant the add really put in the cart (0.13.1). Shopify clamps an add past the stock
+   * without an error, so this can be below the quantity asked for: `ok` with fewer units is a partial
+   * clamp, 0 is `reason: 'clamped'`. Absent when nothing was written.
+   */
+  landedQuantity?: number;
+}
+
+/** What one add input asked for and what really landed (0.13.1). */
+export interface CartAddOutcome {
+  merchandiseId: string;
+  requestedQuantity: number;
+  landedQuantity: number;
+}
+
+/**
+ * `useCart().addLinesDetailed`'s answer (0.13.1): `ok` when any units landed, `landedQuantity` their
+ * total, and `lines` one entry per input, in order (0 for one a guard vetoed or Shopify refused).
+ */
+export interface CartLinesWriteResult extends CartWriteResult {
+  lines: CartAddOutcome[];
 }
 
 // Customer
