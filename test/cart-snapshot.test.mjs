@@ -34,7 +34,7 @@ const payload = (id) => {
       merchandise: { id: l.merchandiseId }, cost: { totalAmount: money, amountPerQuantity: money },
     })) },
     cost: { subtotalAmount: money, totalAmount: money },
-    discountCodes: [], appliedGiftCards: [], createdAt: '', updatedAt: '',
+    discountCodes: [], appliedGiftCards: [], createdAt: '', updatedAt: c.updatedAt ?? '',
   };
 };
 
@@ -90,6 +90,9 @@ const { ShopifyProvider, useShopify, toLineSnapshot } = await import('../dist/in
 
 const CART_KEY = 'shopify:cart-id:v1';
 const LINES_KEY = 'shopify:cart-lines:v1';
+const ACTIVITY_KEY = 'shopify:cart-activity:v1';
+// Last used eleven days ago: past Shopify's ten-day expiry, so the cart is rebuilt (0.9.2).
+const idle = (cartId) => JSON.stringify({ cartId, at: Date.now() - 11 * 24 * 60 * 60 * 1000 });
 
 function memoryStorage(initial = {}) {
   const map = new Map(Object.entries(initial));
@@ -160,9 +163,9 @@ check('a remove rewrites the snapshot', () => {
   assert.deepEqual(snapshotOf(s1).map((l) => l.merchandiseId), [tagged.merchandiseId, planned.merchandiseId]);
 });
 
-console.log('expired cart restore');
+console.log('expired cart restore (idle past the expiry)');
 const saved = JSON.stringify([...snapshotOf(s1), { merchandiseId: plain.merchandiseId, quantity: 3, sellingPlanId: null, attributes: [] }]);
-const s2 = memoryStorage({ [CART_KEY]: 'gid://shopify/Cart/expired', [LINES_KEY]: saved });
+const s2 = memoryStorage({ [CART_KEY]: 'gid://shopify/Cart/expired', [LINES_KEY]: saved, [ACTIVITY_KEY]: idle('gid://shopify/Cart/expired') });
 await mount(s2);
 check('one cartCreate carries every line and the cart attributes', () => {
   const made = creates();
@@ -183,7 +186,7 @@ check('the restored cart is stored, with its lines intact', () => {
 });
 
 refused.add(planned.merchandiseId);
-const s3 = memoryStorage({ [CART_KEY]: 'gid://shopify/Cart/expired', [LINES_KEY]: saved });
+const s3 = memoryStorage({ [CART_KEY]: 'gid://shopify/Cart/expired', [LINES_KEY]: saved, [ACTIVITY_KEY]: idle('gid://shopify/Cart/expired') });
 await mount(s3);
 check('a refused line is skipped and the others restore', () => {
   assert.equal(api.error, null);
@@ -201,7 +204,7 @@ check('the fallback is an empty create plus one add per line', () => {
 refused.clear();
 
 addsBeforeOutage = 2;
-const s4 = memoryStorage({ [CART_KEY]: 'gid://shopify/Cart/expired', [LINES_KEY]: saved });
+const s4 = memoryStorage({ [CART_KEY]: 'gid://shopify/Cart/expired', [LINES_KEY]: saved, [ACTIVITY_KEY]: idle('gid://shopify/Cart/expired') });
 refused.add(tagged.merchandiseId);
 await mount(s4);
 check('a network failure mid-fallback keeps the partial cart instead of failing startup', () => {
@@ -223,7 +226,72 @@ check('no snapshot: an empty cart, created as before', () => {
   assert.deepEqual(snapshotOf(s5), []);
 });
 
-const s6 = memoryStorage({ [CART_KEY]: 'gid://shopify/Cart/expired', [LINES_KEY]: 'not json' });
+console.log('a gone cart used recently, or with no record of use, starts empty (0.9.2)');
+const s10 = memoryStorage({ [CART_KEY]: 'gid://shopify/Cart/expired', [LINES_KEY]: saved,
+  [ACTIVITY_KEY]: JSON.stringify({ cartId: 'gid://shopify/Cart/expired', at: Date.now() - 60_000 }) });
+await mount(s10);
+check('used a minute ago: an empty cart, nothing rebuilt', () => {
+  assert.equal(creates().length, 1);
+  assert.equal(creates()[0].variables.input.lines, undefined);
+  assert.equal(api.cart.cart.lines.length, 0);
+});
+const s11 = memoryStorage({ [CART_KEY]: 'gid://shopify/Cart/expired', [LINES_KEY]: saved });
+await mount(s11);
+check('no record of use (an install from before 0.9.2): an empty cart', () => {
+  assert.equal(creates()[0].variables.input.lines, undefined);
+  assert.equal(api.cart.cart.lines.length, 0);
+});
+const s12 = memoryStorage({ [CART_KEY]: 'gid://shopify/Cart/expired', [LINES_KEY]: saved, [ACTIVITY_KEY]: idle('gid://shopify/Cart/other') });
+await mount(s12);
+check('a record for another cart counts as no record: an empty cart', () => {
+  assert.equal(api.cart.cart.lines.length, 0);
+});
+check('a cart made counts as used: its time is recorded', () => {
+  const record = JSON.parse(s12.map.get(ACTIVITY_KEY));
+  assert.equal(record.cartId, api.cart.cart.id);
+  assert.ok(Date.now() - record.at < 5_000);
+});
+// Shopify's expiry runs from the cart's last change, so only writes count as use.
+const longAgo = (cartId) => JSON.stringify({ cartId, at: 1_000 });
+s12.map.set(ACTIVITY_KEY, longAgo(api.cart.cart.id));
+await runAct(async () => { await api.cart.refresh(); });
+check('a read (refresh) does not record use', () => {
+  assert.equal(s12.map.get(ACTIVITY_KEY), longAgo(api.cart.cart.id));
+});
+await mount(s12);
+check('reading the stored cart at launch does not record use', () => {
+  assert.equal(creates().length, 0);
+  assert.equal(s12.map.get(ACTIVITY_KEY), longAgo(api.cart.cart.id));
+});
+await runAct(async () => { await api.cart.addLine(plain); });
+check('a write records it', () => {
+  const record = JSON.parse(s12.map.get(ACTIVITY_KEY));
+  assert.equal(record.cartId, api.cart.cart.id);
+  assert.ok(Date.now() - record.at < 5_000);
+});
+
+console.log('an install from before 0.9.2: no record of use until a read finds the cart');
+const elevenDaysAgo = new Date(Date.now() - 11 * 24 * 60 * 60 * 1000).toISOString();
+carts.set('gid://shopify/Cart/upgraded', { attributes: cartAttributes, lines: [{ ...plain }], updatedAt: elevenDaysAgo });
+const s13 = memoryStorage({ [CART_KEY]: 'gid://shopify/Cart/upgraded' });
+await mount(s13);
+check('reading it at launch records Shopify\'s own last change (updatedAt), not now', () => {
+  assert.deepEqual(JSON.parse(s13.map.get(ACTIVITY_KEY)), { cartId: 'gid://shopify/Cart/upgraded', at: Date.parse(elevenDaysAgo) });
+});
+carts.delete('gid://shopify/Cart/upgraded');
+await mount(s13);
+check('so when it is gone later it counts as expired and is rebuilt, as 0.9.1 did', () => {
+  assert.equal(creates().length, 1);
+  assert.deepEqual(toLineSnapshot(api.cart.cart).map((l) => l.merchandiseId), [plain.merchandiseId]);
+});
+carts.set('gid://shopify/Cart/unparsable', { attributes: cartAttributes, lines: [], updatedAt: 'not a date' });
+const s14 = memoryStorage({ [CART_KEY]: 'gid://shopify/Cart/unparsable' });
+await mount(s14);
+check('an updatedAt that cannot be read records nothing', () => {
+  assert.equal(s14.map.has(ACTIVITY_KEY), false);
+});
+
+const s6 = memoryStorage({ [CART_KEY]: 'gid://shopify/Cart/expired', [LINES_KEY]: 'not json', [ACTIVITY_KEY]: idle('gid://shopify/Cart/expired') });
 await mount(s6);
 check('a malformed snapshot counts as empty', () => {
   assert.equal(api.error, null);
@@ -271,8 +339,9 @@ check('a remove after checkout started clears the mark', () => {
   assert.equal(s9.map.has(CHECKOUT_KEY), false);
 });
 carts.delete(api.cart.cart.id);
+s9.map.set(ACTIVITY_KEY, idle(s9.map.get(CART_KEY)));
 await mount(s9);
-check('so the shopper who came back gets the cart restored', () => {
+check('so the shopper who came back after the expiry gets the cart restored', () => {
   assert.deepEqual(toLineSnapshot(api.cart.cart).map((l) => l.merchandiseId), [tagged.merchandiseId]);
 });
 

@@ -256,7 +256,7 @@ Every event carries the resolved copy, so that one-liner is the whole integratio
 | `auth:logout` / `auth:recoverSent` | `auth.loggedOut` / `auth.resetLinkSent` | Login |
 | `checkout:orderPlaced` / `checkout:paymentFailed` | `checkout.orderPlaced` / `checkout.paymentFailed` | Checkout |
 
-`cart:update` and `cart:buyerIdentity` are state signals and carry no message.
+`cart:update`, `cart:buyerIdentity` and `cart:recovered` are state signals and carry no message.
 `wishlist.empty` has no event — read it directly for a placeholder:
 
 ```tsx
@@ -340,6 +340,43 @@ const { reportOrderPlaced, reportPaymentFailed } = useCheckout();
 
 > A `checkout.observe(url)` helper that classifies the return URL itself is the
 > next piece of work; this is the seam it will emit through.
+
+### A cart that is gone in Shopify (`cart:recovered`, 0.9.2)
+
+A stored cart can vanish: it became an order and the app missed the order page, or it expired. Shopify
+then refuses every write to it (`isMissingCartError(error)`: a `cartId` userError with code `INVALID`).
+Until 0.9.2 every cart write then failed until the app was relaunched. The provider now replaces it,
+at launch and while the app runs, by one rule:
+
+| The gone cart | New cart | `reason` |
+| --- | --- | --- |
+| Marked by `reportCheckoutStarted` | Empty | `ordered` |
+| Last used more than 10 days ago | Rebuilt from the lines saved on the phone | `expired` |
+| Anything else, including a cart gone before any record of use was made | Empty | `missing` |
+
+"Used" means a cart write that landed; reads don't count, as Shopify's expiry runs from the cart's last
+change. A cart read with no record yet (an install from before 0.9.2, an adopted cart) is recorded as
+last used at Shopify's own `updatedAt`. A recently used cart that is gone was most likely bought (on
+another device, on the web), so it is not rebuilt. **This changes launch too**: 0.9.1 rebuilt every
+gone cart that wasn't marked.
+
+While the app runs:
+
+- A write refused for its `cartId` reads the cart once to confirm it is gone, then the cart is replaced
+  in the write queue, before any later write runs. Writes take the cart id when their turn comes, so a
+  callback from an earlier render writes to the new cart.
+- `addLine` and `addLines` write once more on the new cart. Every other write (update, remove, buyer
+  identity, discount codes, note) throws the original error; the cart is already the new one. A remove
+  on a rebuilt cart finds the line back; removing again works.
+- `ensureCartAttributes` answers false.
+- `refresh()` that reads the cart back as gone returns the new cart (null if it couldn't be made).
+- If `reset` or `adopt` changed the cart meanwhile, the replacement is dropped. At most three
+  replacements a minute; past that, or when the new cart can't be made, the write throws its original
+  error and nothing retries by itself.
+
+`cart:recovered` (severity `info`, no message) carries `cart`, the new cart, and
+`recovery: { deadCartId, newCartId, reason }` (types `CartRecovery`, `CartRecoveryReason`). It is not
+raised at launch, and no `checkout:orderPlaced` is raised.
 
 ### Where cart units came from (0.9.0)
 

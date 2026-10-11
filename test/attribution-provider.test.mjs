@@ -102,6 +102,8 @@ const { ShopifyProvider, useShopify, parseAttribution, ATTRIBUTION_ATTRIBUTE_KEY
 
 const CART_KEY = 'shopify:cart-id:v1';
 const LINES_KEY = 'shopify:cart-lines:v1';
+// Idle past Shopify's ten-day expiry, so a gone cart is rebuilt rather than started empty (0.9.2).
+const IDLE = { 'shopify:cart-activity:v1': JSON.stringify({ cartId: 'gid://shopify/Cart/expired', at: 0 }) };
 const ATTR_KEY = 'shopify:cart-attribution:v1';
 
 function memoryStorage(initial = {}) {
@@ -474,7 +476,7 @@ console.log('expired cart restore');
 {
   const saved = '{"v":1,"live":{"show-1":{"t":500,"items":{"1":{"n":2}}}}}';
   const lines = JSON.stringify([{ merchandiseId: V1, quantity: 2, sellingPlanId: null, attributes: [] }]);
-  const s = memoryStorage({ [CART_KEY]: 'gid://shopify/Cart/expired', [LINES_KEY]: lines, [ATTR_KEY]: saved });
+  const s = memoryStorage({ [CART_KEY]: 'gid://shopify/Cart/expired', [LINES_KEY]: lines, [ATTR_KEY]: saved, ...IDLE });
   await mount(s, on);
   check('the new cart is created with the saved value and the configured attributes', () => {
     const made = named('CartCreate');
@@ -483,7 +485,7 @@ console.log('expired cart restore');
     assert.equal(serverValue().live['show-1'].items[1].n, 2);
   });
 
-  const s2 = memoryStorage({ [CART_KEY]: 'gid://shopify/Cart/expired', [LINES_KEY]: lines, [ATTR_KEY]: saved });
+  const s2 = memoryStorage({ [CART_KEY]: 'gid://shopify/Cart/expired', [LINES_KEY]: lines, [ATTR_KEY]: saved, ...IDLE });
   await mount(s2);
   check('with attribution off, the restore is unchanged', () => {
     assert.deepEqual(named('CartCreate')[0].variables.input.attributes, cartAttributes);
