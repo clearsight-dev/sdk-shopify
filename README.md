@@ -228,7 +228,7 @@ const results = useSearch(term, { debounceMs: 300 }); // results.query is the de
 
 ## Alerts & Toasts
 
-The editor's Settings panel configures the copy for 13 shopper-facing alerts. The
+The editor's Settings panel configures the copy for 14 shopper-facing alerts. The
 SDK never renders anything — it resolves the right string and hands it to you on
 an event, so a screen can toast without keeping its own copy table or mapping
 Shopify error shapes to sentences.
@@ -250,6 +250,7 @@ Every event carries the resolved copy, so that one-liner is the whole integratio
 | `cart:add` | `cart.added` | Cart |
 | `cart:remove` | `cart.removed` | Cart |
 | `cart:limitExceeded` | `cart.limitExceeded` | Cart |
+| `cart:stockLimit` | `cart.noMoreStock` | Cart |
 | `cart:outOfStock` | `cart.outOfStock` | Checkout |
 | `wishlist:add` / `wishlist:remove` | `wishlist.added` / `wishlist.removed` | Wishlist |
 | `auth:loginSuccess` / `auth:loginFailed` | `auth.loginSuccess` / `auth.loginFailed` | Login |
@@ -340,6 +341,31 @@ const { reportOrderPlaced, reportPaymentFailed } = useCheckout();
 
 > A `checkout.observe(url)` helper that classifies the return URL itself is the
 > next piece of work; this is the seam it will emit through.
+
+### Did the add land? (0.9.3)
+
+Shopify doesn't refuse an add past the stock: it answers ok and adds what is left, or nothing. So every
+add counts the variant's units across all of the cart's lines before and after the write (selling-plan
+and attribute-split lines included). After a gone cart was replaced, "before" is the new cart before the
+retried add, so a rebuilt cart that already holds the item is measured correctly.
+
+| Outcome | `addLine` result | Events |
+| --- | --- | --- |
+| Every unit landed | `ok: true`, `landedQuantity` = asked | `cart:add` |
+| Some landed (asked 3, got 1) | `ok: true`, `landedQuantity: 1` | `cart:add`, `cart:stockLimit` |
+| None landed | `ok: false`, `reason: 'clamped'`, `cart.noMoreStock`'s copy, `landedQuantity: 0`, the cart | `cart:stockLimit` |
+
+`cart:stockLimit` is new here (as on 0.13), with the new `cart.noMoreStock` alert ("No more stock
+available", a Settings panel field at `settings.alerts.cart.noMoreStock`), and carries
+`clamped: { merchandiseId, requestedQuantity, landedQuantity }[]`. The attribution and the guard's
+`onLanded` count only the units that landed; the guard gets the rest back through `onReleased`
+(`reason: 'rejected'`). An app that toasts `result.message` itself for every `ok: false` should leave
+`'clamped'` to the event, as it does `'limit'`, or the shopper sees the message twice.
+
+`useCart().addLinesDetailed(inputs)` is `addLines` with the same answer per input:
+`{ ok, reason?, message?, cart, landedQuantity, lines: CartAddOutcome[] }`, one entry per input in order
+(0 for one a guard vetoed), and one `cart:stockLimit` for the batch. `addLines` returns its cart, and now
+`null` when nothing landed, a batch clamped to nothing included.
 
 ### A cart that is gone in Shopify (`cart:recovered`, 0.9.2)
 
