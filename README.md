@@ -438,6 +438,11 @@ the guard gets the rest back through `onReleased` (`reason: 'rejected'`).
 (0 for one a guard vetoed). One `cart:stockLimit` for the batch, none when `quiet`. `addLines` returns
 its cart, and now `null` when nothing landed, a batch clamped to nothing included.
 
+**The gallery following each pick** (0.14.0): `page.selection.mediaIndex` is the slide showing the
+chosen variant's photo (`mediaIndexOf`; null when it has none), and `page.selection.pickCount` goes up on
+every pick. Move the gallery to `mediaIndex` whenever `pickCount` changes, so a pick always shows its
+variant's photo and the page opens where it opens.
+
 ## Cart page: `useCartPage`
 
 Everything a cart page decides, in one hook (0.14.0). Other SDKs add what they know about the lines

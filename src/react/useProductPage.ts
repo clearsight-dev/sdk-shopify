@@ -16,6 +16,7 @@ import {
   firstImageUrl,
   findVariant,
   initialMediaIndex,
+  mediaIndexOf,
   initialSelection as defaultInitialSelection,
   isLowStock,
   isVariantUnavailable,
@@ -90,6 +91,17 @@ export interface VariantSelection {
   /** The chosen variant can't be bought now (only meaningful when `known`). */
   unavailable: boolean;
   lowStock: boolean;
+  /**
+   * The gallery slide showing the chosen variant's photo (`mediaIndexOf` over the product's `media`);
+   * null when it has none, or the photo isn't in the gallery (0.14.0).
+   */
+  mediaIndex: number | null;
+  /**
+   * How many times the shopper has picked (`setOption`, `selectVariant`), 0 until the first and again
+   * after `reset` or a new product (0.14.0). A gallery that follows each pick moves on every new count,
+   * the same variant picked again included, and never on the page's opening or a product's reload.
+   */
+  pickCount: number;
 }
 
 export function useVariantSelection(
@@ -118,24 +130,36 @@ export function useVariantSelection(
   }, [variants, options.initialVariantId]);
 
   const [chosen, setChosen] = useState<OptionSelection | null>(null);
+  const [pickCount, setPickCount] = useState(0);
   const resetKey = options.resetKey !== undefined ? options.resetKey : (product?.id ?? null);
-  useEffect(() => setChosen(null), [resetKey]);
+  useEffect(() => {
+    setChosen(null);
+    setPickCount(0);
+  }, [resetKey]);
 
   const selection = chosen ?? initial;
   const variant = known ? findVariant(variants, selection) : null;
 
   const setOption = useCallback(
-    (name: string, value: string) => setChosen((current) => ({ ...(current ?? initial), [name]: value })),
+    (name: string, value: string) => {
+      setChosen((current) => ({ ...(current ?? initial), [name]: value }));
+      setPickCount((count) => count + 1);
+    },
     [initial],
   );
   const selectVariant = useCallback(
     (variantId: string) => {
       const found = variants.find((v) => v.id === variantId);
-      if (found) setChosen(selectionForVariant(found));
+      if (!found) return;
+      setChosen(selectionForVariant(found));
+      setPickCount((count) => count + 1);
     },
     [variants],
   );
-  const reset = useCallback(() => setChosen(null), []);
+  const reset = useCallback(() => {
+    setChosen(null);
+    setPickCount(0);
+  }, []);
 
   const states = useMemo(
     () => buildOptionStates(selectable, variants, selection, isUnavailable),
@@ -158,6 +182,8 @@ export function useVariantSelection(
     price: variantPrice(variant, product),
     unavailable: known && (!product?.availableForSale || isUnavailable(variant)),
     lowStock: known && isLowStock(product?.totalInventory, product?.availableForSale, threshold),
+    mediaIndex: mediaIndexOf(product?.media, variant?.image?.url),
+    pickCount,
   };
 }
 

@@ -61,6 +61,7 @@ export {
   quantityInCart,
   withinCeiling,
   initialMediaIndex,
+  mediaIndexOf,
   firstImageUrl,
   sizedImageUrl,
   parseDescriptionHtml,

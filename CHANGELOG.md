@@ -25,6 +25,15 @@ with its tests. An app can use it as it is, or write its own cart hook from the 
   `cartAmountsDueNow` (`src/cartPage.ts`).
 - Tests: `test/cart-page.test.mjs` (23), `test/cart-page-hook.test.mjs` (7).
 
+### New: the gallery can follow each variant pick
+
+- **`useVariantSelection` / `useProductPage().selection`** add `mediaIndex` (the gallery slide showing the
+  chosen variant's photo, or null) and `pickCount` (each `setOption` / `selectVariant`, the same one again
+  included; 0 at the start, after `reset` and for a new product). A gallery moves to `mediaIndex` on each
+  new `pickCount`: never on the page's opening, a size whose photo is already showing included.
+- **`mediaIndexOf(media, imageUrl)`**: an image's slide, matched by its file whatever size either address
+  asks for; only stills. Tests: 2 more in `test/product-page.test.mjs`.
+
 ## 0.13.1 (2026-10-12)
 
 ### Fix: an add Shopify clamped to nothing no longer reads as added

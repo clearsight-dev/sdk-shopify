@@ -90,7 +90,7 @@ const sdk = await import('../dist/index.js');
 const {
   shopify, ShopifyProvider, useProductPage, useVariantSelection,
   selectableOptions, findVariant, initialSelection, optionStates, selectionLabel, variantPrice, isLowStock,
-  stockCeiling, quantityInCart, withinCeiling, initialMediaIndex, firstImageUrl, sizedImageUrl,
+  stockCeiling, quantityInCart, withinCeiling, initialMediaIndex, mediaIndexOf, firstImageUrl, sizedImageUrl,
   parseDescriptionHtml, productShareUrl, isPlaceholderOption, DEFAULT_MESSAGES, ALERT_SETTING_FIELDS,
   peekProduct,
 } = sdk;
@@ -153,6 +153,18 @@ await check('media: open on the first image, or the video when asked; first stil
   assert.equal(initialMediaIndex(media, true), 0);
   assert.equal(firstImageUrl({ media, featuredImage: null }), 'i.jpg');
   assert.equal(firstImageUrl({ media: [], featuredImage: { url: 'f.jpg' } }), 'f.jpg');
+});
+await check("a variant's photo: its gallery slide, whatever size either address asks for (0.14.0)", () => {
+  const media = [
+    { id: 'v', kind: 'video', posterUrl: 'https://cdn/files/navy.jpg?v=1' },
+    { id: 'a', kind: 'image', posterUrl: 'https://cdn/files/olive_1080x.jpg?v=1' },
+    { id: 'b', kind: 'image', posterUrl: 'https://cdn/files/navy_1080x.jpg?v=2' },
+  ];
+  assert.equal(mediaIndexOf(media, 'https://cdn/files/navy.jpg?v=2&width=600'), 2, 'the still, not the video sharing its poster');
+  assert.equal(mediaIndexOf(media, 'https://cdn/files/Olive_200x@2x.jpg'), 1, 'a sized, retina address; any letter case');
+  assert.equal(mediaIndexOf(media, 'https://cdn/files/wine.jpg'), null, 'not in the gallery');
+  assert.equal(mediaIndexOf(media, null), null, 'a variant with no photo');
+  assert.equal(mediaIndexOf(null, 'https://cdn/files/navy.jpg'), null);
 });
 await check('image sizing: rewrites Shopify size suffixes, else adds width=', () => {
   assert.equal(sizedImageUrl('https://cdn/x/p_1080x.png?v=1', 660), 'https://cdn/x/p_660x.png?v=1');
@@ -305,6 +317,39 @@ await check('works on any product object, e.g. a buy sheet with its own data', a
   const sheet = await mount(() => useVariantSelection(product, { separator: ', ' }));
   assert.equal(sheet.now().selection.Color, 'Wine');
   assert.equal(sheet.now().label, 'Wine, S');
+  await sheet.unmount();
+});
+
+await check("each pick counts, the same one again included, and the chosen variant's slide follows it (0.14.0)", async () => {
+  const variant = (id, color, size, photo) => ({
+    id, title: `${color} / ${size}`, availableForSale: true, quantityAvailable: 5, price: { amount: '20.00', currencyCode: 'USD' },
+    selectedOptions: [{ name: 'Color', value: color }, { name: 'Size', value: size }], image: photo ? { url: photo } : null,
+  });
+  const product = {
+    id: 'gid://shopify/Product/226', handle: 'blouse', title: 'Blouse', availableForSale: true, totalInventory: 20,
+    options: [{ id: 'c', name: 'Color', values: ['Navy', 'Olive'] }, { id: 's', name: 'Size', values: ['S', 'M'] }],
+    variants: [
+      variant('n-s', 'Navy', 'S', 'https://cdn/files/navy.jpg?v=1'), variant('n-m', 'Navy', 'M', 'https://cdn/files/navy.jpg?v=1'),
+      variant('o-s', 'Olive', 'S', 'https://cdn/files/olive.jpg?v=1'), variant('o-m', 'Olive', 'M', null),
+    ],
+    media: [
+      { id: 'm1', kind: 'image', posterUrl: 'https://cdn/files/navy_1080x.jpg?v=1' },
+      { id: 'm2', kind: 'image', posterUrl: 'https://cdn/files/olive_1080x.jpg?v=1' },
+    ],
+  };
+  const sheet = await mount(() => useVariantSelection(product));
+  assert.equal(sheet.now().pickCount, 0, 'the opening selection is no pick');
+  assert.equal(sheet.now().mediaIndex, 0, "Navy / S's photo");
+  await sheet.act(async () => sheet.now().setOption('Color', 'Olive'));
+  assert.deepEqual([sheet.now().pickCount, sheet.now().mediaIndex], [1, 1]);
+  await sheet.act(async () => sheet.now().setOption('Size', 'S'));
+  assert.deepEqual([sheet.now().pickCount, sheet.now().mediaIndex], [2, 1], 'the same size again: a pick, the same slide');
+  await sheet.act(async () => sheet.now().setOption('Size', 'M'));
+  assert.deepEqual([sheet.now().pickCount, sheet.now().mediaIndex], [3, null], 'Olive / M has no photo: no slide to move to');
+  await sheet.act(async () => sheet.now().selectVariant('n-m'));
+  assert.deepEqual([sheet.now().pickCount, sheet.now().mediaIndex], [4, 0]);
+  await sheet.act(async () => sheet.now().reset());
+  assert.equal(sheet.now().pickCount, 0, 'reset starts the count again');
   await sheet.unmount();
 });
 

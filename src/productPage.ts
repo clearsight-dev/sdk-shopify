@@ -203,6 +203,26 @@ export function initialMediaIndex(media: ProductMedia[] | null | undefined, pref
   return i >= 0 ? i : 0;
 }
 
+/**
+ * The gallery slide showing an image (a variant's photo), or null when none does (0.14.0). Matched by
+ * the image's file, whatever size either address asks for: the SDK sizes the gallery's stills
+ * (`photo_1080x.jpg`) and a variant's photo separately (`photo.jpg?width=600`), and Shopify adds `?v=`.
+ * Only still images are looked at.
+ */
+export function mediaIndexOf(media: ProductMedia[] | null | undefined, imageUrl: string | null | undefined): number | null {
+  const wanted = imageFile(imageUrl);
+  if (!wanted) return null;
+  const index = (media ?? []).findIndex((item) => item.kind === 'image' && imageFile(item.posterUrl) === wanted);
+  return index >= 0 ? index : null;
+}
+
+/** An image's file, without its query and Shopify's size suffix: `…/files/p.jpg` for `…/files/p_1080x.jpg?v=1`. */
+function imageFile(url: string | null | undefined): string | null {
+  if (!url) return null;
+  const path = url.split(/[?#]/)[0] ?? '';
+  return path.replace(SIZE_SUFFIX, '').toLowerCase() || null;
+}
+
 /** The first still, for a thumbnail. Videos sort first, so `media[0]` is often a video frame. */
 export function firstImageUrl(product: Pick<ProductLike, 'media' | 'featuredImage'> | null | undefined): string | null {
   if (!product) return null;
