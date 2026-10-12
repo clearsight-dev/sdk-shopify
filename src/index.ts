@@ -75,6 +75,22 @@ export {
   type DescriptionBlock,
 } from './productPage';
 export {
+  cartLineFacts,
+  increaseAddsLine,
+  cartRefreshDelays,
+  hasLapsedHoldIn,
+  orderCartLines,
+  canIncreaseLine,
+  preorderAmounts,
+  amountChargedWhenShipped,
+  cartAmountsDueNow,
+  type CartExtension,
+  type CartLineFacts,
+  type CartLinePrize,
+  type CartLineOrder,
+  type CartAmountsDueNow,
+} from './cartPage';
+export {
   ATTRIBUTION_ATTRIBUTE_KEY,
   parseAttribution,
   serializeAttribution,
@@ -222,6 +238,10 @@ export {
   type LatestOrderSince,
   useAppDiscountCode,
   type UseAppDiscountCodeOptions,
+  useCartPage,
+  type UseCartPageOptions,
+  type CartPage,
+  type CartPageLine,
   type ShopifyProviderProps,
   type ShopifyEvent,
   type ShopifyEventType,

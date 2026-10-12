@@ -1,5 +1,30 @@
 # Changelog
 
+## 0.14.0 (2026-10-12)
+
+### New: `useCartPage`, and `cartExtensions` so other SDKs add to the cart
+
+A whole cart page from the SDK, in the style of `useProductPage`, moved from amore-v2's `useCartPage`
+with its tests. An app can use it as it is, or write its own cart hook from the same pieces.
+
+- **`useCartPage({ lineOrder, appDiscountCode, onError })`**: `status` (`loading`, `empty`, `ready`),
+  `lines` (`CartPageLine`: the line, `unitPrice`, `canIncrease`, `preOrder` amounts, `busy`, and the
+  facts below), `amounts`, `justAddedLineId`, `increase`/`decrease`/`remove`, `note.save`,
+  `checkout.start()`/`starting`, `viewed()`, `refresh`. No words, formatting or navigation.
+- **`ShopifyProvider cartExtensions`** (`CartExtension`): what other SDKs know about a line
+  (`holdExpiresAt`, `prize`, `isServiceLine`), whether + adds a new line, when to read the cart again,
+  and whether a reservation ran out. Cart Hold's `cartHoldExtension()` and live selling's
+  `giveawayPrizeExtension()` implement it; an app can add its own. A throwing extension is skipped
+  with a warning.
+- **`useCheckout().prepare()`** asks the extensions about a lapsed reservation when the caller passes no
+  `hasLapsedHold`, so every checkout entry waits for one.
+- **Two events**: `cart:viewed` (`viewed()`) and `checkout:started` (`checkout.start()`, with the cart and
+  `shows`, the live shows and replays it holds units from). sdk-analytics-core 0.3.1 reports them.
+- **The rules, without React**: `cartLineFacts`, `increaseAddsLine`, `cartRefreshDelays`,
+  `hasLapsedHoldIn`, `orderCartLines`, `canIncreaseLine`, `preorderAmounts`, `amountChargedWhenShipped`,
+  `cartAmountsDueNow` (`src/cartPage.ts`).
+- Tests: `test/cart-page.test.mjs` (23), `test/cart-page-hook.test.mjs` (7).
+
 ## 0.13.1 (2026-10-12)
 
 ### Fix: an add Shopify clamped to nothing no longer reads as added

@@ -41,6 +41,7 @@ export {
   type LatestOrderSince,
 } from "./useOrders";
 export { useAppDiscountCode, type UseAppDiscountCodeOptions } from "./useAppDiscountCode";
+export { useCartPage, type UseCartPageOptions, type CartPage, type CartPageLine } from "./useCartPage";
 export {
   useTileCredit,
   type UseTileCreditOptions,

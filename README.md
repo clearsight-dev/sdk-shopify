@@ -438,6 +438,60 @@ the guard gets the rest back through `onReleased` (`reason: 'rejected'`).
 (0 for one a guard vetoed). One `cart:stockLimit` for the batch, none when `quiet`. `addLines` returns
 its cart, and now `null` when nothing landed, a batch clamped to nothing included.
 
+## Cart page: `useCartPage`
+
+Everything a cart page decides, in one hook (0.14.0). Other SDKs add what they know about the lines
+through the provider's `cartExtensions`; the screen keeps only what is the app's: its components, the
+money format, navigation and toasts.
+
+```tsx
+import { cartHoldExtension } from '@tiledev/sdk-apptile-cart-hold';
+import { giveawayPrizeExtension } from '@tiledev/sdk-apptile-live-selling';
+
+// Once, as a module constant so the list keeps its identity.
+const CART_EXTENSIONS = [cartHoldExtension(), giveawayPrizeExtension({ keys: ['_isGiveawayItem'] })];
+
+<ShopifyProvider config={config} cartGuard={cartHold.guard} cartExtensions={CART_EXTENSIONS}>…</ShopifyProvider>
+
+const page = useCartPage({ lineOrder: 'oldestFirst', appDiscountCode, onError });
+
+page.status;                  // 'loading' | 'empty' | 'ready'
+page.lines;                   // CartPageLine[]: { line, quantity, unitPrice, canIncrease, preOrder, busy,
+                              //   holdExpiresAt, prize, isServiceLine }
+page.amounts;                 // { subtotalNow, orderDiscount, orderDiscountCodes, storeCredit, totalNow }: Money
+page.increase(id);            // a held line: adds a new line, named in page.justAddedLineId
+page.decrease(id);            // at 1, removes the line
+page.note.save(text);
+await page.checkout.start();  // waits for the note, reports checkout:started, then prepare()
+page.viewed();                // on each visit: reports cart:viewed
+```
+
+- **Line facts** come from the extensions (`cartLineFacts`): a reservation's expiry (Cart Hold), a
+  giveaway prize and its price (live selling), a service line (an app's own, e.g. a protection fee). A
+  prize or service line never shows a reservation.
+- **+ adds a new line** where an extension says so (Cart Hold: a unit with its own reservation clock);
+  a pre-order always grows in place. − at 1 removes the line.
+- **The cart is read again** when an extension asks (Cart Hold: after a reservation runs out, so the
+  swept line goes).
+- **`amounts`**: the subtotal less what pre-order lines leave until they ship; the whole cart's
+  discounts (not one off shipping) and the codes behind them; the store credit's gift cards; the total,
+  before tax, never below 0. Money values: the app formats them.
+- **Checkout**: `useCheckout().prepare()` asks the extensions about a lapsed reservation whenever its
+  caller doesn't pass `hasLapsedHold`, so the product page's and the cart's checkouts both wait for it.
+
+**A cart extension** (`CartExtension`, all optional, never throwing; one that throws is skipped):
+
+```ts
+const redo: CartExtension = {
+  name: 'redo',
+  lineFacts: (line) => (line.product?.handle === 'redo-protection' ? { isServiceLine: true } : {}),
+};
+```
+
+**Your own cart hook**: write it from the same pieces when the page needs other rules: `useCart`,
+`useCheckout`, `cartLineFacts`, `orderCartLines`, `canIncreaseLine`, `preorderAmounts`,
+`cartAmountsDueNow`, `increaseAddsLine`, `cartRefreshDelays`.
+
 ## Alerts & Toasts
 
 The editor's Settings panel configures the copy for 14 shopper-facing alerts. The

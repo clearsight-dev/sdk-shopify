@@ -12,7 +12,8 @@ import { shopify } from "../shopify";
 import { isConfigured, setConfig } from "../client";
 import { addGiftCardsKeepingBuyer } from "../cart";
 import { prepareCheckout, type CheckoutPreparation, type PrepareCheckoutOptions } from "../checkout";
-import type { AttributionSource } from "../attribution";
+import { showsInCart, type AttributionSource, type ShowsInCart } from "../attribution";
+import { hasLapsedHoldIn, type CartExtension } from "../cartPage";
 import { createAttributionRecorder } from "./attributionRecorder";
 import { CHECKOUT_STARTED_KEY, createCartRecovery, type CartRecovery } from "./cartRecovery";
 import {
@@ -331,7 +332,15 @@ interface ShopifyContextType {
   message:  (key: AlertMessageKey) => string;
   /** Every event the provider raises, for `useShopifyEvents` (0.10). */
   events: { subscribe: (listener: (event: ShopifyEvent) => void) => () => void };
+  /** For `useCartPage` (0.14.0): the provider's `cartExtensions`, and its two events. */
+  cartPage: {
+    extensions: readonly CartExtension[];
+    reportViewed: (cart: Cart | null) => void;
+    reportCheckoutStarted: (cart: Cart | null) => void;
+  };
 }
+
+const NO_CART_EXTENSIONS: readonly CartExtension[] = [];
 
 const ShopifyContext = createContext<ShopifyContextType | undefined>(undefined);
 
@@ -366,7 +375,11 @@ export type ShopifyEventType =
   /** A session Shopify stopped accepting, while the app was in use. No message: a host may route to sign-in. */
   | "auth:sessionExpired"
   | "checkout:orderPlaced"
-  | "checkout:paymentFailed";
+  | "checkout:paymentFailed"
+  /** The cart page came into view (`useCartPage().viewed()`, 0.14.0). Carries the cart. No message. */
+  | "cart:viewed"
+  /** Checkout was started from the cart page (`useCartPage().checkout.start()`, 0.14.0). Carries the cart and its `shows`. No message. */
+  | "checkout:started";
 
 export interface ShopifyEvent {
   type: ShopifyEventType;
@@ -405,6 +418,8 @@ export interface ShopifyEvent {
   customer?: Customer | null;
   /** How that session signed in (`useCustomer().sessionKind`), on `auth:loginSuccess` (0.10). */
   sessionKind?: AuthMethod | null;
+  /** The live shows and replays the cart holds units from (`showsInCart`), on `checkout:started` (0.14.0). */
+  shows?: ShowsInCart;
 }
 
 /** One cart line a write changed, on `ShopifyEvent.changedLines`. */
@@ -425,6 +440,7 @@ interface EventDetails {
   productId?: string;
   recovery?: CartRecovery;
   clamped?: CartAddOutcome[];
+  shows?: ShowsInCart;
 }
 
 /**
@@ -546,6 +562,13 @@ export interface ShopifyProviderProps {
    * the cart. New carts get the tags for `keepDays`; a cart that already has them keeps them after that.
    */
   linkTags?: LinkTagOptions;
+  /**
+   * What other SDKs know about cart lines, for `useCartPage` (0.14.0): Cart Hold's
+   * `cartHoldExtension()` (reservations), live selling's `giveawayPrizeExtension()` (prizes), or an
+   * app's own. Pass a list that keeps its identity (a module constant). `useCheckout().prepare` also
+   * asks them about a reservation that ran out when its caller doesn't say. See `CartExtension`.
+   */
+  cartExtensions?: readonly CartExtension[];
 }
 
 function defaultStorage(): WishlistStorageAdapter | null {
@@ -574,6 +597,7 @@ export function ShopifyProvider({
   storeCredit,
   attribution,
   linkTags,
+  cartExtensions = NO_CART_EXTENSIONS,
 }: ShopifyProviderProps) {
   const [ready, setReady]           = useState(false);
   const [error, setError]           = useState<string | null>(null);
@@ -634,6 +658,7 @@ export function ShopifyProvider({
       ...(details?.productId ? { productId: details.productId } : {}),
       ...(details?.recovery ? { recovery: details.recovery } : {}),
       ...(details?.clamped ? { clamped: details.clamped } : {}),
+      ...(details?.shows ? { shows: details.shows } : {}),
       ...(signedIn ? { customer: signedIn.customer, sessionKind: signedIn.kind } : {}),
     };
     if (listener) {
@@ -1664,7 +1689,24 @@ export function ShopifyProvider({
         const tagged = await syncLinkTags();
         return fixed && tagged;
       },
-    }, options), [cartRefresh, cartSetBuyerIdentity, cartFlushAttribution, cartEnsureAttributes, syncLinkTags, checkoutStarted, sessionState.kind, sessionState.customer?.email, session]);
+    }, {
+      ...options,
+      // The cart extensions answer when the caller doesn't (0.14.0), so every checkout entry waits for a
+      // reservation that ran out, whether or not it knows about Cart Hold.
+      hasLapsedHold: options?.hasLapsedHold ?? (cartExtensions.length > 0 ? (lines) => hasLapsedHoldIn(lines, cartExtensions) : undefined),
+    }), [cartRefresh, cartSetBuyerIdentity, cartFlushAttribution, cartEnsureAttributes, syncLinkTags, checkoutStarted, sessionState.kind, sessionState.customer?.email, session, cartExtensions]);
+
+  // useCartPage's two events (0.14.0): the analytics SDK reports them (view cart; initiate checkout).
+  const reportCartViewed = useCallback((viewedCart: Cart | null) => {
+    emit("cart:viewed", viewedCart ? { cart: viewedCart } : undefined);
+  }, [emit]);
+  const reportCartCheckoutStarted = useCallback((startedCart: Cart | null) => {
+    emit("checkout:started", startedCart ? { cart: startedCart, shows: showsInCart(startedCart) } : { shows: showsInCart(null) });
+  }, [emit]);
+  const cartPage = useMemo(
+    () => ({ extensions: cartExtensions, reportViewed: reportCartViewed, reportCheckoutStarted: reportCartCheckoutStarted }),
+    [cartExtensions, reportCartViewed, reportCartCheckoutStarted],
+  );
 
   const authMethod: AuthMethod = auth?.method ?? "password";
   // By its fields, so a host passing a fresh object each render doesn't rebuild the context.
@@ -1746,6 +1788,7 @@ export function ShopifyProvider({
       reportPaymentFailed: checkoutPaymentFailed,
     },
     storeCredit: storeCreditOptions,
+    cartPage,
   }), [
     ready, error, events,
     // A new policy changes `cart.maxLineItems`, so the memo must see it.
@@ -1755,6 +1798,7 @@ export function ShopifyProvider({
     wtItems, wtIds, wtHas, wtAdd, wtRemove, wtRefresh,
     sessionState, session, authMethod, storeCreditOptions,
     checkoutStarted, checkoutOrderPlaced, checkoutPaymentFailed, checkoutPrepare,
+    cartPage,
   ]);
 
   return <ShopifyContext.Provider value={value}>{children}</ShopifyContext.Provider>;
