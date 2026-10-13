@@ -265,9 +265,13 @@ let customer = null;
  * Stands in for a screen: it refreshes whenever the shopper is signed in, the way the order screens
  * refresh on focus, so a double read on mount would show up here.
  */
+/** Every `onBoughtAgain` call, and every event the provider raised (0.15.0). */
+const boughtAgain = [];
+const events = [];
+const eventsOfType = (prefix) => events.filter((event) => event.type.startsWith(prefix));
 function Probe({ orderId, pageSize }) {
   list = useOrders(pageSize ? { pageSize } : undefined);
-  one = useOrder(orderId);
+  one = useOrder(orderId, { onBoughtAgain: (result) => boughtAgain.push(result) });
   cart = useCart();
   customer = useCustomer();
   const { loggedIn } = customer;
@@ -285,6 +289,8 @@ function Probe({ orderId, pageSize }) {
 let root = null;
 /** The provider's `cartGuard` for the next `open`; none unless a section sets one. */
 let cartGuard;
+/** The provider's `cartExtensions` for the next `open` (0.15.0). */
+let cartExtensions;
 const settle = (ms = 30) => runAct(async () => { await new Promise((r) => setTimeout(r, ms)); });
 async function open(kind, props = {}) {
   if (root) await runAct(async () => { root.unmount(); });
@@ -302,7 +308,7 @@ async function render(auth, props) {
   await runAct(async () => {
     root.render(React.createElement(
       ShopifyProvider,
-      { config: { storeDomain: 'shop.myshopify.com', storefrontAccessToken: 't', apiVersion: '2026-07' }, auth, cartGuard },
+      { config: { storeDomain: 'shop.myshopify.com', storefrontAccessToken: 't', apiVersion: '2026-07' }, auth, cartGuard, cartExtensions, onEvent: (event) => events.push(event) },
       React.createElement(Probe, props),
     ));
   });
@@ -320,9 +326,11 @@ await t.check('empty, not loading, no error, and nothing asked of Shopify', asyn
   assert.equal(one.order, null);
   assert.equal(one.loading, false);
   assert.equal(one.notFound, false);
+  assert.equal(one.status, 'none');
   await runAct(async () => { await list.refresh(); await one.refresh(); list.loadMore(); });
   assert.deepEqual(calls.filter((c) => /Order/.test(c.name)).map((c) => c.name), []);
 });
+await t.check('status: signedOut (0.15.0)', () => assert.equal(list.status, 'signedOut'));
 let nothing;
 await runAct(async () => { nothing = await one.buyAgain(); });
 await t.check('buyAgain with no order adds nothing', () => assert.deepEqual(nothing, { added: 0, skipped: 0 }));
@@ -339,6 +347,7 @@ await t.check('one read on mount, though the screen also refreshes as the sessio
 });
 await t.check('the first page, newest first, with hasMore', () => {
   assert.equal(list.loading, false);
+  assert.equal(list.status, 'ready');
   assert.equal(list.orders.length, 25);
   assert.equal(list.hasMore, true);
   assert.deepEqual(list.orders[0], {
@@ -404,6 +413,7 @@ await t.check('one read of the order, by id, from the Customer Account API', () 
   assert.deepEqual(last('OrderDetail').variables, { id: ACCOUNT_ORDER.id });
   assert.equal(one.loading, false);
   assert.equal(one.notFound, false);
+  assert.equal(one.status, 'ready');
 });
 await t.check('the summary fields, as the list has them', () => {
   const o = one.order;
@@ -431,6 +441,8 @@ await t.check('totals: subtotal before discounts, the discount the gap to Shopif
 });
 
 let bought;
+events.length = 0;
+boughtAgain.length = 0;
 await runAct(async () => { bought = await one.buyAgain(); });
 await settle();
 await t.check('buyAgain: a gone variant and one not for sale skipped, a quantity over the stock cut to it', () => {
@@ -440,18 +452,37 @@ await t.check('buyAgain: a gone variant and one not for sale skipped, a quantity
   assert.equal(count('CartLinesAdd'), 1);
   assert.equal(cart.cart.totalQuantity, 2);
 });
+await t.check('one summary, both counts in it, and onBoughtAgain told (0.15.0)', () => {
+  const [summary, ...more] = eventsOfType('orders:');
+  assert.equal(more.length, 0);
+  assert.equal(summary.type, 'orders:boughtAgainPartly');
+  assert.equal(summary.message, 'Added 2 to your cart. 2 not available right now.');
+  assert.equal(summary.severity, 'success');
+  assert.deepEqual(boughtAgain, [{ added: 2, skipped: 2 }]);
+  assert.equal(one.buyingAgain, false);
+});
 await runAct(async () => { bought = await one.buyAgain(); });
 await t.check('again: the dress is now all in the cart, so only the scarf (untracked stock) goes in', () => {
   assert.deepEqual(bought, { added: 1, skipped: 3 });
   assert.deepEqual(last('CartLinesAdd').variables.lines, [{ merchandiseId: 'v-scarf', quantity: 1 }]);
 });
 failNext.add('VariantNodes');
+events.length = 0;
+boughtAgain.length = 0;
 await runAct(async () => { bought = await one.buyAgain(); });
 await t.check('offline, it doesn\'t throw: every line counts as skipped', () => assert.deepEqual(bought, { added: 0, skipped: 4 }));
+await t.check('nothing went in: orders:nothingToBuyAgain, an error, and onBoughtAgain not told (0.15.0)', () => {
+  const [summary] = eventsOfType('orders:');
+  assert.equal(summary.type, 'orders:nothingToBuyAgain');
+  assert.equal(summary.message, "These items aren't available right now.");
+  assert.equal(summary.severity, 'error');
+  assert.deepEqual(boughtAgain, []);
+});
 
 await open('shopify', { orderId: 'gid://shopify/Order/404' });
 await t.check('an id this shopper has no order for: notFound, no error', () => {
   assert.equal(one.order, null);
+  assert.equal(one.status, 'notFound');
   assert.equal(one.notFound, true);
   assert.equal(one.error, null);
   assert.equal(one.loading, false);
@@ -504,7 +535,11 @@ await t.check('the same shape as the Shopify sign-in\'s: unit price worked out, 
   assert.equal(o.totalTax, null);
   assert.deepEqual(o.totalRefunded, usd('55.0'));
 });
+events.length = 0;
 await runAct(async () => { bought = await one.buyAgain(); });
+await t.check('everything went in: orders:boughtAgain, "Added to cart" (0.15.0)', () => {
+  assert.deepEqual(eventsOfType('orders:').map((event) => [event.type, event.message]), [['orders:boughtAgain', 'Added to cart']]);
+});
 await t.check('buyAgain, everything in stock: all lines added at their quantities', () => {
   assert.deepEqual(bought, { added: 2, skipped: 0 });
   assert.deepEqual(last('CartLinesAdd').variables.lines, [{ merchandiseId: 'v-pants', quantity: 2 }, { merchandiseId: 'v-scarf', quantity: 1 }]);
@@ -546,6 +581,16 @@ await t.check('skipVariant (Cart Hold\'s held out): that line is skipped before 
   assert.deepEqual(guardAsked.map((asked) => asked.variantId), ['v-scarf']);
   assert.deepEqual(last('CartLinesAdd').variables.lines, [{ merchandiseId: 'v-scarf', quantity: 1 }]);
 });
+cartExtensions = [{ name: 'held', isHeldOut: (variantId) => variantId === 'v-pants' }];
+await open('password', { orderId: STOREFRONT_ORDER.id });
+guardAsked.length = 0;
+await runAct(async () => { bought = await one.buyAgain(); });
+await t.check('without skipVariant, the cart extensions say what is held out (0.15.0)', () => {
+  assert.deepEqual(bought, { added: 1, skipped: 1 });
+  assert.deepEqual(guardAsked.map((asked) => asked.variantId), ['v-scarf']);
+});
+cartExtensions = undefined;
+await open('password', { orderId: STOREFRONT_ORDER.id });
 cartGuard.beforeAdd = (input) => (input.merchandiseId === 'v-scarf' ? null : input);
 await runAct(async () => { bought = await one.buyAgain(); });
 await t.check('a line the guard refuses counts as skipped; the rest still goes in', () => {

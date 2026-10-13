@@ -29,7 +29,7 @@ import {
 import { wouldExceedLineLimit, maxLineItems } from "../cartPolicy";
 import { quantityInCart, withinCeiling } from "../productPage";
 import { isMissingCartError, isOutOfStockError, isUserErrorRejection } from "../errors";
-import { limitExceededMessage, message, setMessageResolver } from "../messages";
+import { fillMessage, limitExceededMessage, message, setMessageResolver } from "../messages";
 import { ShopifyError } from "../types";
 import { createCustomerSession, type CustomerSession, type ProfileChanges, type SessionState, type SignupInput } from "../auth/session";
 import type {
@@ -247,6 +247,8 @@ interface CustomerState {
   restoring: boolean;
   /** Which sign-in the app offers now: `auth.method`, `password` when unset. */
   method: AuthMethod;
+  /** Where Shopify's sign-in page opens: `auth.signInSurface`, `sheet` when unset (0.15.0). */
+  signInSurface: 'sheet' | 'webview';
   /** How the current session was signed in; null when signed out. */
   sessionKind: AuthMethod | null;
   /** Password sign-in. `false` on bad credentials, which emits `auth:loginFailed`. Everything else throws. */
@@ -305,6 +307,15 @@ interface CheckoutState {
   /** This hook's `prepare` is running (for a spinner on the button that started it). */
   preparing: boolean;
   /**
+   * `prepare`, then where the answer leads (0.15.0): `ready` calls `useCheckout`'s `onReady` (the app
+   * opens its checkout page), `lapsedHold` its `onLapsedHold` (the app shows the cart). `empty` raises
+   * `checkout:reservationExpired` and `failed` `checkout:couldNotStart`, whose alerts say so. Resolves
+   * the answer. Never throws: an `onReady` that throws counts as `failed`.
+   */
+  start: (options?: PrepareCheckoutOptions) => Promise<CheckoutPreparation>;
+  /** `start` for a cart some other caller prepared (`useCartPage().checkout.start()`). */
+  follow: (preparation: Promise<CheckoutPreparation> | CheckoutPreparation) => Promise<CheckoutPreparation>;
+  /**
    * Call as checkout opens for the shared cart. A checked-out cart reads back null exactly like an
    * expired one, so without this a missed `reportOrderPlaced` would refill the cart on next launch
    * with what was just bought. Any later add, update or remove clears it.
@@ -323,15 +334,28 @@ interface ShopifyContextType {
   wishlist: WishlistState;
   waitlist: WaitlistState;
   customer: CustomerState;
-  /** `useCheckout()` adds `preparing`, which is each caller's own. */
-  checkout: Omit<CheckoutState, "preparing">;
+  /** `useCheckout()` adds `preparing`, `start` and `follow`, which are each caller's own. */
+  checkout: Omit<CheckoutState, "preparing" | "start" | "follow">;
   /** The app's store-credit choice, read by `useStoreCredit`. */
   storeCredit: StoreCreditOptions | null;
   /** Resolved alert copy, for labelling UI that isn't a toast — e.g. the
-   *  empty-wishlist placeholder (`wishlist.empty`), which has no event. */
-  message:  (key: AlertMessageKey) => string;
+   *  empty-wishlist placeholder (`wishlist.empty`), which has no event. `fill`
+   *  fills its `{name}` placeholders (0.15.0). */
+  message:  (key: AlertMessageKey, fill?: Readonly<Record<string, string>>) => string;
   /** Every event the provider raises, for `useShopifyEvents` (0.10). */
   events: { subscribe: (listener: (event: ShopifyEvent) => void) => () => void };
+  /**
+   * Raises an event as the provider's own writes do, its alert's copy resolved and filled (0.15.0):
+   * how the SDK's page models (`useCheckout().start`, `useCheckoutPage`, `useOrder().buyAgain`,
+   * `useCartStoreCredit`, `useSignIn`) report what happened. Never throws.
+   */
+  report: (type: ShopifyEventType, details?: ReportDetails) => void;
+  /** The provider's `storage`, for the shopper's preferences on this phone (`useGridColumns`, 0.15.0). */
+  deviceStorage: WishlistStorageAdapter | null;
+  /** Where `useGridColumns` keeps its choice (`gridColumnsStorageKey`). */
+  gridColumnsStorageKey: string;
+  /** `useCollectionPage`'s page size unless it is given one (`productsPerPage`). */
+  productsPerPage: number | null;
   /** For `useCartPage` (0.14.0): the provider's `cartExtensions`, and its two events. */
   cartPage: {
     extensions: readonly CartExtension[];
@@ -341,6 +365,9 @@ interface ShopifyContextType {
 }
 
 const NO_CART_EXTENSIONS: readonly CartExtension[] = [];
+
+/** An alert's copy with its placeholders filled: the context's `message`. */
+const filledMessage = (key: AlertMessageKey, fill?: Readonly<Record<string, string>>): string => fillMessage(message(key), fill);
 
 const ShopifyContext = createContext<ShopifyContextType | undefined>(undefined);
 
@@ -379,7 +406,35 @@ export type ShopifyEventType =
   /** The cart page came into view (`useCartPage().viewed()`, 0.14.0). Carries the cart. No message. */
   | "cart:viewed"
   /** Checkout was started from the cart page (`useCartPage().checkout.start()`, 0.14.0). Carries the cart and its `shows`. No message. */
-  | "checkout:started";
+  | "checkout:started"
+  // 0.15.0: what the page models (`useCheckout().start`, `useCheckoutPage`, `useOrder().buyAgain`,
+  // `useCartStoreCredit`, `updateProfile`, `useSignIn`) report, so an app needs no words of its own.
+  /** `useCheckout().start()`: the cart came back empty (a reservation that ran out took its lines), or emptied under an open checkout (`useCheckoutPage`). */
+  | "checkout:reservationExpired"
+  /** `useCheckout().start()`: getting the cart ready failed. */
+  | "checkout:couldNotStart"
+  /**
+   * `useCheckoutPage` saw the order placed. Carries the cart as it was (before it is reset) and its
+   * `shows`; a checkout of its own link (an auction's wins) carries `source` instead. No message: the
+   * analytics SDK reports it (`purchase`), Cart Assist marks the cart checked out.
+   */
+  | "checkout:completed"
+  /** A quantity change the cart refused (the product page's stepper). */
+  | "cart:updateFailed"
+  /** `useOrder().buyAgain()`: every item went back in the cart. */
+  | "orders:boughtAgain"
+  /** Some did; the message counts both. */
+  | "orders:boughtAgainPartly"
+  /** None did. */
+  | "orders:nothingToBuyAgain"
+  /** `updateProfile` saved the changes. */
+  | "auth:profileUpdated"
+  /** A sign-in that couldn't reach the store (offline), when its caller asked for the alert. */
+  | "auth:couldNotReachStore"
+  /** Store credit went on the cart; the message says what it takes off. */
+  | "storeCredit:applied"
+  /** Store credit came off the cart. */
+  | "storeCredit:removed";
 
 export interface ShopifyEvent {
   type: ShopifyEventType;
@@ -418,8 +473,10 @@ export interface ShopifyEvent {
   customer?: Customer | null;
   /** How that session signed in (`useCustomer().sessionKind`), on `auth:loginSuccess` (0.10). */
   sessionKind?: AuthMethod | null;
-  /** The live shows and replays the cart holds units from (`showsInCart`), on `checkout:started` (0.14.0). */
+  /** The live shows and replays the cart holds units from (`showsInCart`), on `checkout:started` (0.14.0) and `checkout:completed` (0.15.0). */
   shows?: ShowsInCart;
+  /** On `checkout:completed` for a checkout of its own link: what it was for (`auctionWins`), as its caller named it (0.15.0). */
+  source?: string;
 }
 
 /** One cart line a write changed, on `ShopifyEvent.changedLines`. */
@@ -432,6 +489,16 @@ export interface CartLineChange {
 
 export type { CartRecovery, CartRecoveryReason } from "./cartRecovery";
 
+/** What a page model attaches to an event it reports (`useShopify().report`, 0.15.0). */
+export interface ReportDetails {
+  error?: unknown;
+  cart?: Cart;
+  shows?: ShowsInCart;
+  source?: string;
+  /** Values for the message's `{name}` placeholders. */
+  fill?: Readonly<Record<string, string>>;
+}
+
 /** What `emit` attaches to an event besides its type. */
 interface EventDetails {
   error?: unknown;
@@ -441,6 +508,9 @@ interface EventDetails {
   recovery?: CartRecovery;
   clamped?: CartAddOutcome[];
   shows?: ShowsInCart;
+  source?: string;
+  /** Values for the message's `{name}` placeholders (`fillMessage`). */
+  fill?: Readonly<Record<string, string>>;
 }
 
 /**
@@ -491,6 +561,16 @@ const EVENT_MESSAGE: Partial<Record<ShopifyEventType, AlertMessageKey>> = {
   "auth:recoverSent": "auth.resetLinkSent",
   "checkout:orderPlaced": "checkout.orderPlaced",
   "checkout:paymentFailed": "checkout.paymentFailed",
+  "checkout:reservationExpired": "checkout.reservationExpired",
+  "checkout:couldNotStart": "checkout.couldNotStart",
+  "cart:updateFailed": "cart.updateFailed",
+  "orders:boughtAgain": "orders.boughtAgain",
+  "orders:boughtAgainPartly": "orders.boughtAgainPartly",
+  "orders:nothingToBuyAgain": "orders.nothingToBuyAgain",
+  "auth:profileUpdated": "auth.profileUpdated",
+  "auth:couldNotReachStore": "auth.couldNotReachStore",
+  "storeCredit:applied": "storeCredit.applied",
+  "storeCredit:removed": "storeCredit.removed",
 };
 
 const ERROR_EVENTS: ReadonlySet<ShopifyEventType> = new Set<ShopifyEventType>([
@@ -499,6 +579,11 @@ const ERROR_EVENTS: ReadonlySet<ShopifyEventType> = new Set<ShopifyEventType>([
   "cart:outOfStock",
   "auth:loginFailed",
   "checkout:paymentFailed",
+  "checkout:reservationExpired",
+  "checkout:couldNotStart",
+  "cart:updateFailed",
+  "orders:nothingToBuyAgain",
+  "auth:couldNotReachStore",
 ]);
 
 export interface ShopifyProviderProps {
@@ -569,6 +654,16 @@ export interface ShopifyProviderProps {
    * asks them about a reservation that ran out when its caller doesn't say. See `CartExtension`.
    */
   cartExtensions?: readonly CartExtension[];
+  /**
+   * Where `useGridColumns` keeps the shopper's products-per-row choice in `storage` (0.15.0). Default
+   * `shopify:grid-columns:v1`; an app that kept it elsewhere passes its own key.
+   */
+  gridColumnsStorageKey?: string;
+  /**
+   * Products per page on every `useCollectionPage` that isn't given its own (0.15.0): a store setting
+   * (amore-v2's "Products Loaded Per Page"). Rounded, 1–250; anything else is left out.
+   */
+  productsPerPage?: number | null;
 }
 
 function defaultStorage(): WishlistStorageAdapter | null {
@@ -598,7 +693,13 @@ export function ShopifyProvider({
   attribution,
   linkTags,
   cartExtensions = NO_CART_EXTENSIONS,
+  gridColumnsStorageKey = "shopify:grid-columns:v1",
+  productsPerPage,
 }: ShopifyProviderProps) {
+  const pageSizeSetting =
+    typeof productsPerPage === "number" && Number.isFinite(productsPerPage) && productsPerPage >= 1
+      ? Math.min(250, Math.round(productsPerPage))
+      : null;
   const [ready, setReady]           = useState(false);
   const [error, setError]           = useState<string | null>(null);
   const [cart, setCart]             = useState<Cart | null>(null);
@@ -649,7 +750,7 @@ export function ShopifyProvider({
             message:
               type === "cart:limitExceeded" && max !== null
                 ? limitExceededMessage(max)
-                : message(key),
+                : fillMessage(message(key), details?.fill),
           }
         : {}),
       ...(details?.error === undefined ? {} : { error: details.error }),
@@ -659,6 +760,7 @@ export function ShopifyProvider({
       ...(details?.recovery ? { recovery: details.recovery } : {}),
       ...(details?.clamped ? { clamped: details.clamped } : {}),
       ...(details?.shows ? { shows: details.shows } : {}),
+      ...(details?.source ? { source: details.source } : {}),
       ...(signedIn ? { customer: signedIn.customer, sessionKind: signedIn.kind } : {}),
     };
     if (listener) {
@@ -1709,6 +1811,13 @@ export function ShopifyProvider({
   );
 
   const authMethod: AuthMethod = auth?.method ?? "password";
+  // A save that worked says so (`auth:profileUpdated`, 0.15.0): production's sheet said nothing.
+  const sessionUpdateProfile = session.updateProfile;
+  const profileUpdate = useCallback(async (changes: ProfileChanges): Promise<boolean> => {
+    const saved = await sessionUpdateProfile(changes);
+    if (saved) emit("auth:profileUpdated");
+    return saved;
+  }, [sessionUpdateProfile, emit]);
   // By its fields, so a host passing a fresh object each render doesn't rebuild the context.
   const storeCreditOptions = useMemo<StoreCreditOptions | null>(
     () => (storeCredit ? { source: storeCredit.source, tileCreditBaseUrl: storeCredit.tileCreditBaseUrl } : null),
@@ -1717,8 +1826,12 @@ export function ShopifyProvider({
 
   const value = useMemo<ShopifyContextType>(() => ({
     ready, error,
-    message,
+    message: filledMessage,
     events,
+    report: emit,
+    deviceStorage: storageRef.current,
+    gridColumnsStorageKey,
+    productsPerPage: pageSizeSetting,
     cart: {
       cart, loading: cartLoading, itemCount: cart?.totalQuantity ?? 0,
       lineCount:          cart?.lines.length ?? 0,
@@ -1768,13 +1881,14 @@ export function ShopifyProvider({
       loading:     sessionState.loading,
       restoring:   sessionState.restoring,
       method:      authMethod,
+      signInSurface: auth?.signInSurface === "webview" ? "webview" : "sheet",
       sessionKind: sessionState.kind,
       login:           session.login,
       signup:          session.signup,
       logout:          session.logout,
       recoverPassword: session.recoverPassword,
       refresh:         session.refresh,
-      updateProfile:   session.updateProfile,
+      updateProfile:   profileUpdate,
       signIn:          session.signIn,
       startSignIn:     session.startSignIn,
       getAccessToken:  session.getAccessToken,
@@ -1790,13 +1904,13 @@ export function ShopifyProvider({
     storeCredit: storeCreditOptions,
     cartPage,
   }), [
-    ready, error, events,
+    ready, error, events, emit, storage, gridColumnsStorageKey, pageSizeSetting,
     // A new policy changes `cart.maxLineItems`, so the memo must see it.
     resolvedPolicy,
     cart, cartLoading, cartAddLine, cartAddLines, cartAddLinesDetailed, cartUpdateLine, cartRemoveLine, cartApplyDiscounts, cartUpdateNote, cartSetBuyerIdentity, cartAddGiftCardCodes, cartRemoveGiftCards, cartRefresh, cartAdopt, cartReset, cartFlushAttribution, cartEnsureAttributes, saveLinkTags,
     wlItems, wlIds, wlHas, wlAdd, wlRemove, wlToggle, wlClear, wlRefresh,
     wtItems, wtIds, wtHas, wtAdd, wtRemove, wtRefresh,
-    sessionState, session, authMethod, storeCreditOptions,
+    sessionState, session, authMethod, auth?.signInSurface, profileUpdate, storeCreditOptions,
     checkoutStarted, checkoutOrderPlaced, checkoutPaymentFailed, checkoutPrepare,
     cartPage,
   ]);
@@ -1828,16 +1942,36 @@ export function useCustomer(): CustomerState {
 }
 
 /**
- * Gets the cart ready before checkout opens (`prepare`, with this caller's own `preparing`), and
- * reports a hosted-checkout outcome so the two Checkout alerts can fire.
+ * Where a checkout goes once the cart is ready (0.15.0), for `useCheckout(outcomes).start()`: the app's
+ * routes. The SDK never navigates, and the two refusals are its own alerts.
  */
-export function useCheckout(): CheckoutState {
-  const checkout = useShopify().checkout;
+export interface CheckoutOutcomes {
+  /** The cart is ready: open the checkout page. */
+  onReady?: () => void;
+  /** A line's reservation ran out (`lapsedHold`): show the cart, which explains it. */
+  onLapsedHold?: () => void;
+}
+
+/**
+ * Gets the cart ready before checkout opens (`prepare`, with this caller's own `preparing`), and
+ * reports a hosted-checkout outcome so the two Checkout alerts can fire. With `outcomes` (0.15.0),
+ * `start()` also goes where the answer leads:
+ *
+ * ```tsx
+ * const checkout = useCheckout({ onReady: () => nav.navigate("Checkout"), onLapsedHold: () => nav.navigate("Cart") });
+ * <Button onPress={() => void checkout.start()} busy={checkout.preparing} />
+ * ```
+ */
+export function useCheckout(outcomes: CheckoutOutcomes = {}): CheckoutState {
+  const { checkout, report } = useShopify();
   // Each caller's own, so only the button that started it shows a spinner.
   const [preparing, setPreparing] = useState(false);
   // Read when called, so `prepare` keeps one identity while the cart changes.
   const latestPrepare = useRef(checkout.prepare);
   latestPrepare.current = checkout.prepare;
+  // Read when the answer comes, so routes written inline each render are fine.
+  const latestOutcomes = useRef(outcomes);
+  latestOutcomes.current = outcomes;
   const prepare = useCallback(async (options?: PrepareCheckoutOptions): Promise<CheckoutPreparation> => {
     setPreparing(true);
     try {
@@ -1846,7 +1980,21 @@ export function useCheckout(): CheckoutState {
       setPreparing(false);
     }
   }, []);
-  return useMemo(() => ({ ...checkout, prepare, preparing }), [checkout, prepare, preparing]);
+  const follow = useCallback(async (preparation: Promise<CheckoutPreparation> | CheckoutPreparation): Promise<CheckoutPreparation> => {
+    const answer = await preparation;
+    try {
+      if (answer === "ready") latestOutcomes.current.onReady?.();
+      if (answer === "lapsedHold") latestOutcomes.current.onLapsedHold?.();
+    } catch (routeError) {
+      report("checkout:couldNotStart", { error: routeError });
+      return "failed";
+    }
+    if (answer === "empty") report("checkout:reservationExpired");
+    if (answer === "failed") report("checkout:couldNotStart");
+    return answer;
+  }, [report]);
+  const start = useCallback((options?: PrepareCheckoutOptions) => follow(prepare(options)), [follow, prepare]);
+  return useMemo(() => ({ ...checkout, prepare, preparing, start, follow }), [checkout, prepare, preparing, start, follow]);
 }
 
 /**
@@ -1867,7 +2015,7 @@ export function useShopifyEvents(listener: (event: ShopifyEvent) => void): void 
  * Resolved alert copy, for UI that isn't a toast — the empty-wishlist
  * placeholder (`wishlist.empty`) is configurable but has no event.
  */
-export function useShopifyMessage(): (key: AlertMessageKey) => string {
+export function useShopifyMessage(): (key: AlertMessageKey, fill?: Readonly<Record<string, string>>) => string {
   return useShopify().message;
 }
 

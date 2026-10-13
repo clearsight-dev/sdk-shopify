@@ -1,5 +1,85 @@
 # Changelog
 
+## 0.15.0 (2026-10-13)
+
+### New: a page model for every page, so an app's screens need no hooks of their own
+
+amore-v2's page hooks, moved here with their rules and tests (decided 2026-10-13, Head of Engineering:
+"34 hooks are tooo much"; screens call these and pass their fields to the tiles). Each is headless: no
+words of its own, no formatting, no navigation. An app with other rules builds its own from the same
+exported pieces.
+
+- **Checkout**: `useCheckout({ onReady, onLapsedHold })` adds `start()` (prepare, then where the answer
+  leads) and `follow(preparation)` (for `useCartPage().checkout.start()`). An empty cart raises
+  `checkout:reservationExpired`, a failure `checkout:couldNotStart`.
+- **`useCheckoutPage({ checkoutUrl, source, onOrderPlaced })`**: the web view's `url` (null once the cart
+  emptied), `orderPlaced()` (once: `checkout:completed` with the cart as placed and its `shows`, or a link's
+  `source`; then `onOrderPlaced`; then `reportOrderPlaced`, for the cart's own checkout only), and
+  `checkout:reservationExpired` when the cart empties under an open checkout.
+- **`useOrderConfirmation(checkoutOpenedAt)`**: the new order's number and the confirmation email, signed
+  in only.
+- **Orders**: `useOrders()` adds `status` (`signedOut`, `loading`, `failed`, `empty`, `ready`), `refreshing`
+  with `pullToRefresh()`, and `viewed()`. `useOrder(id, { onBoughtAgain })` adds `status` (`ready`, `loading`,
+  `notFound`, `failed`, `none`), `buyingAgain` and `viewed()`; `buyAgain()` raises one summary (`orders:boughtAgain`, `orders:boughtAgainPartly` with both
+  counts, `orders:nothingToBuyAgain`), calls `onBoughtAgain` once anything went in, and skips a size the
+  cart extensions say is held out when no `skipVariant` is given.
+- **`useStoreCreditPage()`**: the balance and the activity, read again on `viewed()` and a pull, with the
+  signed-out, loading and failed states as amore-v2's page drew them.
+- **`useCartStoreCredit()`** adds `blockedBy: 'preOrder'` (a cart holding a pre-order line: `apply` refuses),
+  `blockedMessage`, `errorMessage` (by the error's code), `suggestedAmount` and `viewed()`. Apply raises
+  `storeCredit:applied` ("$20.00 store credit applied", what the new card takes off) and Remove
+  `storeCredit:removed`. Pure: `suggestedStoreCreditAmount`, `cartHoldsPreOrder`.
+- **Buying on a product page**: `useProductPage().purchase` (`useProductPurchase`, also on its own):
+  `mode` (`purchaseModeFor`), `inCartCount` (a pre-order counts its plan's lines; never a prize),
+  `updating`, `add`, `preorder`, `increase`, `removeOne` (`cart:updateFailed` when refused) and
+  `joinWaitlist` (`onSignInNeeded` signed out, then `onJoinedWaitlist` with `added` and `waitingFor`).
+- **`useProductPage({ onAdded })`** hands over what the add was of, `onAdded(result, { product, variant })`
+  (`ProductPageAdd`), for a show's analytics or a live room's announcement.
+- **Held out**: `CartExtension.isHeldOut` / `subscribeHeldOut`, `isVariantHeldOut` and
+  `useVariantHeldOut(variantId)`, so Cart Hold's "every unit is in other carts" reaches the product page
+  and Buy again without the app wiring it.
+- **`useQuickAdd({ credit, onChooseVariant, onAdded })`**: a card's Add to Cart (one size for sale goes
+  straight in, its stock the ceiling; anything else `onChooseVariant`) and `addingProductIds`.
+- **`useCollectionPage({ handle, pageSize, imageTransform, onView })`**: `useCollectionProducts` with the
+  shopper's sort (`CollectionSortId`, `COLLECTION_SORTS`), `removeFilter`, and the view reported once per
+  collection. `ShopifyProvider productsPerPage` sets every page's size.
+- **`useSearchPage({ query, imageTransform, recommendedCollection, onSearched })`**: the field's term, the
+  search in the shopper's order (`SearchSortId`, `SEARCH_SORTS`), `hasResults`, `resultsShown`, `noMatch`
+  with the store's products under it, the start page's row, `removeFilter`, and the search reported once
+  per settled term.
+- **`useWaitlistPage({ isBlocked })`**: every size (its card's `action`), ready ones first, the Status and
+  Price filters (`WAITLIST_READY_FILTER`, `WAITLIST_WAITING_FILTER`, `filterWaitlist`, `readyFirst`,
+  `isWaitlistReady`), the counts and price range, `addToCart`/`preorder` (one card at a time),
+  `justAdded`/`dismissAdded`, `remove`, `retry`, `viewed()`.
+- **`useFavoritesPage()`**: the saved products, `status`, `retry`, and `viewed()` filling in any missing.
+- **Sign-in**: `useSignIn({ onOpenSignInPage, alertOnFailure })` chooses where it happens (`auth.method`,
+  and `auth.signInSurface`, new: `sheet` or `webview`); `useSignInPage({ method, onDone })` runs the
+  page's password form (remembering the email and names for the app's session) or Shopify's page in a web
+  view. A sign-in that can't reach the store raises `auth:couldNotReachStore` where asked.
+- **`useGridColumns(fallback)`**: the shopper's products per row, kept in the provider's `storage` under
+  `gridColumnsStorageKey` (new provider prop, default `shopify:grid-columns:v1`).
+- **`updateProfile`** raises `auth:profileUpdated` when the save worked.
+
+### New: alerts for the words those hooks had of their own
+
+22 alerts, each a Settings panel field under `settings.alerts` (`ALERT_SETTING_FIELDS`), with amore-v2's
+words as the defaults: `checkout.reservationExpired`, `checkout.couldNotStart`, `cart.updateFailed`,
+`orders.boughtAgain`, `orders.boughtAgainPartly`, `orders.nothingToBuyAgain`, `auth.profileUpdated`,
+`auth.couldNotReachStore`, and `storeCredit.*` (the two toasts, the pre-order note and each error code's
+words, at the paths amore-v2 already published them). A message's `{name}` placeholders are filled
+(`fillMessage`; `useShopifyMessage()(key, fill)`). `useShopify().report(type, details)` raises an event as
+the provider's own writes do, for the page models. `currencySymbolOf(currencyCode)` is new in the money
+helpers.
+
+### Changed
+
+- **`useCartStoreCredit().apply` refuses a cart holding a pre-order line**, and Apply and Remove now raise
+  their toasts' events: an app that toasted them itself shows them twice.
+- **`useOrder().buyAgain()` raises its summary**: an app that toasted its own shows two.
+
+Tests: `test/page-models.test.mjs` (35), 6 more in `test/orders.test.mjs`, 1 in `test/alerts.test.mjs`,
+1 in `test/auth-provider.test.mjs`.
+
 ## 0.14.0 (2026-10-12)
 
 ### New: `useCartPage`, and `cartExtensions` so other SDKs add to the cart

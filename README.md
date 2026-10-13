@@ -497,6 +497,46 @@ const redo: CartExtension = {
 `useCheckout`, `cartLineFacts`, `orderCartLines`, `canIncreaseLine`, `preorderAmounts`,
 `cartAmountsDueNow`, `increaseAddsLine`, `cartRefreshDelays`.
 
+## Every other page: page models (0.15.0)
+
+One hook per page, each in the style of `useProductPage` and `useCartPage`: what the page decides, as
+data and actions. A screen calls the model and passes its fields to its components, with its routes as
+one-line callbacks and its words from its own config. What happened that the shopper should hear about
+is an alert (Settings panel words, `settings.alerts.*`); where the shopper goes next is the app's, through
+an `on…` option. Each page's `viewed()` keeps one identity, for `useFocusEffect(page.viewed)`.
+
+| Page | Model | Routes it asks the app for |
+| --- | --- | --- |
+| Any checkout button | `useCheckout({ onReady, onLapsedHold }).start()` / `.follow(preparation)` | the checkout page; the cart |
+| Checkout | `useCheckoutPage({ checkoutUrl, source, onOrderPlaced })` → `url`, `orderPlaced()` | the thank-you page |
+| Order confirmed | `useOrderConfirmation(checkoutOpenedAt)` → `orderNumber`, `email` | |
+| Order history | `useOrders()` → `status`, `orders`, `loadMore`, `pullToRefresh`, `viewed` | |
+| One order | `useOrder(id, { onBoughtAgain })` → `order`, `buyAgain`, `buyingAgain`, `viewed` | the cart |
+| Store credit | `useStoreCreditPage()` → `balance`, `history`, states, `pullToRefresh`, `viewed` | |
+| Store credit on the cart | `useCartStoreCredit()` → `status`, `balance`, `applied`, `apply`, `remove`, `blockedBy`, `errorMessage`, `suggestedAmount`, `viewed` | |
+| Product page's buy bar | `useProductPage(handle, { onSignInNeeded, onJoinedWaitlist }).purchase` | sign-in; the waitlist |
+| A product card's Add to Cart | `useQuickAdd({ credit, onChooseVariant, onAdded })` | the variant page |
+| Collection | `useCollectionPage({ handle, onView })` → the feed, `sortId`, `removeFilter` | |
+| Search | `useSearchPage({ query, recommendedCollection, onSearched })` | |
+| Waitlist | `useWaitlistPage({ isBlocked })` → `items`, filters, counts, `addToCart`, `justAdded`, `remove`, `viewed` | |
+| Favourites | `useFavoritesPage()` → `status`, `products`, `retry`, `viewed` | |
+| Sign in, from anywhere | `useSignIn({ onOpenSignInPage })` → `start`, `signingIn`, `failed` | the sign-in page |
+| Sign-in page | `useSignInPage({ method, onDone })` → `password`, `shopify` | close the page |
+| Products per row | `useGridColumns(fallback)` → `columns`, `setColumns` | |
+
+```tsx
+// A collection screen: no hook of its own.
+const page = useCollectionPage({ handle, onView: (collection) => track('collectionView', collectionViewParams(collection)) });
+const quickAdd = useQuickAdd({ onChooseVariant: (product) => nav.navigate('VariantSelector', { handle: product.handle }) });
+const { columns, setColumns } = useGridColumns(grid.columns);
+<ProductGrid products={page.products} loading={page.loading} onEndReached={page.loadMore}
+  onQuickAdd={quickAdd.add} addingProductIds={quickAdd.addingProductIds} columns={columns} />
+```
+
+**Your own page**: every model is built from exported pieces (`useCollectionProducts`, `useSearch`,
+`useAddToCart`, `useProductPurchase`, `filterWaitlist`, `readyFirst`, `suggestedStoreCreditAmount`,
+`isVariantHeldOut`, …), so an app that needs other rules writes its own hook from them.
+
 ## Alerts & Toasts
 
 The editor's Settings panel configures the copy for 14 shopper-facing alerts. The

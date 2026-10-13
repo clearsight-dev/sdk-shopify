@@ -271,3 +271,76 @@ export function useStoreCreditHistory(options: UseStoreCreditHistoryOptions = {}
     [source, available, shown.entries, loading, shown.loadingMore, shown.cursor, shown.error, loadMore, refresh],
   );
 }
+
+export interface StoreCreditPage {
+  /** Signed out, and not reading a stored session: the page asks the shopper to sign in. */
+  signedOut: boolean;
+  /** The balance, once read. Null signed out, before the first read, and when it can't be read. */
+  balance: Money | null;
+  /** The balance is on its way, with none to show yet (a stored session being read counts). */
+  balanceLoading: boolean;
+  /** Signed in, and no balance to show: the read failed, or this shopper's source can't be read. */
+  balanceFailed: boolean;
+  /** The activity behind the balance (`useStoreCreditHistory`). */
+  history: StoreCreditHistoryState;
+  /** The activity can be shown: signed in with a source this shopper can read. */
+  historyShown: boolean;
+  /** The activity's first page is on its way (a stored session being read counts). */
+  historyLoading: boolean;
+  /** The activity's read failed with nothing to show. */
+  historyFailed: boolean;
+  /** A pull to refresh is running. */
+  refreshing: boolean;
+  /** Reads the balance and the activity again, with `refreshing` true meanwhile. */
+  pullToRefresh: () => void;
+  /** Call each time the page comes into view: reads both again when signed in. Keeps one identity. */
+  viewed: () => void;
+}
+
+/**
+ * A store-credit page (0.15.0, moved from amore-v2's `useStoreCreditPage`): the balance
+ * (`useStoreCredit`) and the activity behind it (`useStoreCreditHistory`), both read again each time
+ * the page shows (`viewed`; it stays in the stack, so a balance from the first visit goes stale) and
+ * on a pull. While a stored session is read, both say they're loading, so a returning shopper never
+ * sees the sign-in prompt first. A failed refresh keeps what is shown. A source this shopper can't read
+ * (Shopify's store credit for an email-and-password session) shows no activity and a balance that
+ * couldn't load.
+ */
+export function useStoreCreditPage(options: UseStoreCreditHistoryOptions = {}): StoreCreditPage {
+  const customer = useCustomer();
+  const credit = useStoreCredit();
+  const history = useStoreCreditHistory(options);
+  const { loggedIn, restoring } = customer;
+  const refreshCredit = credit.refresh;
+  const refreshHistory = history.refresh;
+  const loggedInRef = useRef(loggedIn);
+  loggedInRef.current = loggedIn;
+
+  const viewed = useCallback(() => {
+    if (!loggedInRef.current) return;
+    void refreshCredit();
+    void refreshHistory();
+  }, [refreshCredit, refreshHistory]);
+
+  const [refreshing, setRefreshing] = useState(false);
+  const pullToRefresh = useCallback(() => {
+    setRefreshing(true);
+    void Promise.all([refreshCredit(), refreshHistory()]).finally(() => setRefreshing(false));
+  }, [refreshCredit, refreshHistory]);
+
+  const signedOut = !loggedIn && !restoring;
+  const balance = credit.available ? credit.balance : null;
+  return {
+    signedOut,
+    balance,
+    balanceLoading: restoring || (credit.loading && !balance),
+    balanceFailed: loggedIn && !credit.loading && !balance && (!!credit.error || !credit.available),
+    history,
+    historyShown: !signedOut && !(loggedIn && !history.available),
+    historyLoading: restoring || history.loading,
+    historyFailed: !!history.error && history.entries.length === 0,
+    refreshing,
+    pullToRefresh,
+    viewed,
+  };
+}

@@ -95,7 +95,41 @@ export type AlertMessageKey =
   | 'auth.loggedOut'
   | 'auth.resetLinkSent'
   | 'checkout.orderPlaced'
-  | 'checkout.paymentFailed';
+  | 'checkout.paymentFailed'
+  // 0.15.0: what amore-v2's page hooks said in words of their own, now the SDK's alerts.
+  /** `useCheckout().start()`: the cart came back empty (a reservation that ran out took its lines). */
+  | 'checkout.reservationExpired'
+  /** `useCheckout().start()`: preparing the cart failed. */
+  | 'checkout.couldNotStart'
+  /** A quantity change the cart refused (the product page's stepper). */
+  | 'cart.updateFailed'
+  /** `useOrder().buyAgain()`: everything went back in the cart. */
+  | 'orders.boughtAgain'
+  /** Some of it did: `{added}` and `{skipped}` are counts. */
+  | 'orders.boughtAgainPartly'
+  /** None of it did. */
+  | 'orders.nothingToBuyAgain'
+  /** `updateProfile` saved the shopper's changes. */
+  | 'auth.profileUpdated'
+  /** A sign-in that couldn't reach the store (no connection). */
+  | 'auth.couldNotReachStore'
+  /** Store credit on the cart (`useCartStoreCredit`): the two toasts. `{amount}` is what the credit takes off. */
+  | 'storeCredit.applied'
+  | 'storeCredit.removed'
+  /** Why Apply is off: the cart holds a pre-order line. Shown on the panel, never a toast. */
+  | 'storeCredit.preOrder'
+  /** Each `TileCreditErrorCode`'s words, shown on the panel (never a toast). */
+  | 'storeCredit.unauthorized'
+  | 'storeCredit.forbidden'
+  | 'storeCredit.notFound'
+  | 'storeCredit.validation'
+  | 'storeCredit.insufficientBalance'
+  | 'storeCredit.conflict'
+  | 'storeCredit.rateLimited'
+  | 'storeCredit.shopifyUpstream'
+  | 'storeCredit.network'
+  | 'storeCredit.internal'
+  | 'storeCredit.cartRefused';
 
 export type AlertMessages = Partial<Record<AlertMessageKey, string>>;
 
@@ -653,6 +687,11 @@ export interface AuthOptions {
   openAuthSession?: OpenAuthSession;
   /** Required for `shopify`. Defaults to `crypto.getRandomValues` where the engine has it (web); Hermes doesn't. */
   random?: RandomBytes;
+  /**
+   * Where Shopify's sign-in page opens for `useSignIn` (0.15.0): `sheet` (default), the system browser
+   * sheet (`customer.signIn()`), or `webview`, a page of the app's own (`customer.startSignIn()`).
+   */
+  signInSurface?: 'sheet' | 'webview';
 }
 
 /**

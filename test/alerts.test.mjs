@@ -13,9 +13,19 @@ const ok = (label, fn) => { fn(); pass++; console.log('  ✓', label); };
 console.log('messages');
 ok('defaults cover every panel field', () => {
   const keys = Object.keys(M.DEFAULT_MESSAGES);
-  assert.equal(keys.length, 15);
+  // 15 panel alerts, and 22 more in 0.15.0 (the page models' words: checkout, orders, store credit, sign-in).
+  assert.equal(keys.length, 37);
   assert.equal(M.message('cart.added'), 'Product added to the Cart');
   assert.equal(M.message('waitlist.added'), 'Added to waitlist');
+});
+ok('a message with placeholders is filled; a name not given stays as written (0.15.0)', () => {
+  assert.equal(M.fillMessage(M.message('storeCredit.applied'), { amount: '$20.00' }), '$20.00 store credit applied');
+  assert.equal(
+    M.fillMessage(M.message('orders.boughtAgainPartly'), { added: '2', skipped: '1' }),
+    'Added 2 to your cart. 1 not available right now.',
+  );
+  assert.equal(M.fillMessage('{amount} off, {code}', { amount: '$5' }), '$5 off, {code}');
+  assert.equal(M.fillMessage('No placeholders', undefined), 'No placeholders');
 });
 ok('panel override wins', () => {
   M.setMessages({ 'cart.added': 'Added to bag' });

@@ -188,6 +188,13 @@ await t.check('updateProfile through the provider: the changed name sent, and th
   assert.equal(calls.filter((name) => name === 'CustomerNameUpdate').length, 1);
   assert.equal(api.customer.loading, false);
 });
+await t.check('a save that worked says so: auth:profileUpdated, "Profile updated" (0.15.0)', () => {
+  const [e] = take();
+  assert.equal(e.type, 'auth:profileUpdated');
+  assert.equal(e.messageKey, 'auth.profileUpdated');
+  assert.equal(e.message, 'Profile updated');
+  assert.equal(e.severity, 'success');
+});
 accountFirstName = 'Amber';
 
 await runAct(async () => { await api.customer.logout(); });

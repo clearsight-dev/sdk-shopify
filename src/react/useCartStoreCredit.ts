@@ -25,14 +25,28 @@
  *   Remove, and on `refresh()`.
  * - Failures never reject: `apply` and `remove` resolve false and set `error`, a `TileCreditError`
  *   whose `code` the app words. A 401 renews the token once and never signs the shopper out.
+ *
+ * What the cart's store-credit panel needs besides (0.15.0, moved from amore-v2's
+ * `useStoreCreditOnCart`, its rules as decided there):
+ * - **A pre-order line turns Apply off** (`blockedBy: 'preOrder'`): credit can't go on a cart that holds
+ *   one (old Amore's rule). `apply` refuses quietly; Remove still works.
+ * - **The words are the SDK's alerts** (`settings.alerts.storeCredit.*`, `useAlertSettings`):
+ *   `errorMessage` for `error`'s code, `blockedMessage` for the pre-order block. A cleared field keeps
+ *   the default, so an error always says something. The two toasts are events: `storeCredit:applied`
+ *   ("$20.00 store credit applied": what the new card takes off the cart) and `storeCredit:removed`.
+ * - **`suggestedAmount`**, what the amount sheet opens with: what the cart still owes (its subtotal,
+ *   less the gift cards already on it), no more than the balance (discount codes aren't taken off:
+ *   decided 2026-10-12, Head of Engineering).
+ * - **`viewed()`**: the balance is read again each time the cart comes into view (old Amore's ENG-610).
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { getCurrencyCode } from '../client';
 import { giftCardsEndingIn } from '../cart';
 import { STORE_CREDIT_QUERY, sumStoreCredit, type StoreCreditAccountNode } from '../auth/storeCredit';
+import { formatMoney } from '../money';
 import { centsToMoney, DEFAULT_TILE_CREDIT_BASE_URL } from '../tileCredit';
 import { ShopifyError, TileCreditError } from '../types';
-import type { AppliedGiftCard, Cart, CartStoreCreditStatus, Money, TileCreditErrorCode } from '../types';
+import type { AlertMessageKey, AppliedGiftCard, Cart, CartStoreCreditStatus, Money, TileCreditErrorCode } from '../types';
 import { onAppForeground } from './appForeground';
 import { useCart, useCustomer, useShopify } from './ShopifyProvider';
 import { useShopper } from './useOrders';
@@ -58,6 +72,50 @@ export interface CartStoreCreditState {
   remove: () => Promise<boolean>;
   /** Reads the balance again (a screen coming into view). Joins a read already on its way. Never rejects. */
   refresh: () => Promise<void>;
+  /** Why Apply is off, or null: `preOrder` while the cart holds a pre-order line (0.15.0). */
+  blockedBy: 'preOrder' | null;
+  /** `blockedBy` in words (`storeCredit.preOrder`), or null. */
+  blockedMessage: string | null;
+  /** `error` in words, by its code (`storeCredit.<code>`), or null. */
+  errorMessage: string | null;
+  /** What the amount sheet opens with (see above); null when that is nothing. */
+  suggestedAmount: Money | null;
+  /** Call each time the cart comes into view: reads the balance again. Keeps one identity. */
+  viewed: () => void;
+}
+
+/** Each error code's words. */
+const ERROR_MESSAGE: Record<TileCreditErrorCode, AlertMessageKey> = {
+  unauthorized: 'storeCredit.unauthorized',
+  forbidden: 'storeCredit.forbidden',
+  not_found: 'storeCredit.notFound',
+  validation: 'storeCredit.validation',
+  insufficient_balance: 'storeCredit.insufficientBalance',
+  conflict: 'storeCredit.conflict',
+  rate_limited: 'storeCredit.rateLimited',
+  shopify_upstream: 'storeCredit.shopifyUpstream',
+  network: 'storeCredit.network',
+  internal: 'storeCredit.internal',
+  cart_refused: 'storeCredit.cartRefused',
+};
+
+const centsOf = (money: Money | null | undefined) => Math.round((Number.parseFloat(money?.amount ?? '0') || 0) * 100);
+
+/** A pre-order line (a selling plan): store credit can't go on a cart while it holds one. */
+export function cartHoldsPreOrder(cart: Pick<Cart, 'lines'> | null | undefined): boolean {
+  return !!cart?.lines.some((line) => !!line.sellingPlanId);
+}
+
+/**
+ * What the amount sheet opens with: what the cart still owes (its subtotal, less the gift cards
+ * already on it), no more than `balance`. Null when that is nothing, or there is no cart.
+ */
+export function suggestedStoreCreditAmount(cart: Pick<Cart, 'cost' | 'appliedGiftCards'> | null | undefined, balance: Money | null): Money | null {
+  if (!cart) return null;
+  const owed = centsOf(cart.cost?.subtotalAmount) - (cart.appliedGiftCards ?? []).reduce((sum, card) => sum + centsOf(card.presentmentAmountUsed), 0);
+  const cents = Math.min(Math.max(owed, 0), balance ? centsOf(balance) : 0);
+  if (cents <= 0) return null;
+  return { amount: centsToMoney(cents), currencyCode: cart.cost?.subtotalAmount?.currencyCode ?? balance?.currencyCode ?? '' };
 }
 
 /** What is held for one shopper; anything held for another never shows. */
@@ -113,7 +171,7 @@ function totalUsed(cards: AppliedGiftCard[]): Money | null {
 }
 
 export function useCartStoreCredit(): CartStoreCreditState {
-  const { storeCredit } = useShopify();
+  const { storeCredit, report, message } = useShopify();
   const customer = useCustomer();
   const cartState = useCart();
   const source = storeCredit?.source ?? null;
@@ -240,6 +298,8 @@ export function useCartStoreCredit(): CartStoreCreditState {
   const apply = useCallback((amountCents: number): Promise<boolean> => {
     const forOwner = ownerRef.current;
     if (!forOwner || source !== 'tile') return Promise.resolve(false);
+    // Credit can't go on a cart holding a pre-order line: the panel says why, so nothing more is said.
+    if (cartHoldsPreOrder(cartRef.current.cart)) return Promise.resolve(false);
     return runOne('applying', forOwner, async () => {
       if (!Number.isSafeInteger(amountCents) || amountCents <= 0) {
         throw new TileCreditError('validation', 'The amount must be more than zero');
@@ -275,14 +335,17 @@ export function useCartStoreCredit(): CartStoreCreditState {
       attempt.current = null;
 
       // The new card disabled the app's earlier one; if that is still on the cart, it comes off.
-      const newCard = new Set(giftCardsEndingIn(onCart, [redeemed.last4]).map((card) => card.id));
+      const newCards = giftCardsEndingIn(onCart, [redeemed.last4]);
+      const newCard = new Set(newCards.map((card) => card.id));
       const stale = giftCardsEndingIn(onCart, earlierEndings).filter((card) => !newCard.has(card.id));
       if (stale.length) {
         await cartRef.current.removeGiftCards(stale.map((card) => card.id)).catch(() => undefined);
       }
+      // What the new card takes off this cart, as the cart now says.
+      report('storeCredit:applied', { fill: { amount: formatMoney(totalUsed(newCards)) } });
       return true;
     });
-  }, [source, baseUrl, runOne]);
+  }, [source, baseUrl, runOne, report]);
 
   const remove = useCallback((): Promise<boolean> => {
     const forOwner = ownerRef.current;
@@ -290,11 +353,15 @@ export function useCartStoreCredit(): CartStoreCreditState {
     return runOne('removing', forOwner, async () => {
       const endings = [mintedRef.current, heldRef.current.activeCardEnding].filter((ending): ending is string => !!ending);
       const ours = giftCardsEndingIn(cartRef.current.cart, endings);
-      if (ours.length === 0) return true;
-      await cartRef.current.removeGiftCards(ours.map((card) => card.id));
+      if (ours.length > 0) await cartRef.current.removeGiftCards(ours.map((card) => card.id));
+      report('storeCredit:removed');
       return true;
     });
-  }, [source, runOne]);
+  }, [source, runOne, report]);
+
+  const viewed = useCallback(() => {
+    void refresh();
+  }, [refresh]);
 
   const endings = [mintedEnding, held.activeCardEnding].filter((ending): ending is string => !!ending);
   const ourCards = source === 'tile' && owner ? giftCardsEndingIn(cartState.cart, endings) : [];
@@ -312,17 +379,30 @@ export function useCartStoreCredit(): CartStoreCreditState {
   else if (held.readError) status = 'error';
   else status = 'loading';
 
+  const shownError = owner ? error : null;
+  const blockedBy = cartHoldsPreOrder(cartState.cart) ? 'preOrder' : null;
+  const shownBalance = owner ? held.balance : null;
+  const suggestedAmount = useMemo(
+    () => suggestedStoreCreditAmount(cartState.cart, shownBalance),
+    [cartState.cart, shownBalance],
+  );
+
   return useMemo(
     () => ({
       source,
       status,
-      balance: owner ? held.balance : null,
+      balance: shownBalance,
       applied: status === 'hidden' ? null : applied,
-      error: owner ? error : null,
+      error: shownError,
       apply,
       remove,
       refresh,
+      blockedBy,
+      blockedMessage: blockedBy ? message('storeCredit.preOrder') : null,
+      errorMessage: shownError ? message(ERROR_MESSAGE[shownError.code] ?? 'storeCredit.internal') : null,
+      suggestedAmount,
+      viewed,
     }),
-    [source, status, owner, held.balance, applied, error, apply, remove, refresh],
+    [source, status, shownBalance, applied, shownError, apply, remove, refresh, blockedBy, message, suggestedAmount, viewed],
   );
 }

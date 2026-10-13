@@ -67,6 +67,16 @@ export function formatMoney(money: Money | null | undefined): string {
 }
 
 /**
+ * The shop's way of writing a currency with the number taken out: `$` for USD in a `${{amount}}` shop,
+ * `Rs.` for `Rs. {{amount}}` (0.15.0, from amore-v2's store-credit panel). For the sign beside a field
+ * where money is typed. Empty for no currency.
+ */
+export function currencySymbolOf(currencyCode: string | null | undefined): string {
+  if (!currencyCode) return '';
+  return formatMoney({ amount: '0.00', currencyCode }).replace(/[\d.,'\s]/g, '');
+}
+
+/**
  * An amount a shopper typed, in whole cents, or null when it isn't one. For a field where money is
  * typed, so the field and whoever acts on it read it the same way.
  *

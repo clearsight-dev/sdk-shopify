@@ -280,11 +280,12 @@ await check('customised: blocked rule, deferred description, starting variant, o
 
 await check('add to cart: lands, and the SDK-only ceiling field never reaches Shopify', async () => {
   const added = [];
-  const page = await mount(() => useProductPage('skirt', { onAdded: (r) => added.push(r.ok) }));
+  const page = await mount(() => useProductPage('skirt', { onAdded: (r, of) => added.push([r.ok, of.product?.handle, of.variant?.id]) }));
   let result;
   await page.act(async () => { result = await page.now().cart.add(); });
   assert.equal(result.ok, true);
-  assert.deepEqual(added, [true]);
+  // What the add was of, with it (0.15.0): the page's product and the chosen size.
+  assert.deepEqual(added, [[true, 'skirt', page.now().selection.variant.id]]);
   assert.equal(page.now().cart.inCart, 1);
   assert.ok(sentLines.length > 0 && sentLines.every((l) => !('maxQuantity' in l)), 'maxQuantity stripped before the write');
   await page.unmount();

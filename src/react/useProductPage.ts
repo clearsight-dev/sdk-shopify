@@ -38,8 +38,10 @@ import {
   type VariantPrice,
 } from '../productPage';
 import type { AttributionSource } from '../attribution';
-import type { CartLineAttribute, CartWriteResult, ImageTransform, Product, ProductMedia, ProductOption, ProductVariant } from '../types';
-import { useCart, useWishlist } from './ShopifyProvider';
+import { cartLineFacts, isVariantHeldOut } from '../cartPage';
+import { preorderPlanFor, purchaseModeFor, type PurchaseMode } from '../purchaseRules';
+import type { CartLine, CartLineAttribute, CartWriteResult, Customer, ImageTransform, Product, ProductMedia, ProductOption, ProductVariant } from '../types';
+import { useCart, useCustomer, useShopify, useWaitlist, useWishlist } from './ShopifyProvider';
 import { useProduct, type UseProductResult } from './useProduct';
 import {
   useProductRecommendations,
@@ -273,10 +275,98 @@ export function useAddToCart(variant: ProductVariant | null | undefined, options
 }
 
 // ---------------------------------------------------------------------------
+// useVariantHeldOut
+// ---------------------------------------------------------------------------
+
+/**
+ * Every unit of this variant is in other shoppers' carts right now, though Shopify still sells it: the
+ * provider's `cartExtensions` say so (Cart Hold's `cartHoldExtension({ client })`: refused as sold out
+ * within the last minute). Follows their answers as they change (0.15.0). False without such an extension.
+ */
+export function useVariantHeldOut(variantId: string | null | undefined): boolean {
+  const extensions = useShopify().cartPage.extensions;
+  const [, setChanges] = useState(0);
+  useEffect(() => {
+    const stops = extensions.map((extension) => {
+      try {
+        return extension.subscribeHeldOut?.(() => setChanges((count) => count + 1));
+      } catch (error) {
+        console.warn(`[cartExtensions] ${extension.name} failed`, error);
+        return undefined;
+      }
+    });
+    return () => stops.forEach((stop) => stop?.());
+  }, [extensions]);
+  return isVariantHeldOut(variantId, extensions);
+}
+
+// ---------------------------------------------------------------------------
 // useProductPage
 // ---------------------------------------------------------------------------
 
-export interface UseProductPageOptions extends UseVariantSelectionOptions, UseAddToCartOptions {
+/** What `ProductPage.purchase.joinWaitlist` did, for `onJoinedWaitlist`. */
+export interface JoinedWaitlist {
+  product: ProductLike;
+  variant: ProductVariant;
+  /** This tap added it; false when the shopper was already waiting on it. */
+  added: boolean;
+  /**
+   * What the shopper waits for: `otherCarts` for a size every unit of which is in other carts (it comes
+   * back when they let go), `restock` for any other (a pre-order's included: sold out at Shopify).
+   */
+  waitingFor: 'restock' | 'otherCarts';
+  /** Who joined. */
+  customer: Customer | null;
+}
+
+/**
+ * Buying the chosen size (0.15.0, moved from amore-v2's `useProductPurchase`): what a buy bar offers
+ * and what its buttons do.
+ */
+export interface ProductPurchase {
+  /**
+   * What the bar offers (`purchaseModeFor`): `blocked` (an auction) over `preorder` over `soldOut` over
+   * `heldInOtherCarts` (the provider's `cartExtensions`, `useVariantHeldOut`) over `allInCart` over `buy`.
+   */
+  mode: PurchaseMode;
+  /**
+   * The size's units in the cart that a stepper counts: for a pre-order, only its pre-order lines;
+   * never a giveaway prize (an extension's `prize`), whose unit wasn't bought.
+   */
+  inCartCount: number;
+  /** A − is running. */
+  updating: boolean;
+  /** Add to Cart: one of the size (refused past its stock, with the SDK's alert). */
+  add: () => void;
+  /** Preauthorize Now: one on the size's pre-order plan, so checkout authorises rather than takes the payment. */
+  preorder: () => void;
+  /** A stepper's +: one more on the plan for a pre-order, else `add`. */
+  increase: () => void;
+  /**
+   * A stepper's −: one off the size's last counted line (one added during a live show can sit on a line
+   * of its own); at 1 the line goes. A refusal raises `cart:updateFailed`.
+   */
+  removeOne: () => void;
+  /**
+   * Add to Waitlist / Notify Me. Signed out: `onSignInNeeded` (the shopper taps again once signed in).
+   * Signed in: adds the size to the waitlist unless it's already there (never a toggle: removing is the
+   * waitlist's own), then `onJoinedWaitlist`.
+   */
+  joinWaitlist: () => void;
+}
+
+/** What an add on a product page was of, for `UseProductPageOptions.onAdded` (0.15.0). */
+export interface ProductPageAdd {
+  product: ProductLike | null;
+  variant: ProductVariant | null;
+}
+
+export interface UseProductPageOptions extends UseVariantSelectionOptions, Omit<UseAddToCartOptions, 'onAdded'> {
+  /**
+   * An add that landed, with what it was of (0.15.0: a show's analytics, a live room's announcement, a
+   * "Success!" sheet). `onRefused` has every refusal.
+   */
+  onAdded?: (result: AddToCartResult, added: ProductPageAdd) => void;
   /** For every image of the product read (e.g. `{ maxWidth: 1080 }` for a full-width gallery). */
   imageTransform?: ImageTransform;
   onError?: (error: unknown, context: { at: string; handle: string }) => void;
@@ -299,7 +389,12 @@ export interface UseProductPageOptions extends UseVariantSelectionOptions, UseAd
    * `isBlocked` says can't be bought, unless `exclude` is given. Unset: nothing is read.
    */
   recommendations?: boolean | UseProductRecommendationsOptions;
+  /** `purchase.joinWaitlist` while signed out: the app starts its sign-in (0.15.0). */
+  onSignInNeeded?: () => void;
+  /** `purchase.joinWaitlist` is done: the app reports it and shows the waitlist (0.15.0). */
+  onJoinedWaitlist?: (joined: JoinedWaitlist) => void;
 }
+
 
 /**
  * - `loading`: nothing known yet. `available` / `unavailable`: the chosen variant can or can't be
@@ -333,6 +428,8 @@ export interface ProductPage extends Omit<UseProductResult, 'product' | 'preview
   shareUrl: string | null;
   /** "You may also like" (empty unless `recommendations` asked for them). */
   recommendations: ProductRecommendations;
+  /** Buying the chosen size: the bar's mode and its buttons (0.15.0). */
+  purchase: ProductPurchase;
 }
 
 export function useProductPage(handle: string | null | undefined, options: UseProductPageOptions = {}): ProductPage {
@@ -341,7 +438,15 @@ export function useProductPage(handle: string | null | undefined, options: UsePr
   const shown: ProductLike | null = product ?? preview ?? null;
 
   const selection = useVariantSelection(shown, { ...options, resetKey: options.resetKey !== undefined ? options.resetKey : (handle ?? null) });
-  const cart = useAddToCart(selection.variant, options);
+  // What an add was of, read when it lands: the callback is handed over before the page has them.
+  const addedOf = useRef<ProductPageAdd>({ product: null, variant: null });
+  addedOf.current = { product: shown, variant: selection.variant };
+  const onAddedRef = useRef(options.onAdded);
+  onAddedRef.current = options.onAdded;
+  const cart = useAddToCart(selection.variant, {
+    ...options,
+    onAdded: (result) => onAddedRef.current?.(result, addedOf.current),
+  });
   const wishlist = useWishlist();
 
   // Once per product, when the full product lands.
@@ -384,6 +489,8 @@ export function useProductPage(handle: string | null | undefined, options: UsePr
     onError: recommendationOptions.onError ?? (options.onError ? (error, ctx) => options.onError!(error, { at: ctx.at, handle: handle ?? '' }) : undefined),
   });
 
+  const purchase = useProductPurchase({ shown, status, selection, cart }, options);
+
   return {
     ...result,
     product,
@@ -392,6 +499,7 @@ export function useProductPage(handle: string | null | undefined, options: UsePr
     status,
     selection,
     cart,
+    purchase,
     media: {
       items: product?.media ?? [],
       initialIndex: product ? initialMediaIndex(product.media, options.playVideo) : 0,
@@ -402,5 +510,102 @@ export function useProductPage(handle: string | null | undefined, options: UsePr
     favorite: { isFavorite: !!shown && wishlist.has(shown.id), toggle },
     shareUrl: productShareUrl(product ?? shown, options.storeDomain),
     recommendations,
+  };
+}
+
+export interface UseProductPurchaseOptions {
+  /** `joinWaitlist` while signed out: the app starts its sign-in. */
+  onSignInNeeded?: () => void;
+  /** `joinWaitlist` is done: the app reports it and shows the waitlist. */
+  onJoinedWaitlist?: (joined: JoinedWaitlist) => void;
+}
+
+/**
+ * `ProductPage.purchase` from a page's parts (0.15.0): for a page of the app's own that has its own
+ * product, selection and add (`useVariantSelection`, `useAddToCart`).
+ */
+export function useProductPurchase(
+  { shown, status, selection, cart: addToCart }: { shown: ProductLike | null; status: ProductPageStatus; selection: VariantSelection; cart: AddToCart },
+  options: UseProductPurchaseOptions = {},
+): ProductPurchase {
+  const { cartPage, report } = useShopify();
+  const { cart, updateLine, removeLine } = useCart();
+  const { loggedIn, customer } = useCustomer();
+  const waitlist = useWaitlist();
+  const variant = selection.variant;
+  const heldInOtherCarts = useVariantHeldOut(variant?.id);
+  const [updating, setUpdating] = useState(false);
+  const optionsRef = useRef(options);
+  optionsRef.current = options;
+
+  const mode = purchaseModeFor({ status, variant, canAddMore: addToCart.canAddMore, heldInOtherCarts });
+  const preorderPlan = preorderPlanFor(variant, { blocked: status === 'blocked' });
+  const extensions = cartPage.extensions;
+  const sizeLines = useMemo<CartLine[]>(
+    () =>
+      cart?.lines.filter(
+        (line) =>
+          line.merchandise.id === variant?.id &&
+          (!preorderPlan || !!line.sellingPlanId) &&
+          !cartLineFacts(line, cart, extensions).prize,
+      ) ?? [],
+    [cart, variant?.id, preorderPlan, extensions],
+  );
+  const sizeLinesRef = useRef(sizeLines);
+  sizeLinesRef.current = sizeLines;
+
+  const addOne = addToCart.add;
+  const add = useCallback(() => void addOne(), [addOne]);
+  const planId = preorderPlan?.id ?? null;
+  const preorder = useCallback(() => {
+    if (planId) void addOne({ sellingPlanId: planId });
+  }, [addOne, planId]);
+
+  const updatingRef = useRef(false);
+  const removeOne = useCallback(() => {
+    const line = sizeLinesRef.current[sizeLinesRef.current.length - 1];
+    if (!line || updatingRef.current) return;
+    updatingRef.current = true;
+    setUpdating(true);
+    void (async () => {
+      try {
+        if (line.quantity > 1) await updateLine(line.id, line.quantity - 1);
+        else await removeLine(line.id);
+      } catch (error) {
+        report('cart:updateFailed', { error });
+      } finally {
+        updatingRef.current = false;
+        setUpdating(false);
+      }
+    })();
+  }, [updateLine, removeLine, report]);
+
+  const joinWaitlist = useCallback(() => {
+    const { onSignInNeeded, onJoinedWaitlist } = optionsRef.current;
+    if (!loggedIn) {
+      onSignInNeeded?.();
+      return;
+    }
+    if (!variant || !shown) return;
+    const added = !waitlist.has(variant.id);
+    if (added) void waitlist.add({ variantId: variant.id, productId: shown.id, productHandle: shown.handle });
+    onJoinedWaitlist?.({
+      product: shown,
+      variant,
+      added,
+      waitingFor: heldInOtherCarts && !preorderPlan ? 'otherCarts' : 'restock',
+      customer,
+    });
+  }, [loggedIn, variant, shown, waitlist, heldInOtherCarts, preorderPlan, customer]);
+
+  return {
+    mode,
+    inCartCount: sizeLines.reduce((units, line) => units + line.quantity, 0),
+    updating,
+    add,
+    preorder,
+    increase: preorderPlan ? preorder : add,
+    removeOne,
+    joinWaitlist,
   };
 }

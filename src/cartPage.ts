@@ -47,6 +47,14 @@ export interface CartExtension {
   refreshDelays?(cart: Cart, now: number): number[];
   /** A line's reservation has run out, so checkout must wait (`useCheckout().prepare` answers `lapsedHold`). */
   hasLapsedHold?(lines: CartLine[]): boolean;
+  /**
+   * Every unit of this variant is in other shoppers' carts right now, though Shopify still sells it
+   * (Cart Hold just refused it). The product page offers the waitlist for it, and Buy again skips it
+   * (0.15.0, `useVariantHeldOut`, `useOrder().buyAgain`).
+   */
+  isHeldOut?(variantId: string): boolean;
+  /** Tells `listener` whenever `isHeldOut` may answer differently; returns the way to stop. */
+  subscribeHeldOut?(listener: () => void): () => void;
 }
 
 /** One extension's answer, or nothing when it throws: an extension never breaks the cart. */
@@ -77,6 +85,12 @@ export function cartLineFacts(line: CartLine, cart: Cart, extensions: readonly C
 export function increaseAddsLine(line: CartLine, extensions: readonly CartExtension[]): boolean {
   if (line.sellingPlanId) return false;
   return extensions.some((extension) => ask(extension, () => extension.increaseAddsLine?.(line)) === true);
+}
+
+/** Some extension says every unit of this variant is in other shoppers' carts (`CartExtension.isHeldOut`). */
+export function isVariantHeldOut(variantId: string | null | undefined, extensions: readonly CartExtension[]): boolean {
+  if (!variantId) return false;
+  return extensions.some((extension) => ask(extension, () => extension.isHeldOut?.(variantId)) === true);
 }
 
 /** Every extension's re-reads, soonest first, without repeats. */

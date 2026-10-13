@@ -33,6 +33,29 @@ export const DEFAULT_MESSAGES: Readonly<Record<AlertMessageKey, string>> = {
   'auth.resetLinkSent': 'Check your email for a reset link',
   'checkout.orderPlaced': 'Your order has been placed 🎉',
   'checkout.paymentFailed': 'Payment could not be processed',
+  // 0.15.0: amore-v2's words, as its page hooks said them.
+  'checkout.reservationExpired': 'Your reservation expired and the item was released.',
+  'checkout.couldNotStart': "Couldn't open checkout. Try again.",
+  'cart.updateFailed': "Couldn't update your cart. Try again.",
+  'orders.boughtAgain': 'Added to cart',
+  'orders.boughtAgainPartly': 'Added {added} to your cart. {skipped} not available right now.',
+  'orders.nothingToBuyAgain': "These items aren't available right now.",
+  'auth.profileUpdated': 'Profile updated',
+  'auth.couldNotReachStore': "Couldn't reach the store. Check your connection and try again.",
+  'storeCredit.applied': '{amount} store credit applied',
+  'storeCredit.removed': 'Store credit removed',
+  'storeCredit.preOrder': "Can't be applied: your cart has a pre-order item",
+  'storeCredit.unauthorized': 'Please sign in again to use your store credit.',
+  'storeCredit.forbidden': 'Store credit is not available on this account.',
+  'storeCredit.notFound': 'We could not find your store credit balance.',
+  'storeCredit.validation': 'That amount cannot be redeemed. Try a different one.',
+  'storeCredit.insufficientBalance': 'That is more than your available credit.',
+  'storeCredit.conflict': 'This redemption is already being processed.',
+  'storeCredit.rateLimited': 'Too many attempts. Please wait a moment and try again.',
+  'storeCredit.shopifyUpstream': 'The store is not responding. Please try again shortly.',
+  'storeCredit.network': 'No connection. Check your network and try again.',
+  'storeCredit.internal': 'Something went wrong. Please try again.',
+  'storeCredit.cartRefused': "Your credit couldn't be added to this cart. Please try again.",
 };
 
 /** i18n keys the Translations workspace uses, where they differ from ours. */
@@ -86,6 +109,15 @@ export function message(key: AlertMessageKey): string {
     }
   }
   return fallback;
+}
+
+/**
+ * `text` with each `{name}` replaced by `values[name]` (0.15.0): the alerts that carry an amount or a
+ * count, such as `storeCredit.applied`'s `{amount}`. A name `values` doesn't have stays as written.
+ */
+export function fillMessage(text: string, values: Readonly<Record<string, string>> | undefined): string {
+  if (!values) return text;
+  return text.replace(/\{(\w+)\}/g, (whole, name: string) => (name in values ? values[name] : whole));
 }
 
 /**

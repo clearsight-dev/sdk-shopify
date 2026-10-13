@@ -25,8 +25,9 @@ import {
   withNextPage,
   type OrderSource,
 } from '../orders';
+import { isVariantHeldOut } from '../cartPage';
 import { quantityInCart } from '../productPage';
-import { useCart, useCustomer, type CustomerState } from './ShopifyProvider';
+import { useCart, useCustomer, useShopify, type CustomerState } from './ShopifyProvider';
 import type { OrderDetails, OrderSummary } from '../types';
 
 /** Orders per page, unless `useOrders({ pageSize })` says otherwise. */
@@ -58,6 +59,18 @@ export interface OrdersState {
    * screen and the pages loaded after the first. Joins a read already on its way. Never rejects.
    */
   refresh: () => Promise<void>;
+  /**
+   * Where the list stands (0.15.0), for a page that shows one state at a time: `signedOut` (and not
+   * reading a stored session), `loading` (that session, or the first page), `failed` (the read failed
+   * with nothing to show), `empty` (no orders), `ready`.
+   */
+  status: 'signedOut' | 'loading' | 'failed' | 'empty' | 'ready';
+  /** A pull to refresh is running (`pullToRefresh`). */
+  refreshing: boolean;
+  /** `refresh` for a pull, with `refreshing` true while it runs. */
+  pullToRefresh: () => void;
+  /** Call each time the list comes into view: reads the first page again when signed in. Keeps one identity. */
+  viewed: () => void;
 }
 
 export interface BuyAgainResult {
@@ -90,10 +103,28 @@ export interface OrderState {
    * Never throws; anything that fails counts as skipped.
    *
    * `options.skipVariant`: lines whose variant it returns true for are skipped before anything is
-   * claimed (the app passes Cart Hold's `isHeldOut`). The add is quiet (`addLines(…, { quiet: true })`):
-   * the guard and the line-by-line retry say nothing per line, and the caller shows one summary.
+   * claimed. Left out, the provider's `cartExtensions` answer (Cart Hold: a size every unit of which is
+   * in other carts, 0.15.0). The add is quiet (`addLines(…, { quiet: true })`): the guard and the
+   * line-by-line retry say nothing per line, and one summary is raised instead (0.15.0):
+   * `orders:boughtAgain`, `orders:boughtAgainPartly` (with both counts) or `orders:nothingToBuyAgain`.
+   * Once anything went in, `useOrder`'s `onBoughtAgain` is called (the app opens the cart).
    */
   buyAgain: (options?: { skipVariant?: (variantId: string) => boolean }) => Promise<BuyAgainResult>;
+  /** `buyAgain` is running (0.15.0). */
+  buyingAgain: boolean;
+  /**
+   * Where the page stands (0.15.0): `ready` once the order is here (it stays through a refresh);
+   * `loading` while it is on its way; `notFound` when this shopper has no such order; `failed` when the
+   * read failed with nothing to show; `none` with nothing to read (no id, or signed out).
+   */
+  status: 'ready' | 'loading' | 'notFound' | 'failed' | 'none';
+  /** Call each time the order comes into view: reads it again, keeping it on screen. Keeps one identity (0.15.0). */
+  viewed: () => void;
+}
+
+export interface UseOrderOptions {
+  /** Buy again put something in the cart (0.15.0): the app opens the cart. */
+  onBoughtAgain?: (result: BuyAgainResult) => void;
 }
 
 function sourceFor(customer: CustomerState): OrderSource {
@@ -229,8 +260,22 @@ export function useOrders(options: UseOrdersOptions = {}): OrdersState {
     if (owner) void readFirstPage();
   }, [owner, readFirstPage]);
 
+  const [refreshing, setRefreshing] = useState(false);
+  const pullToRefresh = useCallback(() => {
+    setRefreshing(true);
+    void readFirstPage().finally(() => setRefreshing(false));
+  }, [readFirstPage]);
+  const viewed = useCallback(() => {
+    if (ownerRef.current) void readFirstPage();
+  }, [readFirstPage]);
+
   const restoring = customer.restoring && owner === null;
   const loading = restoring || (owner !== null && !shown.answered);
+  let status: OrdersState['status'];
+  if (!customer.loggedIn && !customer.restoring) status = 'signedOut';
+  else if (loading) status = 'loading';
+  else if (shown.orders.length > 0) status = 'ready';
+  else status = shown.error ? 'failed' : 'empty';
   return useMemo(
     () => ({
       orders: shown.orders,
@@ -240,8 +285,12 @@ export function useOrders(options: UseOrdersOptions = {}): OrdersState {
       hasMore: shown.hasMore,
       loadMore,
       refresh: readFirstPage,
+      status,
+      refreshing,
+      pullToRefresh,
+      viewed,
     }),
-    [shown.orders, loading, shown.loadingMore, shown.error, shown.hasMore, loadMore, readFirstPage],
+    [shown.orders, loading, shown.loadingMore, shown.error, shown.hasMore, loadMore, readFirstPage, status, refreshing, pullToRefresh, viewed],
   );
 }
 
@@ -299,6 +348,27 @@ export function useLatestOrderSince(
   return { order: customer.loggedIn && isTheNewOrder ? newest : null };
 }
 
+export interface OrderConfirmation {
+  /** The new order's number without its `#` ("1042"), once Shopify lists it; null signed out (a guest's isn't known here). */
+  orderNumber: string | null;
+  /** Where the confirmation went: the signed-in shopper's email; null signed out. */
+  email: string | null;
+}
+
+/**
+ * What an Order Confirmed page says (0.15.0, from amore-v2): the new order's number and the email the
+ * confirmation went to, for a signed-in shopper only. The number is `useLatestOrderSince(checkoutOpenedAt)`'s,
+ * so the page shows no number rather than the order before.
+ */
+export function useOrderConfirmation(checkoutOpenedAt: number | null | undefined, options: UseLatestOrderSinceOptions = {}): OrderConfirmation {
+  const customer = useCustomer();
+  const { order } = useLatestOrderSince(checkoutOpenedAt, options);
+  return {
+    orderNumber: customer.loggedIn && order ? order.name.replace(/^#/, '') : null,
+    email: customer.loggedIn ? customer.customer?.email ?? null : null,
+  };
+}
+
 // ── useOrder ───────────────────────────────────────────────────────────────
 
 interface OneState {
@@ -312,9 +382,14 @@ interface OneState {
 const emptyOrder = (owner: string | null): OneState => ({ owner, order: null, answered: false, notFound: false, error: null });
 
 /** One of the signed-in shopper's orders, by the `id` `useOrders` gave. Nothing is read without an id. */
-export function useOrder(id: string | undefined): OrderState {
+export function useOrder(id: string | undefined, options: UseOrderOptions = {}): OrderState {
   const customer = useCustomer();
   const cart = useCart();
+  const { cartPage, report } = useShopify();
+  const extensionsRef = useRef(cartPage.extensions);
+  extensionsRef.current = cartPage.extensions;
+  const optionsRef = useRef(options);
+  optionsRef.current = options;
   const shopper = useShopper(customer);
   const owner = shopper && id ? `${shopper}|${id}` : null;
   const customerRef = useRef(customer);
@@ -361,8 +436,8 @@ export function useOrder(id: string | undefined): OrderState {
     if (owner) void read();
   }, [owner, read]);
 
-  const buyAgain = useCallback(async (
-    options: { skipVariant?: (variantId: string) => boolean } = {},
+  const putBackInCart = useCallback(async (
+    skipVariant: (variantId: string) => boolean,
   ): Promise<BuyAgainResult> => {
     const lines = shownRef.current.order?.lineItems ?? [];
     if (lines.length === 0) return { added: 0, skipped: 0 };
@@ -371,9 +446,9 @@ export function useOrder(id: string | undefined): OrderState {
       const variants = variantIds.length > 0 ? await shopify.variants.byIds(variantIds) : [];
       // The cart as it is now, after the stock read: the ref follows every render.
       const { cart: before, addLines } = cartRef.current;
-      const plan = planBuyAgain(lines, variants, before, { skipVariant: options.skipVariant });
+      const plan = planBuyAgain(lines, variants, before, { skipVariant });
       if (plan.inputs.length === 0) return { added: 0, skipped: lines.length };
-      // Quiet: the caller shows one summary for the whole order, not a message per refused line.
+      // Quiet: one summary for the whole order, not a message per refused line.
       const after = await addLines(plan.inputs, { quiet: true });
       if (!after) return { added: 0, skipped: lines.length };
       // `addLines` keeps the lines Shopify accepted and drops the rest, so a line landed if its variant
@@ -389,8 +464,43 @@ export function useOrder(id: string | undefined): OrderState {
     }
   }, []);
 
+  const [buyingAgain, setBuyingAgain] = useState(false);
+  const buyAgain = useCallback(async (
+    buyOptions: { skipVariant?: (variantId: string) => boolean } = {},
+  ): Promise<BuyAgainResult> => {
+    setBuyingAgain(true);
+    try {
+      const skipVariant = buyOptions.skipVariant ?? ((variantId: string) => isVariantHeldOut(variantId, extensionsRef.current));
+      const result = await putBackInCart(skipVariant);
+      if (result.added === 0) {
+        report('orders:nothingToBuyAgain');
+        return result;
+      }
+      if (result.skipped > 0) report('orders:boughtAgainPartly', { fill: { added: String(result.added), skipped: String(result.skipped) } });
+      else report('orders:boughtAgain');
+      try {
+        optionsRef.current.onBoughtAgain?.(result);
+      } catch (routeError) {
+        console.warn('[sdk-shopify] onBoughtAgain threw', routeError);
+      }
+      return result;
+    } finally {
+      setBuyingAgain(false);
+    }
+  }, [putBackInCart, report]);
+
+  const viewed = useCallback(() => {
+    void read();
+  }, [read]);
+
   const restoring = customer.restoring && shopper === null;
   const loading = restoring || (owner !== null && !shown.answered);
+  let status: OrderState['status'];
+  if (shown.order) status = 'ready';
+  else if (loading) status = 'loading';
+  else if (shown.notFound) status = 'notFound';
+  else if (shown.error) status = 'failed';
+  else status = 'none';
   return useMemo(
     () => ({
       order: shown.order,
@@ -399,7 +509,10 @@ export function useOrder(id: string | undefined): OrderState {
       notFound: shown.notFound,
       refresh: read,
       buyAgain,
+      buyingAgain,
+      viewed,
+      status,
     }),
-    [shown.order, loading, shown.error, shown.notFound, read, buyAgain],
+    [shown.order, loading, shown.error, shown.notFound, read, buyAgain, buyingAgain, viewed, status],
   );
 }
