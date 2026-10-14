@@ -1,5 +1,30 @@
 # Changelog
 
+## Unreleased (0.16.0)
+
+### New: three more collection orders, and the order a collection opens on
+
+K-Marie's sort sheet (its old app's) offers eight orders and opens every collection on "Date, new to old".
+0.15.0 had five, always opened on `featured`, and a screen that set the order after opening read the
+collection twice.
+
+- **`CollectionSortId`** adds `title-ascending` (Storefront `TITLE`), `title-descending` (`TITLE`,
+  reversed) and `created-ascending` (`CREATED`, oldest first), in `COLLECTION_SORTS` after 0.15.0's five.
+  The SDK still has no words for any order: a sort sheet's labels are the app's.
+- **`useCollectionPage({ initialSortId })`**: the order the page opens on, read when it opens. Default
+  `featured`, as before. The first page is read once, in that order; the shopper's choice (`setSortId`)
+  wins after that, and a later value is ignored. An id that isn't in `COLLECTION_SORTS` opens on
+  `featured`. As in 0.15.0, a new `handle` on the same page keeps the order on screen.
+
+### Changed
+
+- **`CollectionSortId` has three more members**: a `Record<CollectionSortId, …>` (a sort sheet's words for
+  every order) needs them to typecheck.
+
+Tests: 10 more in `test/page-models.test.mjs` (the three orders' sorts; the first read in the starting
+order, once, for each new id and for `created-descending`; the default unchanged; an unknown id; the
+shopper's choice winning; a later `initialSortId` ignored; a new handle keeping the order).
+
 ## 0.15.0 (2026-10-13)
 
 ### New: a page model for every page, so an app's screens need no hooks of their own

@@ -143,12 +143,20 @@ await t.check('Status keeps the ticked group, none or both ticked keep all; Pric
 });
 
 t.section('listings');
-await t.check('a collection\'s five orders, featured needing no key; a search sorts by price or nothing', () => {
-  assert.deepEqual(Object.keys(SDK.COLLECTION_SORTS), ['featured', 'created-descending', 'best-selling', 'price-ascending', 'price-descending']);
+await t.check('a collection\'s eight orders, 0.15.0\'s five first, featured needing no key; a search sorts by price or nothing', () => {
+  assert.deepEqual(Object.keys(SDK.COLLECTION_SORTS), [
+    'featured', 'created-descending', 'best-selling', 'price-ascending', 'price-descending',
+    'title-ascending', 'title-descending', 'created-ascending',
+  ]);
   assert.equal(SDK.COLLECTION_SORTS.featured, undefined);
   assert.deepEqual(SDK.COLLECTION_SORTS['created-descending'], { key: 'CREATED', reverse: true });
   assert.deepEqual(SDK.SEARCH_SORTS['price-descending'], { key: 'PRICE', reverse: true });
   assert.equal(SDK.SEARCH_SORTS.relevance, undefined);
+});
+await t.check('0.16.0\'s three: the name A to Z and Z to A, and oldest first (Shopify\'s TITLE and CREATED)', () => {
+  assert.deepEqual(SDK.COLLECTION_SORTS['title-ascending'], { key: 'TITLE' });
+  assert.deepEqual(SDK.COLLECTION_SORTS['title-descending'], { key: 'TITLE', reverse: true });
+  assert.deepEqual(SDK.COLLECTION_SORTS['created-ascending'], { key: 'CREATED' });
 });
 
 // ── Rendered ───────────────────────────────────────────────────────────────────
@@ -428,6 +436,73 @@ await t.check('a new choice shows at once and is saved', () => {
 forgetGridColumns();
 await mount(ColumnsProbe, { fallback: 'nonsense' }, { storage: memoryStorage() });
 await t.check('nothing saved and no usable setting: 2', () => assert.equal(probe.columns.columns, '2'));
+
+t.section('useCollectionPage: the order it opens on (0.16.0)');
+const { useCollectionPage } = SDK;
+function CollectionPageProbe(options) {
+  probe.page = useCollectionPage(options);
+  return null;
+}
+/** What each CollectionProducts request for `handle` asked Shopify for. */
+const collectionReads = (handle) => calls
+  .filter((call) => call.name === 'CollectionProducts' && call.variables.handle === handle)
+  .map((call) => ({ sortKey: call.variables.sortKey ?? null, reverse: call.variables.reverse }));
+/** The same root, new props: what a screen's re-render does. */
+async function rerender(Probe, props) {
+  await runAct(async () => {
+    root.render(React.createElement(
+      ShopifyProvider,
+      { config: { storeDomain: 'shop.myshopify.com', storefrontAccessToken: 't' }, onEvent: (event) => events.push(event) },
+      React.createElement(Probe, props),
+    ));
+  });
+  await settle();
+}
+// Each mount reads its own collection: a handle read moments ago is served from the feed's cache.
+await mount(CollectionPageProbe, { handle: 'opens-default' });
+await t.check('no initialSortId: featured, as in 0.15.0, read once with no sort key', () => {
+  assert.equal(probe.page.sortId, 'featured');
+  assert.deepEqual(collectionReads('opens-default'), [{ sortKey: null, reverse: false }]);
+});
+await mount(CollectionPageProbe, { handle: 'opens-newest', initialSortId: 'created-descending' });
+await t.check('initialSortId created-descending: the first and only read is newest first', () => {
+  assert.equal(probe.page.sortId, 'created-descending');
+  assert.deepEqual(collectionReads('opens-newest'), [{ sortKey: 'CREATED', reverse: true }]);
+});
+for (const [sortId, expected] of [
+  ['title-ascending', { sortKey: 'TITLE', reverse: false }],
+  ['title-descending', { sortKey: 'TITLE', reverse: true }],
+  ['created-ascending', { sortKey: 'CREATED', reverse: false }],
+]) {
+  const handle = `opens-${sortId}`;
+  await mount(CollectionPageProbe, { handle, initialSortId: sortId });
+  await t.check(`initialSortId ${sortId}: one read, sortKey ${expected.sortKey}, reverse ${expected.reverse}`, () => {
+    assert.equal(probe.page.sortId, sortId);
+    assert.deepEqual(collectionReads(handle), [expected]);
+  });
+}
+await mount(CollectionPageProbe, { handle: 'opens-unknown', initialSortId: 'random' });
+await t.check('an id Shopify has no order for opens on featured', () => {
+  assert.equal(probe.page.sortId, 'featured');
+  assert.deepEqual(collectionReads('opens-unknown'), [{ sortKey: null, reverse: false }]);
+});
+await mount(CollectionPageProbe, { handle: 'chosen', initialSortId: 'created-descending' });
+await runAct(async () => { probe.page.setSortId('title-descending'); });
+await settle();
+await t.check('the shopper\'s choice wins over the starting order, and is read in its own order', () => {
+  assert.equal(probe.page.sortId, 'title-descending');
+  assert.deepEqual(collectionReads('chosen'), [{ sortKey: 'CREATED', reverse: true }, { sortKey: 'TITLE', reverse: true }]);
+});
+await rerender(CollectionPageProbe, { handle: 'chosen', initialSortId: 'price-ascending' });
+await t.check('a later initialSortId is ignored: the page opened once', () => {
+  assert.equal(probe.page.sortId, 'title-descending');
+  assert.equal(collectionReads('chosen').length, 2);
+});
+await rerender(CollectionPageProbe, { handle: 'chosen-next', initialSortId: 'created-descending' });
+await t.check('a new handle on the same page keeps the order on screen, as in 0.15.0', () => {
+  assert.equal(probe.page.sortId, 'title-descending');
+  assert.deepEqual(collectionReads('chosen-next'), [{ sortKey: 'TITLE', reverse: true }]);
+});
 
 await runAct(async () => root.unmount());
 t.done();

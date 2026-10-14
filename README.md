@@ -516,7 +516,7 @@ an `on…` option. Each page's `viewed()` keeps one identity, for `useFocusEffec
 | Store credit on the cart | `useCartStoreCredit()` → `status`, `balance`, `applied`, `apply`, `remove`, `blockedBy`, `errorMessage`, `suggestedAmount`, `viewed` | |
 | Product page's buy bar | `useProductPage(handle, { onSignInNeeded, onJoinedWaitlist }).purchase` | sign-in; the waitlist |
 | A product card's Add to Cart | `useQuickAdd({ credit, onChooseVariant, onAdded })` | the variant page |
-| Collection | `useCollectionPage({ handle, onView })` → the feed, `sortId`, `removeFilter` | |
+| Collection | `useCollectionPage({ handle, initialSortId, onView })` → the feed, `sortId`, `setSortId`, `removeFilter` | |
 | Search | `useSearchPage({ query, recommendedCollection, onSearched })` | |
 | Waitlist | `useWaitlistPage({ isBlocked })` → `items`, filters, counts, `addToCart`, `justAdded`, `remove`, `viewed` | |
 | Favourites | `useFavoritesPage()` → `status`, `products`, `retry`, `viewed` | |
@@ -531,6 +531,30 @@ const quickAdd = useQuickAdd({ onChooseVariant: (product) => nav.navigate('Varia
 const { columns, setColumns } = useGridColumns(grid.columns);
 <ProductGrid products={page.products} loading={page.loading} onEndReached={page.loadMore}
   onQuickAdd={quickAdd.add} addingProductIds={quickAdd.addingProductIds} columns={columns} />
+```
+
+**A collection's orders**: `CollectionSortId`, with Shopify's sort for each in `COLLECTION_SORTS`. The SDK
+has no words for them: the sort sheet's labels, and which orders it offers, are the app's.
+
+| `CollectionSortId` | Storefront `sortKey` | `reverse` |
+| --- | --- | --- |
+| `featured` | none: the collection's own order | |
+| `created-descending` | `CREATED` | `true` |
+| `best-selling` | `BEST_SELLING` | |
+| `price-ascending` | `PRICE` | |
+| `price-descending` | `PRICE` | `true` |
+| `title-ascending` (0.16.0) | `TITLE` | |
+| `title-descending` (0.16.0) | `TITLE` | `true` |
+| `created-ascending` (0.16.0) | `CREATED` | |
+
+A page opens on `featured` unless `initialSortId` names another (0.16.0). It reads its first page once, in
+that order; the shopper's `setSortId` wins after that, and a later `initialSortId` is ignored. An id that
+isn't in `COLLECTION_SORTS` opens on `featured`. A new `handle` on the same page keeps the order on screen.
+
+```tsx
+// Opens newest first: one read, no featured page first.
+const page = useCollectionPage({ handle, initialSortId: 'created-descending' });
+<SortSheet selected={page.sortId} onSelect={page.setSortId} />
 ```
 
 **Your own page**: every model is built from exported pieces (`useCollectionProducts`, `useSearch`,
