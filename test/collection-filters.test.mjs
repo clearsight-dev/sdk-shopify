@@ -22,6 +22,8 @@ const emptyCart = {
 
 /** Every CollectionProducts request, as `{ handle, filters }`. */
 const reads = [];
+/** While set, the store holds its CollectionProducts answers until this settles: a page still loading. */
+let holdAnswers = null;
 global.fetch = async (_url, init) => {
   const { query, variables } = JSON.parse(init.body);
   const op = /mutation (\w+)|query (\w+)/.exec(query);
@@ -35,6 +37,7 @@ global.fetch = async (_url, init) => {
   if (name === 'CartGet' || query.includes('cart(id:')) return reply({ cart: emptyCart });
   if (name === 'CollectionProducts') {
     reads.push({ handle: variables.handle, filters: variables.filters ?? null });
+    if (holdAnswers) await holdAnswers;
     // As the store answers (read 2026-10-08): the whole range unfiltered, the applied range once a price
     // filter is on.
     const applied = (variables.filters ?? []).find((f) => f.price)?.price;
@@ -169,6 +172,35 @@ await act(() => feed.clearFilters());
 check('cleared, the facet is the whole range again, from the store', () => {
   assert.deepEqual(rangeOf(priceFacet()), { min: 0, max: 250 });
 });
+
+// Fixed 2026-10-16 (0.16.0): a new filter set emptied the facets while its page loaded, so a chip for the
+// filter just applied had no name and read as its input, `{"available":true}`, until the page landed.
+props.handle = 'tops';
+props.filters = undefined;
+await render();
+let answer;
+holdAnswers = new Promise((resolve) => { answer = resolve; });
+await act(() => feed.setFilters([IN_STOCK]));
+check('while a new filter set loads, the same collection keeps its facets, so the applied filter has its name', () => {
+  assert.equal(feed.loading, true);
+  assert.deepEqual(feed.products, []);
+  assert.equal(feed.availableFilters[0].values[0].label, 'In stock');
+});
+holdAnswers = null;
+await act(() => answer());
+check('then the filtered page brings its own facets', () => {
+  assert.equal(feed.loading, false);
+  assert.equal(feed.availableFilters[0].values[0].input, IN_STOCK);
+});
+holdAnswers = new Promise((resolve) => { answer = resolve; });
+props.handle = 'skirts';
+await render();
+check("another collection starts with none: its filters aren't the last one's", () => {
+  assert.equal(feed.loading, true);
+  assert.deepEqual(feed.availableFilters, []);
+});
+holdAnswers = null;
+await act(() => answer());
 
 await runAct(async () => { root.unmount(); });
 

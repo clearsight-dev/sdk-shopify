@@ -16,6 +16,14 @@ collection twice.
   wins after that, and a later value is ignored. An id that isn't in `COLLECTION_SORTS` opens on
   `featured`. As in 0.15.0, a new `handle` on the same page keeps the order on screen.
 
+### Fixed
+
+- **A new filter set keeps the feed's filters while its first page loads** (`useProductFeed`, so
+  `useCollectionPage`, `useSearchPage` and every feed). 0.15.0 emptied `availableFilters` until the filtered
+  page arrived, so a chip for the filter just applied had no name to show for a moment and read as its
+  input, `{"available":true}`. They stay now: the same collection or query has the same filters, with the
+  same names. Another collection or query still starts with none.
+
 ### Changed
 
 - **`CollectionSortId` has three more members**: a `Record<CollectionSortId, …>` (a sort sheet's words for
@@ -23,7 +31,9 @@ collection twice.
 
 Tests: 10 more in `test/page-models.test.mjs` (the three orders' sorts; the first read in the starting
 order, once, for each new id and for `created-descending`; the default unchanged; an unknown id; the
-shopper's choice winning; a later `initialSortId` ignored; a new handle keeping the order).
+shopper's choice winning; a later `initialSortId` ignored; a new handle keeping the order); 3 more in
+`test/collection-filters.test.mjs` (the filters kept while a filtered page loads, replaced by the page's,
+and none carried to another collection).
 
 ## 0.15.0 (2026-10-13)
 

@@ -164,6 +164,13 @@ export function useProductFeed(source: FeedSource): ProductFeedResult {
     return cached ? fromList(cached, true) : IDLE;
   });
   const [attempt, setAttempt] = useState(0);
+  /**
+   * The feed (collection or query, filters aside) the facets in `state` were read for. A new filter set on
+   * the same feed keeps them while its first page loads: the same feed has the same filters, with the same
+   * names. Emptied, a chip for the filter just applied had no name to show for a moment and read as its
+   * input, `{"available":true}` (fixed 2026-10-16, 0.16.0). Another feed starts with none.
+   */
+  const facetsFeed = useRef<string | null>(null);
 
   const requestId = useRef(0);
   /** The cursor for the next page. Null while a first page is being (re)read, which pauses paging. */
@@ -176,6 +183,7 @@ export function useProductFeed(source: FeedSource): ProductFeedResult {
     if (!configured || !listKey) {
       requestId.current += 1;
       cursor.current = null;
+      facetsFeed.current = null;
       setState(IDLE);
       return;
     }
@@ -189,16 +197,20 @@ export function useProductFeed(source: FeedSource): ProductFeedResult {
       // Recent enough: show it and page on from its cursor, without a network read.
       cursor.current = cached.pageInfo.endCursor;
       rememberWholePriceRange(cached.filters);
+      facetsFeed.current = feedKey;
       setState(fromList(cached, false));
       return;
     }
     // Paging waits for the fresh first page: a cached cursor may no longer match it.
     cursor.current = null;
+    const sameFeed = facetsFeed.current === feedKey;
+    if (cached) facetsFeed.current = feedKey;
     setState((current) => {
       if (cached) return fromList(cached, true);
       // A refresh keeps what is on screen until the fresh page lands.
       if (fresh && current.products.length) return { ...current, refreshing: true, error: false };
-      return { ...IDLE, loading: true };
+      // A new filter set on the same feed keeps its facets (see `facetsFeed`).
+      return { ...IDLE, loading: true, availableFilters: sameFeed ? current.availableFilters : [] };
     });
 
     sourceRef.current
@@ -207,6 +219,7 @@ export function useProductFeed(source: FeedSource): ProductFeedResult {
         if (requestId.current !== id) return;
         cursor.current = page.pageInfo.endCursor;
         rememberWholePriceRange(page.filters ?? []);
+        facetsFeed.current = feedKey;
         rememberList(listKey, {
           products: page.nodes,
           pageInfo: page.pageInfo,
@@ -235,6 +248,7 @@ export function useProductFeed(source: FeedSource): ProductFeedResult {
             cursor.current = cached?.pageInfo.endCursor ?? null;
             return { ...current, refreshing: false };
           }
+          facetsFeed.current = null;
           return { ...IDLE, error: true };
         });
       });
