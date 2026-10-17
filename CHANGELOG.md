@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased (0.16.0)
+## 0.16.0 (2026-10-17)
 
 ### New: three more collection orders, and the order a collection opens on
 
