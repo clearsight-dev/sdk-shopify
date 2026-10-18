@@ -137,3 +137,15 @@ export {
   type UseProductRecommendationsOptions,
   type ProductRecommendations,
 } from "./useProductRecommendations";
+export {
+  useProductsById,
+  clearProductsById,
+  type UseProductsByIdOptions,
+  type ProductsById,
+} from "./useProductsById";
+export {
+  useMetaobject,
+  clearMetaobjects,
+  type UseMetaobjectOptions,
+  type MetaobjectState,
+} from "./useMetaobject";

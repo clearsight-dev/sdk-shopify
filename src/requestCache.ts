@@ -33,6 +33,7 @@ export const DEFAULT_CACHE_TTL_MS: Readonly<Record<string, number>> = {
   BlogByHandle: 10 * MINUTE,
   BlogArticles: 10 * MINUTE,
   BlogArticleByHandle: 10 * MINUTE,
+  MetaobjectById: 10 * MINUTE,
   Recommended: 5 * MINUTE,
   CollectionProducts: MINUTE,
   Products: MINUTE,

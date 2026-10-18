@@ -655,6 +655,26 @@ export const BLOGS_LIST_QUERY = /* GraphQL */ `
   }
 `;
 
+// Metaobjects: a merchant's own content entries (a hero's words, picture and link)
+
+/** Each field's value, the picture's URL when it refers to an image, the handle when it refers to a collection. */
+export const METAOBJECT_BY_ID_QUERY = /* GraphQL */ `
+  query MetaobjectById($id: ID!) {
+    metaobject(id: $id) {
+      id
+      type
+      fields {
+        key
+        value
+        reference {
+          ... on MediaImage { image { url } }
+          ... on Collection { handle }
+        }
+      }
+    }
+  }
+`;
+
 export const BLOG_BY_HANDLE_QUERY = /* GraphQL */ `
   ${BLOG_FRAGMENT}
   query BlogByHandle($handle: String!) {

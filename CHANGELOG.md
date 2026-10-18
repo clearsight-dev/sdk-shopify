@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.17.0 (2026-10-18)
+
+### New: products by id, and metaobjects
+
+- **`useProductsById(ids, { imageTransform })`:** products by their Shopify ids, in the order given (the
+  products a clip shows, a list picked by hand). One batch read (`shopify.products.byIds`), kept for the
+  session by id; a product the store no longer has is left out. `{ products, byId, loading, error }`.
+- **`useMetaobject(id)` and `shopify.metaobjects.byId(id)`:** a merchant's own content entry (a home page
+  hero), each field's value with the picture's URL and the collection's handle. Reused for 10 minutes
+  (`MetaobjectById` in the request cache); `refresh()` reads it again.
+
 ## 0.16.0 (2026-10-17)
 
 ### New: three more collection orders, and the order a collection opens on

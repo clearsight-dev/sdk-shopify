@@ -1280,6 +1280,27 @@ export interface ShopifyCustomerAPI {
   orderById(accessToken: string, orderId: string, opts?: ImageOptions): Promise<Order | null>;
 }
 
+// Metaobjects (a merchant's own content entries)
+
+/** One field of a metaobject: its value, the picture's URL when it refers to an image, the handle when it refers to a collection. */
+export interface MetaobjectField {
+  value: string | null;
+  imageUrl: string | null;
+  collectionHandle: string | null;
+}
+
+export interface Metaobject {
+  id: string;
+  type: string;
+  /** By the field's key. */
+  fields: Record<string, MetaobjectField>;
+}
+
+export interface ShopifyMetaobjectsAPI {
+  /** A metaobject by its id (`gid://shopify/Metaobject/…`); null when the store has none. */
+  byId(id: string, opts?: { fresh?: boolean }): Promise<Metaobject | null>;
+}
+
 export interface ShopifyBlogsAPI {
   list(opts?: ListOptions): Promise<Connection<Blog>>;
   byHandle(handle: string): Promise<Blog | null>;
@@ -1455,6 +1476,7 @@ export interface ShopifyIntegration {
   cart: ShopifyCartAPI;
   customer: ShopifyCustomerAPI;
   blogs: ShopifyBlogsAPI;
+  metaobjects: ShopifyMetaobjectsAPI;
   wishlist: ShopifyWishlistAPI;
   waitlist: ShopifyWaitlistAPI;
   /** Money format and currency, loaded at init. */

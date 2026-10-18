@@ -497,6 +497,30 @@ const redo: CartExtension = {
 `useCheckout`, `cartLineFacts`, `orderCartLines`, `canIncreaseLine`, `preorderAmounts`,
 `cartAmountsDueNow`, `increaseAddsLine`, `cartRefreshDelays`.
 
+### Products someone chose, and a merchant's own content (0.17.0)
+
+`useProductsById(ids, { imageTransform })` reads products by their Shopify ids, in the order given:
+the products a clip shows, or a list picked by hand. One batch read (`shopify.products.byIds`), kept for
+the session by id, so a second list naming the same products shows them at once; a product the store
+no longer has is left out. It returns `{ products, byId, loading, error }`.
+
+`useMetaobject(id)` reads one metaobject (`gid://shopify/Metaobject/…`), such as a home page hero the
+merchant edits in Shopify. Each field comes back as its value, the picture's URL when it refers to an
+image, and the handle when it refers to a collection, so the screen can lay it onto a banner's props.
+It returns `{ metaobject, fields, loading, error, refresh }`; `shopify.metaobjects.byId(id)` is the
+same read without React. Merchant content is the same for every shopper, so a read is reused for 10
+minutes (`MetaobjectById` in the request cache).
+
+```tsx
+const clip = useProductsById(clipItem.productIds, { imageTransform: CARD_IMAGE });
+const hero = useMetaobject(HERO_ID);
+<ImageBanner01
+  heading={hero.fields.title?.value ?? undefined}
+  imageUrl={hero.fields.image?.imageUrl ?? undefined}
+  collectionHandle={hero.fields.collection?.collectionHandle ?? undefined}
+/>
+```
+
 ## Every other page: page models (0.15.0)
 
 One hook per page, each in the style of `useProductPage` and `useCartPage`: what the page decides, as

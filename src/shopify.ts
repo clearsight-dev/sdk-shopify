@@ -2,6 +2,7 @@
 // through the barrel — that would be a require cycle, which minified bundles
 // resolve to `undefined` (React error #130). Direction: index -> react -> shopify.
 import { blogs } from './blogs';
+import { metaobjects } from './metaobjects';
 import { cart } from './cart';
 import { collections } from './collections';
 import { customer } from './customer';
@@ -36,6 +37,7 @@ export const shopify: ShopifyIntegration = {
   cart,
   customer,
   blogs,
+  metaobjects,
   wishlist,
   waitlist,
   shop,
