@@ -10,6 +10,7 @@ import { products } from './products';
 import { variants } from './variants';
 import { wishlist } from './wishlist';
 import { waitlist } from './waitlist';
+import { recentlyViewed } from './recentlyViewed';
 import { isConfigured, setConfig } from './client';
 import { shop, formatMoney } from './money';
 import { setCartPolicy } from './cartPolicy';
@@ -40,6 +41,7 @@ export const shopify: ShopifyIntegration = {
   metaobjects,
   wishlist,
   waitlist,
+  recentlyViewed,
   shop,
   formatMoney,
   alerts: {

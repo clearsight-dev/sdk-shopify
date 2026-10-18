@@ -50,6 +50,15 @@ function known(ids: readonly string[], transformKey: string) {
   return { products, byId };
 }
 
+/**
+ * Whether this session read `id` (with this image transform) and the store had no such product. For
+ * the hooks that build their list of ids from something kept elsewhere (`useRecentlyViewed`,
+ * `usePastOrderProducts`): they leave such an id out, so the next one is read in its place.
+ */
+export function isGoneFromStore(id: string, imageTransform?: ImageTransform): boolean {
+  return session.get(keyOf(id, imageTransform ? JSON.stringify(imageTransform) : '')) === null;
+}
+
 export function useProductsById(
   ids: readonly string[] | null | undefined,
   options: UseProductsByIdOptions = {},

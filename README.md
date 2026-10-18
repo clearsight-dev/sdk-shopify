@@ -36,6 +36,7 @@ const cart = await shopify.cart.create({ lines: [{ merchandiseId: 'gid://…', q
 | `shopify.blogs`       | `list`, `byHandle`, `articles`, `articleByHandle` |
 | `shopify.wishlist`    | `init`, `add`, `remove`, `toggle`, `has`, `list`, `count`, `clear`, `refresh`, `onChange` |
 | `shopify.waitlist`    | `init`, `add`, `remove`, `has`, `list`, `count`, `clear`, `refresh`, `onChange` |
+| `shopify.recentlyViewed` | `init`, `isReady`, `record`, `list`, `remove`, `clear`, `onChange` — see [Recently viewed](#recently-viewed-and-products-from-past-orders-0170) |
 | `shopify.alerts`      | `message`, `setMessages`, `patchMessages`, `setPolicy` — see [Alerts & Toasts](#alerts--toasts) |
 
 ### Cart note
@@ -520,6 +521,78 @@ const hero = useMetaobject(HERO_ID);
   collectionHandle={hero.fields.collection?.collectionHandle ?? undefined}
 />
 ```
+
+### Recently viewed, and products from past orders (0.17.0)
+
+**Recently viewed.** The products a shopper opened, newest first, kept on the device with the
+wishlist's storage rules (`storedList`). Each entry is the product's id, its handle and when it was
+opened (`{ id, handle, viewedAt }`, ms), never the product: `useRecentlyViewed` reads the products as
+the store has them today (price, stock), through `useProductsById`, so they share its batch read and its
+session cache. Opening a product again moves it to the front, and past `limit` the oldest goes.
+
+```tsx
+<ShopifyProvider config={...} storage={AsyncStorage} recentlyViewed={{ limit: 20 }}>
+
+// The product page's screen records the product it opened: the SDK never records a view by itself.
+const page = useProductPage(handle);
+const seen = useRecentlyViewed({ leaveOut: handle, limit: 10, imageTransform: CARD_IMAGE });
+useEffect(() => {
+  if (page.shown) seen.record({ id: page.shown.id, handle: page.shown.handle });
+}, [page.shown?.id]);
+
+// Anywhere else
+const { products, loading, error, clear } = useRecentlyViewed();
+```
+
+- **On the provider**, `recentlyViewed`: `storage` (default: the provider's `storage`), `storageKey`
+  (default `tile:shopify:recentlyViewed:v1`; no earlier app kept this list, so there is nothing to
+  migrate) and `limit` (products kept, default 20, rounded, 1–50). Read when the provider mounts, without
+  waiting for the shop to load. A product recorded before the stored list is read stays, in front of it.
+- **`useRecentlyViewed({ limit, leaveOut, imageTransform, enabled })`** returns `{ products, loading,
+  error, record, clear }`. `products`: newest first, at most `limit` (default 10, 1–50), without
+  `leaveOut` (the product a product page has open, by id or handle). They are read once the stored list
+  is, in one batch.
+- **Every `useRecentlyViewed` shows a change at once**, wherever it was recorded (another screen,
+  `shopify.recentlyViewed.record` without React).
+- **A product the store no longer has** is left out, taken off the device, and the next one is read in
+  its place.
+- `enabled: false`: no products and nothing read; `record` and `clear` still work.
+- Without React: `shopify.recentlyViewed.init({ storage, storageKey, limit })`, `record({ id, handle })`,
+  `list()` (the stored entries, the same array until the list changes), `remove(id)`, `clear()`,
+  `onChange(listener)`. A `record` with anything but a product id is ignored (a numeric id is made a GID).
+
+**Products from past orders**, for a "buy again" row: the signed-in shopper's newest orders, their
+products each once, with the size they bought.
+
+```tsx
+const past = usePastOrderProducts({ orders: 5, limit: 12, imageTransform: CARD_IMAGE });
+past.items; // [{ product, variantId, orderedAt }], newest order first
+past.refresh(); // pull to refresh
+```
+
+- **`usePastOrderProducts({ orders, limit, imageTransform, enabled })`** returns `{ products, items,
+  loading, error, signedIn, refresh }`. `orders`: how many of the newest orders (default 5, 1–10). Each
+  product once, from its newest order; `variantId` is the size bought there, null when the product no
+  longer has it. At most `limit` (default 12, 1–24). `products` are `items`' products.
+- **Two reads**: the orders (each line's product and variant ids, `PAST_ORDER_LINES_READ` = 30 lines an
+  order), then their products in one `nodes(ids:)` batch through `useProductsById` (a product already
+  read this session isn't read again). A product the store no longer has is left out and the next one is
+  read in its place, so that is one more read for each round of missing products.
+
+  | `sessionKind` | The orders |
+  | --- | --- |
+  | `shopify` | Customer Account API: `customer { orders { lineItems { productId variantId } } }` (`PastOrderProducts`) |
+  | `password` | Storefront API: `customer(customerAccessToken:) { orders { lineItems { variant { id product { id } } } } }` (`CustomerPastOrderProducts`). Its order line has no product id, so a line whose variant the store deleted names no product and is left out. |
+
+- **Signed out**: `{ products: [], items: [], loading: false, error: false, signedIn: false }`, and
+  nothing is sent. While a stored session is read on app open, `loading` is true (as `useOrders`).
+- `refresh()` reads the orders again, keeping what is shown, and joins a read already on its way.
+  Products already read this session are reused (as every `useProductsById` list); a new order's
+  products are read. Another shopper's products never show: a new session starts from nothing.
+- Cancelled orders count: the shopper chose those products. A sold-out product is shown (the store still
+  sells it); only one the store no longer has is left out.
+
+Tested in `test/recently-viewed-and-past-orders.test.mjs` (17 checks).
 
 ## Every other page: page models (0.15.0)
 
@@ -1282,6 +1355,7 @@ import type {
   Collection, Customer, Order, Blog, Article,
   OrderSummary, OrderDetails, OrderLine, OrderProgress,
   WishlistItem, WishlistStorageAdapter,
+  RecentlyViewedEntry, RecentlyViewedOptions,
   ShopifyConfig, ShopifyIntegration,
   ShopifyError,
   // Tile Credit

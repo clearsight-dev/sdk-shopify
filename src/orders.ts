@@ -1,6 +1,7 @@
 /**
- * The signed-in shopper's orders, for `useOrders` and `useOrder` (react/useOrders.ts), from the API
- * their session reads (`CustomerState.sessionKind`):
+ * The signed-in shopper's orders, for `useOrders` and `useOrder` (react/useOrders.ts), and the products
+ * on them for `usePastOrderProducts` (0.17.0), from the API their session reads
+ * (`CustomerState.sessionKind`):
  *
  * - `shopify`: the Customer Account API (`customer.orders`, `order(id:)`), as production Amber did.
  * - `password`: the Storefront API (`customer(customerAccessToken:) { orders }`).
@@ -9,7 +10,7 @@
  * sign-in it was. Newest first on both, by `processedAt`: the date the screens show. (Production
  * sorted by ID; an imported order's `processedAt` can be older than its ID suggests.)
  *
- * Framework-free. Tested in test/orders.test.mjs.
+ * Framework-free. Tested in test/orders.test.mjs and test/recently-viewed-and-past-orders.test.mjs.
  */
 import { request } from './client';
 import { quantityInCart, stockCeiling } from './productPage';
@@ -154,6 +155,45 @@ export const STOREFRONT_ORDER_DETAIL_QUERY = /* GraphQL */ `
   }
 `;
 
+// ── Products from past orders (0.17.0) ─────────────────────────────────────
+
+/**
+ * Lines read per order for `usePastOrderProducts`: more than the 24 products it shows at most, so one
+ * big order alone can fill it. Each line is two ids.
+ */
+export const PAST_ORDER_LINES_READ = 30;
+
+/** The newest orders' lines as product and variant ids (Customer Account API). */
+export const ACCOUNT_PAST_ORDER_PRODUCTS_QUERY = /* GraphQL */ `
+  query PastOrderProducts($first: Int!) {
+    customer {
+      orders(first: $first, sortKey: PROCESSED_AT, reverse: true) {
+        nodes {
+          processedAt
+          lineItems(first: ${PAST_ORDER_LINES_READ}) { nodes { productId variantId } }
+        }
+      }
+    }
+  }
+`;
+
+/**
+ * The same from the Storefront API. Its order line has no product id: the product comes through the
+ * variant, so a line whose variant the store deleted names no product.
+ */
+export const STOREFRONT_PAST_ORDER_PRODUCTS_QUERY = /* GraphQL */ `
+  query CustomerPastOrderProducts($accessToken: String!, $first: Int!) {
+    customer(customerAccessToken: $accessToken) {
+      orders(first: $first, sortKey: PROCESSED_AT, reverse: true) {
+        nodes {
+          processedAt
+          lineItems(first: ${PAST_ORDER_LINES_READ}) { nodes { variant { id product { id } } } }
+        }
+      }
+    }
+  }
+`;
+
 // ── What the APIs return ───────────────────────────────────────────────────
 
 type RawMoney = { amount: string; currencyCode: string } | null | undefined;
@@ -202,6 +242,16 @@ interface RawStorefrontOrder {
     originalTotalPrice?: RawMoney;
     variant?: { id?: string | null; title?: string | null; image?: { url?: string | null } | null } | null;
   }>;
+}
+
+interface RawAccountOrderedLines {
+  processedAt?: string | null;
+  lineItems?: Nodes<{ productId?: string | null; variantId?: string | null }>;
+}
+
+interface RawStorefrontOrderedLines {
+  processedAt?: string | null;
+  lineItems?: Nodes<{ variant?: { id?: string | null; product?: { id?: string | null } | null } | null }>;
 }
 
 interface RawPage<T> {
@@ -362,6 +412,38 @@ export function placedSince(
   return Date.parse(order.processedAt) >= since - clockLeewayMs;
 }
 
+/** A product on one of the shopper's orders, for `usePastOrderProducts`. */
+export interface OrderedProduct {
+  productId: string;
+  /** The variant on the order line; null when the line names none. */
+  variantId: string | null;
+  /** When the order was placed (its `processedAt`). */
+  orderedAt: string;
+}
+
+/** One order's date and its lines' ids, as either API gives them. */
+export interface OrderedLines {
+  processedAt: string;
+  lines: { productId: string | null; variantId: string | null }[];
+}
+
+/**
+ * Each product once, from its newest order (orders come newest first), as the first line there that
+ * names it. A line that names no product (a custom line, a product the store deleted) is left out.
+ */
+export function productsOnOrders(orders: OrderedLines[]): OrderedProduct[] {
+  const seen = new Set<string>();
+  const products: OrderedProduct[] = [];
+  for (const order of orders) {
+    for (const line of order.lines) {
+      if (!line.productId || seen.has(line.productId)) continue;
+      seen.add(line.productId);
+      products.push({ productId: line.productId, variantId: line.variantId, orderedAt: order.processedAt });
+    }
+  }
+  return products;
+}
+
 export interface OrdersPage {
   orders: OrderSummary[];
   /** Pass to the next `list` call; null on the last page. */
@@ -375,6 +457,8 @@ export interface OrderSource {
   list(first: number, after: string | null): Promise<OrdersPage>;
   /** One order in full. Null when this shopper has no order with that id. */
   get(id: string): Promise<OrderDetails | null>;
+  /** The products on the newest `orders` orders, in one read: newest first, each once (`productsOnOrders`). */
+  orderedProducts(orders: number): Promise<OrderedProduct[]>;
 }
 
 /** `CustomerState.request`: one Customer Account API call for the signed-in shopper. */
@@ -403,6 +487,18 @@ export function customerAccountOrders(accountRequest: AccountRequest): OrderSour
     async get(id) {
       const data = await accountRequest<{ order: RawAccountOrder | null }>(ACCOUNT_ORDER_DETAIL_QUERY, { id });
       return data.order ? toDetails(fromAccount(data.order)) : null;
+    },
+    async orderedProducts(orders) {
+      const data = await accountRequest<{ customer: { orders: Nodes<RawAccountOrderedLines> } | null }>(
+        ACCOUNT_PAST_ORDER_PRODUCTS_QUERY,
+        { first: orders },
+      );
+      return productsOnOrders(
+        nodesOf(data.customer?.orders).map((order) => ({
+          processedAt: order.processedAt ?? '',
+          lines: nodesOf(order.lineItems).map((line) => ({ productId: line.productId ?? null, variantId: line.variantId ?? null })),
+        })),
+      );
     },
   };
 }
@@ -467,6 +563,22 @@ export function storefrontOrders(getAccessToken: () => Promise<string | null>): 
         if (node?.id === id) return toDetails(fromStorefront(node));
       }
       throw new ShopifyError('The order list changed while it was being read; try again');
+    },
+    async orderedProducts(orders) {
+      const data = await request<StorefrontCustomer<Nodes<RawStorefrontOrderedLines>>>(STOREFRONT_PAST_ORDER_PRODUCTS_QUERY, {
+        accessToken: await token(),
+        first: orders,
+      });
+      if (!data.customer) throw sessionEnded();
+      return productsOnOrders(
+        nodesOf(data.customer.orders).map((order) => ({
+          processedAt: order.processedAt ?? '',
+          lines: nodesOf(order.lineItems).map((line) => ({
+            productId: line.variant?.product?.id ?? null,
+            variantId: line.variant?.id ?? null,
+          })),
+        })),
+      );
     },
   };
 }

@@ -149,3 +149,17 @@ export {
   type UseMetaobjectOptions,
   type MetaobjectState,
 } from "./useMetaobject";
+export {
+  useRecentlyViewed,
+  RECENTLY_VIEWED_SHOWN,
+  type UseRecentlyViewedOptions,
+  type RecentlyViewedProducts,
+} from "./useRecentlyViewed";
+export {
+  usePastOrderProducts,
+  PAST_ORDERS_READ,
+  PAST_ORDER_PRODUCTS_SHOWN,
+  type UsePastOrderProductsOptions,
+  type PastOrderProducts,
+  type PastOrderItem,
+} from "./usePastOrderProducts";

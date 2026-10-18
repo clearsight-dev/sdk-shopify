@@ -127,7 +127,8 @@ export interface UseOrderOptions {
   onBoughtAgain?: (result: BuyAgainResult) => void;
 }
 
-function sourceFor(customer: CustomerState): OrderSource {
+/** Where the signed-in shopper's orders are read from, by the sign-in. Also `usePastOrderProducts`. */
+export function sourceFor(customer: CustomerState): OrderSource {
   return customer.sessionKind === 'shopify'
     ? customerAccountOrders(customer.request)
     : storefrontOrders(customer.getAccessToken);

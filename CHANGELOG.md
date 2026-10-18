@@ -11,6 +11,40 @@
   hero), each field's value with the picture's URL and the collection's handle. Reused for 10 minutes
   (`MetaobjectById` in the request cache); `refresh()` reads it again.
 
+### New: recently viewed, and products from past orders
+
+For two base-app tiles, "Recently Viewed" and "Repeat Orders" (decided 2026-10-18).
+
+- **`shopify.recentlyViewed`** (`init`, `isReady`, `record({ id, handle })`, `list`, `remove`, `clear`,
+  `onChange`): the products a shopper opened, newest first, kept on the device with the wishlist's
+  storage rules. An entry is `{ id, handle, viewedAt }`, never the product. Opened again, a product moves
+  to the front; past `limit` the oldest goes. Nothing records a view by itself: the product page's
+  screen calls `record` (no hidden side effect in `useProductPage`).
+- **`ShopifyProvider recentlyViewed={{ storage, storageKey, limit }}`**: default the provider's `storage`,
+  `tile:shopify:recentlyViewed:v1` (a new key, nothing to migrate), and 20 products (1–50). Read when the
+  provider mounts, without waiting for the shop; a product recorded before the read finishes stays.
+- **`useRecentlyViewed({ limit, leaveOut, imageTransform, enabled })`** → `{ products, loading, error,
+  record, clear }`: the stored products as the store has them today, through `useProductsById` (its
+  batch read and session cache), newest first, at most `limit` (default 10), without `leaveOut` (the open
+  product, by id or handle). Every hook shows a change at once, wherever it was recorded. A product the
+  store no longer has is left out and taken off the device.
+- **`usePastOrderProducts({ orders, limit, imageTransform, enabled })`** → `{ products, items, loading,
+  error, signedIn, refresh }`: the products on the signed-in shopper's newest `orders` orders (default 5,
+  1–10), each once from its newest order, as `{ product, variantId, orderedAt }` (`variantId` null when the
+  product no longer has that size), at most `limit` (default 12, 1–24). Two reads: the orders' line ids
+  (`PastOrderProducts` on the Customer Account API for a Shopify sign-in, `CustomerPastOrderProducts` on
+  the Storefront API for email and password), then the products in one `nodes(ids:)` batch through
+  `useProductsById`. Products the store no longer has are left out. Signed out: empty, `signedIn: false`,
+  nothing sent. `refresh()` reads the orders again.
+- `useProductsById`'s module also exports `isGoneFromStore(id, imageTransform)` for these two hooks (not
+  from the package index): an id this session read and the store had no product for.
+
+Tests: `test/recently-viewed-and-past-orders.test.mjs` (17 checks: recording, order, once each, both
+limits, kept across a remount and read back from the device, a product recorded while the device is
+read, `leaveOut` by id and handle, a product the store no longer has dropped from the device, two hooks
+following one change, `clear`, `enabled`; past orders signed out, both sign-ins, once each from the newest
+order, `limit` with a missing product's place taken, the bounds, `refresh`, a failed read, a size gone).
+
 ## 0.16.0 (2026-10-17)
 
 ### New: three more collection orders, and the order a collection opens on

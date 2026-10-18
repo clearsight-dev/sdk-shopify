@@ -33,7 +33,12 @@ export {
   type CheckoutPreparation,
   type PrepareCheckoutOptions,
 } from './checkout';
-export { ORDER_CLOCK_LEEWAY_MS } from './orders';
+export { ORDER_CLOCK_LEEWAY_MS, PAST_ORDER_LINES_READ } from './orders';
+export {
+  RECENTLY_VIEWED_STORAGE_KEY,
+  RECENTLY_VIEWED_LIMIT,
+  RECENTLY_VIEWED_MAX_LIMIT,
+} from './recentlyViewed';
 export {
   preorderPlanFor,
   purchaseModeFor,
@@ -235,6 +240,16 @@ export {
   clearMetaobjects,
   type UseMetaobjectOptions,
   type MetaobjectState,
+  useRecentlyViewed,
+  RECENTLY_VIEWED_SHOWN,
+  type UseRecentlyViewedOptions,
+  type RecentlyViewedProducts,
+  usePastOrderProducts,
+  PAST_ORDERS_READ,
+  PAST_ORDER_PRODUCTS_SHOWN,
+  type UsePastOrderProductsOptions,
+  type PastOrderProducts,
+  type PastOrderItem,
   useStoreCredit,
   type StoreCreditState,
   useCartStoreCredit,

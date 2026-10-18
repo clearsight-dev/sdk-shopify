@@ -51,6 +51,7 @@ import type {
   Customer,
   MessageResolver,
   Product,
+  RecentlyViewedOptions,
   ShopifyConfig,
   SignInAttempt,
   StoreCreditOptions,
@@ -609,6 +610,12 @@ export interface ShopifyProviderProps {
   /** See `WaitlistInitOptions.migrateFrom`: keys an earlier app kept its waitlist under. */
   waitlistMigrateFrom?: string[];
   /**
+   * Where the products the shopper opened are kept, and how many (0.17.0, `useRecentlyViewed`):
+   * `storage` (default: this provider's `storage`), `storageKey` (default
+   * `tile:shopify:recentlyViewed:v1`), `limit` (default 20, 1–50). Read when the provider mounts.
+   */
+  recentlyViewed?: RecentlyViewedOptions;
+  /**
    * Alert copy, outside `config` so a Live Layer publish can change it without
    * re-running `init` (which would re-load the shop and re-create the cart).
    * Merged over `config.messages`; re-applied whenever this object changes.
@@ -684,6 +691,7 @@ export function ShopifyProvider({
   wishlistMigrateFrom,
   waitlistStorageKey,
   waitlistMigrateFrom,
+  recentlyViewed,
   messages,
   translate,
   cartPolicy,
@@ -980,6 +988,17 @@ export function ShopifyProvider({
       undefined,
     );
   }, [runGuard]);
+
+  // Recently viewed is on the device: read when the provider mounts, without waiting for the shop to
+  // load, so a product page opened at once records into the stored list (0.17.0).
+  useEffect(() => {
+    void shopify.recentlyViewed.init({
+      storage: recentlyViewed?.storage ?? storageRef.current ?? undefined,
+      storageKey: recentlyViewed?.storageKey,
+      limit: recentlyViewed?.limit,
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   useEffect(() => {
     let mounted = true;

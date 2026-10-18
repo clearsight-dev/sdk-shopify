@@ -1463,6 +1463,51 @@ export interface ShopifyWishlistAPI {
   onChange(listener: WishlistChangeListener): () => void;
 }
 
+// Recently viewed (kept on the device, 0.17.0)
+
+/** A product the shopper opened, as kept on the device. */
+export interface RecentlyViewedEntry {
+  /** The product's GID (`gid://shopify/Product/…`). */
+  id: string;
+  handle: string;
+  /** When it was last opened, in ms since 1970. */
+  viewedAt: number;
+}
+
+/** Where the list is kept and how long it gets: `ShopifyProvider recentlyViewed`, or `shopify.recentlyViewed.init`. */
+export interface RecentlyViewedOptions {
+  /** Left out: the provider's `storage` (`window.localStorage` on web; memory only when there is none). */
+  storage?: WishlistStorageAdapter;
+  /** Default `tile:shopify:recentlyViewed:v1`. */
+  storageKey?: string;
+  /** Products kept, newest first. Default 20; rounded, 1–50. */
+  limit?: number;
+}
+
+export type RecentlyViewedChangeListener = (entries: readonly RecentlyViewedEntry[]) => void;
+
+export interface ShopifyRecentlyViewedAPI {
+  /**
+   * Points the list at its storage and reads it. A product recorded before the read finished stays,
+   * in front. `ShopifyProvider` calls it when it mounts.
+   */
+  init(options?: RecentlyViewedOptions): Promise<readonly RecentlyViewedEntry[]>;
+  /** The stored list has been read, and no newer `init` is reading it again. */
+  isReady(): boolean;
+  /**
+   * A product the shopper opened: to the front, dated now. Opened again, it moves to the front; past
+   * `limit`, the oldest goes. Resolves once stored. Anything that isn't a product id is ignored.
+   */
+  record(product: { id: string; handle: string }): Promise<void>;
+  /** Newest first. The same array until the list changes. */
+  list(): readonly RecentlyViewedEntry[];
+  /** Takes one product off (a product the store no longer has). True if it was on the list. */
+  remove(productId: string): Promise<boolean>;
+  clear(): Promise<void>;
+  /** Told each time the list changes. Returns an unsubscribe function. */
+  onChange(listener: RecentlyViewedChangeListener): () => void;
+}
+
 export interface ShopifyIntegration {
   /** Must be called before any other method. */
   init(config: ShopifyConfig): Promise<void>;
@@ -1479,6 +1524,8 @@ export interface ShopifyIntegration {
   metaobjects: ShopifyMetaobjectsAPI;
   wishlist: ShopifyWishlistAPI;
   waitlist: ShopifyWaitlistAPI;
+  /** Products the shopper opened, newest first, kept on the device (0.17.0). */
+  recentlyViewed: ShopifyRecentlyViewedAPI;
   /** Money format and currency, loaded at init. */
   shop: {
     load(): Promise<{ moneyFormat: string | null; currencyCode: string | null }>;
