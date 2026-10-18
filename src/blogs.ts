@@ -75,7 +75,7 @@ export const blogs: ShopifyBlogsAPI = {
       after: opts?.after,
       sortKey: opts?.sortKey,
       reverse: opts?.reverse ?? false,
-    }, { imageTransform: opts?.imageTransform });
+    }, { fresh: opts?.fresh, imageTransform: opts?.imageTransform });
     if (!data.blog) {
       return { nodes: [], pageInfo: { hasNextPage: false, hasPreviousPage: false, startCursor: null, endCursor: null } };
     }
@@ -85,11 +85,11 @@ export const blogs: ShopifyBlogsAPI = {
     };
   },
 
-  async articleByHandle(blogHandle: string, articleHandle: string, opts?: ImageOptions): Promise<Article | null> {
+  async articleByHandle(blogHandle: string, articleHandle: string, opts?: { fresh?: boolean } & ImageOptions): Promise<Article | null> {
     const data = await request<BlogArticleRaw>(BLOG_ARTICLE_BY_HANDLE_QUERY, {
       blogHandle,
       articleHandle,
-    }, { imageTransform: opts?.imageTransform });
+    }, { fresh: opts?.fresh, imageTransform: opts?.imageTransform });
     if (!data.blog || !data.blog.articleByHandle) return null;
     return normalizeArticle(data.blog.articleByHandle);
   },

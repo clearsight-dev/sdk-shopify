@@ -1304,8 +1304,9 @@ export interface ShopifyMetaobjectsAPI {
 export interface ShopifyBlogsAPI {
   list(opts?: ListOptions): Promise<Connection<Blog>>;
   byHandle(handle: string): Promise<Blog | null>;
+  /** `fresh` skips a recent cached answer (pull to refresh, 0.17.0). */
   articles(blogHandle: string, opts?: ListOptions): Promise<Connection<Article>>;
-  articleByHandle(blogHandle: string, articleHandle: string, opts?: ImageOptions): Promise<Article | null>;
+  articleByHandle(blogHandle: string, articleHandle: string, opts?: { fresh?: boolean } & ImageOptions): Promise<Article | null>;
 }
 
 // Wishlist (local-storage backed)

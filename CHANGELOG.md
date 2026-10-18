@@ -45,6 +45,36 @@ read, `leaveOut` by id and handle, a product the store no longer has dropped fro
 following one change, `clear`, `enabled`; past orders signed out, both sign-ins, once each from the newest
 order, `limit` with a missing product's place taken, the bounds, `refresh`, a failed read, a size gone).
 
+### New: a blog's articles, and one article
+
+For a base-app blog section (`BlogSection01`) and its article page (decided 2026-10-18).
+
+- **`useBlogArticles(blogHandle, { limit, imageTransform, enabled })`** → `{ articles, loading, error,
+  refresh }`: the blog's newest articles first (`shopify.blogs.articles` by `PUBLISHED_AT`, reversed), at
+  most `limit` (default `BLOG_ARTICLES_SHOWN` = 6, rounded, 1–50). Read once per blog, count and image size
+  a session, so a second section on the same blog draws at once; `refresh()` reads again from the
+  network. A blog the store doesn't have: no articles. No blog, or `enabled: false`: nothing read.
+- **`useArticle(blogHandle, articleHandle, { imageTransform, enabled, parseContent })`** → `{ article,
+  content, loading, error, notFound, refresh }`: one article (`shopify.blogs.articleByHandle`), its words
+  as `content: { html, blocks }`, the blocks parsed by `parseDescriptionHtml` exactly as
+  `useProductPage().description` (paragraphs and bullets with their bold runs), so a screen draws them
+  with a product description tile. `parseContent`: `false` for no blocks, or a parser of your own.
+  `notFound` once read and the store has no such article (or blog). Read once a session; `refresh()`
+  reads again, keeping what is shown.
+- **An article opened from a list draws in the first frame:** every article a `useBlogArticles` read is
+  kept, so `useArticle` at the same image size reads nothing, and at another size shows the list's copy
+  while it reads its own.
+- **Fixed:** `shopify.blogs.articles` dropped `ListOptions.fresh`, and `articleByHandle` had no way to
+  ask for it, so a pull to refresh got the request cache's answer (blog reads are reused for 10 minutes).
+  `articles` passes it on now, and `articleByHandle` takes `{ fresh }`.
+- `clearBlogArticles()` forgets this session's reads (tests, or a new store).
+
+Tests: `test/blog-articles.test.mjs` (13 checks: newest first with the count and image size sent, read
+once and again on refresh, the count's default and bounds, a missing blog, no blog, `enabled`, a failed
+read; an article's blocks, `parseContent` off and your own, drawn from a list's read at the same size
+with no read and at another size at once, read once and again on refresh, not found (article and blog),
+no handles, `enabled`, a failed read and a failed refresh keeping the article).
+
 ## 0.16.0 (2026-10-17)
 
 ### New: three more collection orders, and the order a collection opens on

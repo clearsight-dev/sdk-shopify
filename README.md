@@ -594,6 +594,50 @@ past.refresh(); // pull to refresh
 
 Tested in `test/recently-viewed-and-past-orders.test.mjs` (17 checks).
 
+### A blog's articles, and one article (0.17.0)
+
+`useBlogArticles(blogHandle, options)` reads a blog's newest articles for a blog section, and
+`useArticle(blogHandle, articleHandle, options)` one article for its page, with its words as paragraphs.
+The screen lays them onto tiles; tiles never read them.
+
+```tsx
+const BLOG_IMAGE = { maxWidth: 1080 };
+
+// A blog section
+const blog = useBlogArticles(group.blogHandle, { limit: 6, imageTransform: BLOG_IMAGE });
+<BlogSection01 articles={blog.articles} loading={blog.loading} error={blog.error} onRetry={blog.refresh}
+  onPressArticle={(article) => nav.navigate("Article", { blogHandle: article.blog.handle, articleHandle: article.handle })} />
+
+// The article page
+const page = useArticle(blogHandle, articleHandle, { imageTransform: BLOG_IMAGE });
+<ProductDescription01 blocks={page.content.blocks} />
+```
+
+- **`useBlogArticles(blogHandle, { limit, imageTransform, enabled, onError })`** returns `{ articles,
+  loading, error, refresh }`. `articles`: newest first (`PUBLISHED_AT`, reversed), at most `limit`
+  (default `BLOG_ARTICLES_SHOWN`, 6; rounded, 1–50). Each is the SDK's `Article`: title, handle,
+  `publishedAt`, `image`, `author`, `excerpt`, `contentHtml` and its `blog` (`{ id, handle, title }`).
+  A blog the store doesn't have gives none; no blog, or `enabled: false`, reads nothing.
+- **`useArticle(blogHandle, articleHandle, { imageTransform, enabled, parseContent, onError })`** returns
+  `{ article, content, loading, error, notFound, refresh }`. `content` is `{ html, blocks }`: the
+  article's `contentHtml`, and as paragraphs and bullets with their bold runs, parsed by
+  `parseDescriptionHtml` exactly as `useProductPage().description`, so a product description tile draws
+  it. `parseContent: false` skips the blocks; a function is your own parser. Pictures, links and
+  headings inside the words are not blocks: a heading reads as a paragraph (bold when the merchant made
+  it bold). `notFound`: read, and the store has no such article in that blog (or no such blog). No
+  handles, or `enabled: false`: nothing read, and neither found nor missing.
+- **Read once a session** (per blog, count and image size; per article and image size): coming back
+  draws at once. `refresh()` reads again from the network (`fresh`), keeping what is shown; a failed
+  read sets `error` and keeps it too. Blog reads are also reused for 10 minutes by the request cache.
+- **An article opened from a list draws in the first frame:** every article a `useBlogArticles` read is
+  kept, so `useArticle` at the same `imageTransform` reads nothing (the list's read has the article's
+  words), and at another size shows the list's copy while it reads its own. Ask for one size in both.
+- `clearBlogArticles()` forgets this session's reads. Without React: `shopify.blogs.articles(handle,
+  { first, sortKey: "PUBLISHED_AT", reverse: true, fresh })` and `shopify.blogs.articleByHandle(blog,
+  article, { imageTransform, fresh })`.
+
+Tested in `test/blog-articles.test.mjs` (13 checks).
+
 ## Every other page: page models (0.15.0)
 
 One hook per page, each in the style of `useProductPage` and `useCartPage`: what the page decides, as
