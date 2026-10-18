@@ -682,14 +682,36 @@ export const BLOG_BY_HANDLE_QUERY = /* GraphQL */ `
   }
 `;
 
+/** The blog's own id, handle and title come with its articles (0.18.0): a blog's page needs its title. */
 export const BLOG_ARTICLES_QUERY = /* GraphQL */ `
   ${ARTICLE_FRAGMENT}
   query BlogArticles($handle: String!, $first: Int!, $after: String, $sortKey: ArticleSortKeys, $reverse: Boolean) {
     blog(handle: $handle) {
+      ...BlogFields
       articles(first: $first, after: $after, sortKey: $sortKey, reverse: $reverse) {
         nodes { ...ArticleFields }
         pageInfo { hasNextPage hasPreviousPage startCursor endCursor }
       }
+    }
+  }
+`;
+
+/**
+ * Every blog with its newest articles, in one request (0.18.0): `Blog.articles` is a connection, so
+ * each blog's first articles come in the same answer as the blogs.
+ */
+export const BLOGS_WITH_ARTICLES_QUERY = /* GraphQL */ `
+  ${ARTICLE_FRAGMENT}
+  query BlogsWithArticles($first: Int!, $after: String, $articlesPerBlog: Int!) {
+    blogs(first: $first, after: $after) {
+      nodes {
+        ...BlogFields
+        articles(first: $articlesPerBlog, sortKey: PUBLISHED_AT, reverse: true) {
+          nodes { ...ArticleFields }
+          pageInfo { hasNextPage hasPreviousPage startCursor endCursor }
+        }
+      }
+      pageInfo { hasNextPage hasPreviousPage startCursor endCursor }
     }
   }
 `;

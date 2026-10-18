@@ -1,5 +1,48 @@
 # Changelog
 
+## 0.18.0 (2026-10-19)
+
+### New: every blog with its newest articles, and a blog's articles a page at a time
+
+For a base app's Blogs page (every blog, each with its newest posts) and Blog page (all of one blog's
+posts, more as the shopper scrolls), decided 2026-10-19.
+
+- **`useBlogs({ articlesPerBlog, imageTransform, enabled, onError })`** → `{ blogs, loading, error,
+  refresh, refreshing }`: every blog the store has, in the order the store made them, each a
+  `BlogWithArticles` (`id`, `handle`, `title`, its newest `articles` first, `articlesPageInfo`); a blog
+  without articles has none. **One request** (`BlogsWithArticles`): `Blog.articles` is a connection, so
+  each blog's first articles come in the same answer as the blogs, up to 50 blogs a read (a store with
+  more is read on, up to 250). `articlesPerBlog`: default `BLOG_ARTICLES_SHOWN` (6), rounded, 1–50. Read
+  once per count and image size a session; `refresh()` reads again from the network, keeping the blogs
+  shown (`refreshing` meanwhile). Reused for 10 minutes by the request cache.
+- **A blog or an article opened from there draws in the first frame:** each blog's articles count as
+  its first page for `useBlogArticles` at the same count and image size (with where its next page
+  starts), and each article for `useArticle`.
+- **`useBlogArticles` pages:** `loadMore()` reads the next `limit` articles and adds them after the
+  ones shown (each once); `hasMore`, `loadingMore`. A failed next page sets `error`, keeps the articles
+  and ends `hasMore`, so a list's end can't ask again and again offline; `refresh()` starts over from the
+  first page (the next pages dropped, a next page still on its way too), keeping what is shown until it
+  lands (`refreshing`). Also `blog` (the blog's `id`, `handle`, `title`, for a page's title) and
+  `notFound` (read, and the store has no blog by that handle). Its existing return (`articles`,
+  `loading`, `error`, `refresh`) is unchanged, and so is every read before the first `loadMore()`:
+  `articles` holds at most `limit` until then.
+- **`loading` from the first frame:** with nothing known and a read about to start, `useBlogs` and
+  `useBlogArticles` say `loading` in their first frame (`useBlogArticles` said it from the second
+  until now), so a page never shows its "no articles" state before the read.
+- **`shopify.blogs.listWithArticles({ first, after, articlesPerBlog, imageTransform, fresh })`** →
+  `Connection<BlogWithArticles>`, and **`shopify.blogs.articlesWithBlog(blogHandle, opts)`** →
+  `{ blog, articles }` (`blog: null` for a blog the store doesn't have). `shopify.blogs.articles` is
+  unchanged (its query now also reads the blog's id, handle and title).
+
+Tests: `test/blogs-and-paging.test.mjs` (13 checks: every blog in one request with the count and image
+size sent and `loading` from the first frame, a blog without articles, read once and again on refresh
+with the blogs kept, the count's default and bounds, 60 blogs in two reads, `enabled`, a failed read and
+a failed refresh; a blog and an article opened from the blogs page drawn with no read and the next page
+carrying on; pages until there are no more, `loadingMore` and one read for two asks, a failed next page
+then a refresh, a next page landing after a refresh dropped, a missing blog, both methods without
+React).
+`test/blog-articles.test.mjs`'s 13 checks pass unchanged.
+
 ## 0.17.0 (2026-10-18)
 
 ### New: products by id, and metaobjects

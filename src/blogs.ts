@@ -1,6 +1,7 @@
 import { request } from './client';
 import {
   BLOGS_LIST_QUERY,
+  BLOGS_WITH_ARTICLES_QUERY,
   BLOG_ARTICLES_QUERY,
   BLOG_ARTICLE_BY_HANDLE_QUERY,
   BLOG_BY_HANDLE_QUERY,
@@ -8,6 +9,9 @@ import {
 import type {
   Article,
   Blog,
+  BlogArticlesPage,
+  BlogsWithArticlesOptions,
+  BlogWithArticles,
   Connection,
   ListOptions,
   PageInfo,
@@ -22,7 +26,17 @@ interface BlogRaw {
   blog: Blog | null;
 }
 interface BlogArticlesRaw {
-  blog: { articles: { nodes: any[]; pageInfo: PageInfo } } | null;
+  blog: (Partial<Blog> & { articles: { nodes: any[]; pageInfo: PageInfo } }) | null;
+}
+interface BlogsWithArticlesRaw {
+  blogs: { nodes: (Blog & { articles: { nodes: any[]; pageInfo: PageInfo } })[]; pageInfo: PageInfo };
+}
+
+const NO_MORE: PageInfo = { hasNextPage: false, hasPreviousPage: false, startCursor: null, endCursor: null };
+
+/** A count Shopify takes: a whole number, 1–250; the default when it isn't a number. */
+function countOf(value: number | undefined, fallback: number): number {
+  return typeof value === 'number' && Number.isFinite(value) ? Math.min(250, Math.max(1, Math.round(value))) : fallback;
 }
 interface BlogArticleRaw {
   blog: { articleByHandle: any | null } | null;
@@ -69,6 +83,10 @@ export const blogs: ShopifyBlogsAPI = {
   },
 
   async articles(blogHandle: string, opts?: ListOptions): Promise<Connection<Article>> {
+    return (await blogs.articlesWithBlog(blogHandle, opts)).articles;
+  },
+
+  async articlesWithBlog(blogHandle: string, opts?: ListOptions): Promise<BlogArticlesPage> {
     const data = await request<BlogArticlesRaw>(BLOG_ARTICLES_QUERY, {
       handle: blogHandle,
       first: opts?.first ?? 20,
@@ -76,12 +94,29 @@ export const blogs: ShopifyBlogsAPI = {
       sortKey: opts?.sortKey,
       reverse: opts?.reverse ?? false,
     }, { fresh: opts?.fresh, imageTransform: opts?.imageTransform });
-    if (!data.blog) {
-      return { nodes: [], pageInfo: { hasNextPage: false, hasPreviousPage: false, startCursor: null, endCursor: null } };
-    }
+    if (!data.blog) return { blog: null, articles: { nodes: [], pageInfo: NO_MORE } };
+    const { id, handle, title } = data.blog;
     return {
-      nodes: data.blog.articles.nodes.map(normalizeArticle),
-      pageInfo: data.blog.articles.pageInfo,
+      blog: { id: id ?? '', handle: handle ?? blogHandle, title: title ?? '' },
+      articles: { nodes: data.blog.articles.nodes.map(normalizeArticle), pageInfo: data.blog.articles.pageInfo },
+    };
+  },
+
+  async listWithArticles(opts?: BlogsWithArticlesOptions): Promise<Connection<BlogWithArticles>> {
+    const data = await request<BlogsWithArticlesRaw>(BLOGS_WITH_ARTICLES_QUERY, {
+      first: countOf(opts?.first, 50),
+      after: opts?.after,
+      articlesPerBlog: countOf(opts?.articlesPerBlog, 6),
+    }, { fresh: opts?.fresh, imageTransform: opts?.imageTransform });
+    return {
+      nodes: data.blogs.nodes.map((blog) => ({
+        id: blog.id,
+        handle: blog.handle,
+        title: blog.title,
+        articles: blog.articles.nodes.map(normalizeArticle),
+        articlesPageInfo: blog.articles.pageInfo,
+      })),
+      pageInfo: data.blogs.pageInfo,
     };
   },
 

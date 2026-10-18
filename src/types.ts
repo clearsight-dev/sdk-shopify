@@ -910,6 +910,35 @@ export interface Article {
   blog: Blog;
 }
 
+/** A blog with its newest articles, read together (`shopify.blogs.listWithArticles`, 0.18.0). */
+export interface BlogWithArticles extends Blog {
+  /** Its newest articles first, as many as asked; none for a blog without any. */
+  articles: Article[];
+  /** Whether it has more than these, and where the next start (`blogs.articles`' `after`). */
+  articlesPageInfo: PageInfo;
+}
+
+/** One page of a blog's articles with the blog itself (`shopify.blogs.articlesWithBlog`, 0.18.0). */
+export interface BlogArticlesPage {
+  /** The blog's id, handle and title; null when the store has no blog by that handle. */
+  blog: Blog | null;
+  articles: Connection<Article>;
+}
+
+/** `shopify.blogs.listWithArticles`' options (0.18.0). */
+export interface BlogsWithArticlesOptions {
+  /** Blogs in this page, 1–250. @default 50 */
+  first?: number;
+  /** Where this page starts: the last page's `pageInfo.endCursor`. */
+  after?: string;
+  /** Each blog's newest articles, 1–250. @default 6 */
+  articlesPerBlog?: number;
+  /** Skip a recent cached answer and read from the network (pull to refresh). */
+  fresh?: boolean;
+  /** For every article's photo. */
+  imageTransform?: ImageTransform;
+}
+
 // Pagination
 
 export interface PageInfo {
@@ -1307,6 +1336,16 @@ export interface ShopifyBlogsAPI {
   /** `fresh` skips a recent cached answer (pull to refresh, 0.17.0). */
   articles(blogHandle: string, opts?: ListOptions): Promise<Connection<Article>>;
   articleByHandle(blogHandle: string, articleHandle: string, opts?: { fresh?: boolean } & ImageOptions): Promise<Article | null>;
+  /**
+   * A page of the store's blogs, each with its newest articles (by `PUBLISHED_AT`, newest first), in
+   * one request (0.18.0). The blogs in the order the store made them.
+   */
+  listWithArticles(opts?: BlogsWithArticlesOptions): Promise<Connection<BlogWithArticles>>;
+  /**
+   * `articles`, with the blog's own id, handle and title (0.18.0); `blog: null` and no articles for a
+   * blog the store doesn't have.
+   */
+  articlesWithBlog(blogHandle: string, opts?: ListOptions): Promise<BlogArticlesPage>;
 }
 
 // Wishlist (local-storage backed)

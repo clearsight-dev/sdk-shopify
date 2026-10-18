@@ -33,7 +33,7 @@ const cart = await shopify.cart.create({ lines: [{ merchandiseId: 'gid://…', q
 | `shopify.collections` | `list`, `byHandle`, `products` |
 | `shopify.cart`        | `create`, `get`, `addLines`, `updateLines`, `removeLines`, `applyDiscountCodes`, `setBuyerIdentity`, `updateNote`, `addGiftCardCodes`, `applyGiftCardCodes` (replaces), `removeGiftCardCodes` |
 | `shopify.customer`    | `signup`, `login`, `logout`, `profile`, `updateProfile`, `recoverPassword`, `orders`, `orderById` |
-| `shopify.blogs`       | `list`, `byHandle`, `articles`, `articleByHandle` |
+| `shopify.blogs`       | `list`, `byHandle`, `articles`, `articleByHandle`, `listWithArticles` and `articlesWithBlog` (0.18.0) |
 | `shopify.wishlist`    | `init`, `add`, `remove`, `toggle`, `has`, `list`, `count`, `clear`, `refresh`, `onChange` |
 | `shopify.waitlist`    | `init`, `add`, `remove`, `has`, `list`, `count`, `clear`, `refresh`, `onChange` |
 | `shopify.recentlyViewed` | `init`, `isReady`, `record`, `list`, `remove`, `clear`, `onChange` — see [Recently viewed](#recently-viewed-and-products-from-past-orders-0170) |
@@ -637,6 +637,50 @@ const page = useArticle(blogHandle, articleHandle, { imageTransform: BLOG_IMAGE 
   article, { imageTransform, fresh })`.
 
 Tested in `test/blog-articles.test.mjs` (13 checks).
+
+### Every blog, and a blog a page at a time (0.18.0)
+
+`useBlogs(options)` reads every blog with its newest articles, for a blogs page; `useBlogArticles`'
+`loadMore()` reads a blog's articles a page at a time, for the blog's own page.
+
+```tsx
+const BLOG_IMAGE = { maxWidth: 1080 };
+
+// The blogs page: every blog, each with its newest six
+const page = useBlogs({ articlesPerBlog: 6, imageTransform: BLOG_IMAGE });
+<BlogsList01 blogs={page.blogs} hidden={page.loading} refreshing={page.refreshing} onRefresh={page.refresh}
+  onPressBlog={(blog) => nav.navigate("Blog", { blogHandle: blog.handle })} />
+
+// A blog's page: the same six first (drawn at once from the blogs page's read), six more at a time
+const blog = useBlogArticles(blogHandle, { limit: 6, imageTransform: BLOG_IMAGE });
+<ArticleGrid01 articles={blog.articles} loadingMore={blog.loadingMore} onEndReached={blog.loadMore}
+  refreshing={blog.refreshing} onRefresh={blog.refresh} />
+```
+
+- **`useBlogs({ articlesPerBlog, imageTransform, enabled, onError })`** returns `{ blogs, loading,
+  error, refresh, refreshing }`. `blogs`: every blog the store has, in the order the store made them,
+  each `{ id, handle, title, articles, articlesPageInfo }` with its newest `articles` first (default
+  `BLOG_ARTICLES_SHOWN`, 6; rounded, 1–50); a blog without articles has none. **One request**: the
+  Storefront API's `Blog.articles` is a connection, so the blogs and each one's first articles come in
+  one answer (`BlogsWithArticles`), 50 blogs a read, read on for a store with more (up to 250).
+- **`useBlogArticles` pages** (`limit` a page): `loadMore()` adds the next page after the articles
+  shown, each once; `hasMore`, `loadingMore`. Call it from a list's end (`onEndReached`): it does
+  nothing while a read is on its way or with no more. A failed next page sets `error`, keeps the
+  articles and ends `hasMore` until `refresh()`, which reads the first page again (`refreshing`
+  meanwhile, the articles kept until it lands) and drops the later pages. `blog` is the blog's `{ id,
+  handle, title }` once read, and `notFound` says the store has no blog by that handle. Before the first
+  `loadMore()` it returns what it always did: at most `limit` articles.
+- **`loading` from the first frame** in both, when nothing is known and a read is about to start, so a
+  page's "no articles" or "no blogs" message never shows before the read.
+- **Opened from the blogs page, a blog draws in the first frame:** `useBlogs` keeps each blog's articles
+  as that blog's first page for `useBlogArticles` at the same count and `imageTransform` (with where the
+  next page starts), and each article for `useArticle`. Ask for one count and one size on both pages.
+- **Read once a session** (per count and image size); `clearBlogArticles()` forgets `useBlogs`' reads
+  too. Reused for 10 minutes by the request cache. Without React: `shopify.blogs.listWithArticles({
+  first, after, articlesPerBlog, imageTransform, fresh })` and `shopify.blogs.articlesWithBlog(handle, {
+  first, after, sortKey: "PUBLISHED_AT", reverse: true })` → `{ blog, articles }`.
+
+Tested in `test/blogs-and-paging.test.mjs` (13 checks).
 
 ## Every other page: page models (0.15.0)
 

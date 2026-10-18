@@ -158,6 +158,9 @@ export {
   type BlogArticles,
   type UseArticleOptions,
   type ArticleState,
+  useBlogs,
+  type UseBlogsOptions,
+  type BlogsState,
 } from "./useBlogArticles";
 export {
   useRecentlyViewed,
