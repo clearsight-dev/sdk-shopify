@@ -37,6 +37,8 @@ export const DEFAULT_MESSAGES: Readonly<Record<AlertMessageKey, string>> = {
   'checkout.reservationExpired': 'Your reservation expired and the item was released.',
   'checkout.couldNotStart': "Couldn't open checkout. Try again.",
   'cart.updateFailed': "Couldn't update your cart. Try again.",
+  // 0.19.0: production's words for a reservation that ran out, as checkout says them.
+  'cart.reservationExpired': 'Your reservation expired and the item was released.',
   'orders.boughtAgain': 'Added to cart',
   'orders.boughtAgainPartly': 'Added {added} to your cart. {skipped} not available right now.',
   'orders.nothingToBuyAgain': "These items aren't available right now.",

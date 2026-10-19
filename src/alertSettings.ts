@@ -42,6 +42,7 @@ export const ALERT_SETTING_FIELDS: Readonly<Record<AlertMessageKey, readonly [gr
   'checkout.reservationExpired': ['checkout', 'reservationExpired'],
   'checkout.couldNotStart': ['checkout', 'couldNotStart'],
   'cart.updateFailed': ['cart', 'updateFailed'],
+  'cart.reservationExpired': ['cart', 'reservationExpired'],
   'orders.boughtAgain': ['orders', 'boughtAgain'],
   'orders.boughtAgainPartly': ['orders', 'boughtAgainPartly'],
   'orders.nothingToBuyAgain': ['orders', 'nothingToBuyAgain'],

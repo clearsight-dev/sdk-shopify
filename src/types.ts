@@ -103,6 +103,11 @@ export type AlertMessageKey =
   | 'checkout.couldNotStart'
   /** A quantity change the cart refused (the product page's stepper). */
   | 'cart.updateFailed'
+  /**
+   * A line's reservation ran out, said at that moment on any screen (`cart:reservationExpired`,
+   * `ShopifyProvider`'s `reservationExpiredAlert`, 0.19.0).
+   */
+  | 'cart.reservationExpired'
   /** `useOrder().buyAgain()`: everything went back in the cart. */
   | 'orders.boughtAgain'
   /** Some of it did: `{added}` and `{skipped}` are counts. */

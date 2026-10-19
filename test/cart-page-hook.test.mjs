@@ -1,6 +1,7 @@
 // `useCartPage` (0.14.0) rendered in jsdom with the real ShopifyProvider, its `cartExtensions` and the
 // Storefront API stubbed at `fetch`: facts on the lines, + adding a line where an extension says so,
-// re-reads an extension asks for, the cart page's two events, and checkout waiting on a lapsed hold.
+// no re-reads of its own (the provider's since 0.19.0), the cart page's two events, and checkout waiting on
+// a lapsed hold.
 import assert from 'node:assert/strict';
 import { JSDOM } from 'jsdom';
 import { harness, keychain, response } from './auth-helpers.mjs';
@@ -123,13 +124,13 @@ await t.check('+ on a held line adds a new line, and names it once the add lands
 });
 
 t.section('re-reads an extension asks for');
-await t.check('the cart is read again after each delay', async () => {
-  sent.length = 0;
+await t.check('the page reads nothing itself: the provider reads after each hold ends (0.19.0, test/hold-end-provider)', async () => {
   holds.reads = [10, 20];
   await runAct(async () => { await cartApi.refresh(); });
   sent.length = 0;
   await settle(60);
-  assert.equal(sent.filter((s) => s.name === 'CartGet').length >= 2, true);
+  // The one hold here ends in 2100, so nothing is due: until 0.19.0 the page read at 10 and 20 ms.
+  assert.equal(sent.filter((s) => s.name === 'CartGet').length, 0);
   holds.reads = [];
 });
 
