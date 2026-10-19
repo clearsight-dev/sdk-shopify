@@ -2,6 +2,41 @@
 
 ## Unreleased (0.19.0)
 
+### New: the shopper is told when a reservation runs out, on any screen (ENG-695, 2026-10-19)
+
+Nothing said a cart hold had run out: the Cart's line turned to "Reservation expired" and checkout sent the
+shopper back to it, but on Home, a product page or a live show nothing happened, and the line stayed in the
+cart (and its badge) until something read the cart again.
+
+- **`cart:reservationExpired`**, raised by `ShopifyProvider` at the moment a hold the `cartExtensions`
+  report (`holdExpiresAt`) runs out, wherever the shopper is: words `cart.reservationExpired` ("Your
+  reservation expired and the item was released.", production's, as checkout says them; the panel's
+  `settings.alerts.cart.reservationExpired`), severity `info`, with the cart. Once per hold, never again
+  when the sweep takes the line; holds that run out together are one alert. Not for a hold that had
+  already run out when the provider first saw its line (the app was closed), a line the shopper took out
+  first (a remove still on its way included), or a swapped cart (Cart Assist adopting another, the fresh
+  cart after an order, a replaced cart). The app in the background at that moment: said as it comes back.
+- **`reservationExpiredAlert?: { enabled: boolean }`** on the provider: on when unset; `false` turns the
+  alert off. Read when a hold ends, so a Live Layer publish applies at once.
+- **The cart is read again after each hold ends on every screen** (the extensions' `refreshDelays`: Cart
+  Hold's 1, 30, 60, 90, 120 and 150 s), whether the alert is on or off, each time once, until the line
+  has gone; a hold that ran out while the app was closed gets the reads still to come. Reads due together
+  (the app back from the background) are one read.
+- **`cartReadTimesAfterHold(cart, holdEndsAt, extensions)`**: those times, from the extensions asked just
+  before the hold ends. `CartExtension.refreshDelays` must answer from its `now` alone (Cart Hold's does).
+
+Tests: `test/hold-end-watch.test.mjs` (23 checks, on a fake clock: one alert at the end and none before,
+none on later reads or at the sweep, holds ending together, a late timer, a hold past the longest timer, a
+new stamp; none for a hold that ran out while closed but its reads still to come, none after hours; none
+for a line removed first or a remove on its way, another line at the same moment still told; a swapped cart
+and no cart; the switch off and turned on meanwhile; reads at each time once though each read is a new
+cart, stopping once the line has gone, due together as one, two holds, a failed read; stop and start).
+`test/hold-end-provider.test.mjs` (10 checks, the real provider on real timers: the alert with its words,
+`info` and the cart; none at the sweep, the line gone with no Cart page open; the panel's words; the switch
+off and turned off by a new prop, the reads still made; the reads with no Cart page, and not twice with
+it; none after a remove, an adopted cart, or at launch after a hold ran out, whose read still comes).
+`test/cart-page-hook.test.mjs`: the page reads nothing itself. `test/alerts.test.mjs`: 38 alerts.
+
 ### New: an option value says it is a pre-order (ENG-607, 2026-10-19)
 
 A size sold out but sold on its pre-order plan had nothing in its option state to say so: `available`
@@ -54,6 +89,14 @@ ledger asked once more).
   fixture, a screen test's mock) needs it to typecheck.
 - **`StoreCreditPage` has two more fields** (`retry`, `retrying`): an object built as one by hand (a
   screen test's mock) needs them to typecheck.
+- **`useCartPage` no longer reads the cart after a hold** (it did since 0.14.0): the provider does, so the
+  Cart open reads no more than any other screen. Its reads were also cut short: each read is a new cart,
+  which started its timers again from the next hold still running, so only the 1 s read happened and Cart
+  Hold's sweep (55 to 105 s after) was seen only when something else read the cart.
+- **An app that reads after a hold itself** (sdk-apptile-cart-hold's `useRefreshAfterHoldExpiry` on its own
+  cart screen) now reads twice: drop it.
+- **A host that toasts every event with a message** (`useAlertSettings`) shows the new alert without a
+  change; it is silenced like any alert when its panel field is cleared.
 
 ## 0.18.0 (2026-10-19)
 

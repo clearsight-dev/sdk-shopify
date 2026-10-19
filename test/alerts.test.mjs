@@ -13,8 +13,9 @@ const ok = (label, fn) => { fn(); pass++; console.log('  ✓', label); };
 console.log('messages');
 ok('defaults cover every panel field', () => {
   const keys = Object.keys(M.DEFAULT_MESSAGES);
-  // 15 panel alerts, and 22 more in 0.15.0 (the page models' words: checkout, orders, store credit, sign-in).
-  assert.equal(keys.length, 37);
+  // 15 panel alerts, 22 more in 0.15.0 (the page models' words: checkout, orders, store credit, sign-in),
+  // and a reservation that ran out in 0.19.0.
+  assert.equal(keys.length, 38);
   assert.equal(M.message('cart.added'), 'Product added to the Cart');
   assert.equal(M.message('waitlist.added'), 'Added to waitlist');
 });

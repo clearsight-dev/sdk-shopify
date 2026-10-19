@@ -483,7 +483,7 @@ page.viewed();                // on each visit: reports cart:viewed
 - **+ adds a new line** where an extension says so (Cart Hold: a unit with its own reservation clock);
   a pre-order always grows in place. − at 1 removes the line.
 - **The cart is read again** when an extension asks (Cart Hold: after a reservation runs out, so the
-  swept line goes).
+  swept line goes). Since 0.19.0 the provider does this on every screen (below), so the page doesn't.
 - **`amounts`**: the subtotal less what pre-order lines leave until they ship; the whole cart's
   discounts (not one off shipping) and the codes behind them; the store credit's gift cards; the total,
   before tax, never below 0. Money values: the app formats them.
@@ -501,7 +501,34 @@ const redo: CartExtension = {
 
 **Your own cart hook**: write it from the same pieces when the page needs other rules: `useCart`,
 `useCheckout`, `cartLineFacts`, `orderCartLines`, `canIncreaseLine`, `preorderAmounts`,
-`cartAmountsDueNow`, `increaseAddsLine`, `cartRefreshDelays`.
+`cartAmountsDueNow`, `increaseAddsLine`. It needn't read the cart after a hold: the provider does.
+
+### When a reservation runs out (0.19.0, ENG-695)
+
+The provider watches the holds the `cartExtensions` report (`holdExpiresAt`, Cart Hold's stamp) on every
+screen, not only the Cart:
+
+- **At the moment a hold runs out** it raises `cart:reservationExpired` (words `cart.reservationExpired`,
+  "Your reservation expired and the item was released.", severity `info`, with the cart), so the app's
+  toast says it on Home, a product page or a live show. Once per hold: not again when Cart Hold's sweep
+  takes the line a minute or two later. Holds that run out together are one alert.
+- **Not** for a hold that had already run out when the provider first saw its line (it ran out while the
+  app was closed; a cart adopted from another device), for a line the shopper took out first (its removal
+  still on its way counts), or for a cart that was swapped (Cart Assist adopting another, the fresh cart
+  after an order). With the app in the background at that moment, it is said as the app comes back.
+- **Then the cart is read again** at the times the extensions ask for (`refreshDelays`; Cart Hold's 1, 30,
+  60, 90, 120 and 150 s after), each once, until the line has gone, so the swept line leaves the cart badge
+  too. A hold that ran out while the app was closed gets the reads still to come. Until 0.19.0
+  `useCartPage` read the cart, only while the Cart was open, and only once: each read was a new cart,
+  which started the timers again from the next hold still running.
+- **`reservationExpiredAlert={{ enabled: false }}`** turns the alert off (on when unset); the reads still
+  happen. It is read when a hold ends, so a Live Layer publish applies at once. Clearing the words in the
+  panel (`settings.alerts.cart.reservationExpired`, `''`) silences it through `useAlertSettings` as any
+  alert.
+
+```tsx
+<ShopifyProvider cartExtensions={CART_EXTENSIONS} reservationExpiredAlert={{ enabled: showReservationExpired }}>
+```
 
 ### Products someone chose, and a merchant's own content (0.17.0)
 
@@ -776,6 +803,7 @@ Every event carries the resolved copy, so that one-liner is the whole integratio
 | `cart:remove` | `cart.removed` | Cart |
 | `cart:limitExceeded` | `cart.limitExceeded` | Cart |
 | `cart:stockLimit` | `cart.noMoreStock` | Cart |
+| `cart:reservationExpired` (0.19.0, `info`) | `cart.reservationExpired` | Cart |
 | `cart:outOfStock` | `cart.outOfStock` | Checkout |
 | `wishlist:add` / `wishlist:remove` | `wishlist.added` / `wishlist.removed` | Wishlist |
 | `waitlist:add` / `waitlist:remove` | `waitlist.added` / none (no toast) | Waitlist |

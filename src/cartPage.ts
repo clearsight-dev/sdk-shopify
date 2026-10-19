@@ -43,7 +43,11 @@ export interface CartExtension {
   lineFacts?(line: CartLine, cart: Cart): Partial<CartLineFacts>;
   /** + on this line adds a new line rather than raising its quantity (a held line: a unit with its own clock). */
   increaseAddsLine?(line: CartLine): boolean;
-  /** When to read the cart again, in ms from `now` (after a reservation runs out, so its line goes). */
+  /**
+   * When to read the cart again, in ms from `now` (after a reservation runs out, so its line goes). The
+   * provider asks it on every screen (0.19.0, `cartReadTimesAfterHold`), with `now` just before each hold
+   * ends, so answer from `now` alone: what you would have said at that moment.
+   */
   refreshDelays?(cart: Cart, now: number): number[];
   /** A line's reservation has run out, so checkout must wait (`useCheckout().prepare` answers `lapsedHold`). */
   hasLapsedHold?(lines: CartLine[]): boolean;
@@ -97,6 +101,17 @@ export function isVariantHeldOut(variantId: string | null | undefined, extension
 export function cartRefreshDelays(cart: Cart, now: number, extensions: readonly CartExtension[]): number[] {
   const delays = extensions.flatMap((extension) => ask(extension, () => extension.refreshDelays?.(cart, now)) ?? []);
   return [...new Set(delays.filter((delay) => Number.isFinite(delay) && delay > 0))].sort((a, b) => a - b);
+}
+
+/**
+ * When to read the cart again after the hold that ends at `holdEndsAt` (ms since 1970), as times, soonest
+ * first: what the extensions ask for (`refreshDelays`) just before that hold runs out. Asked that way, a
+ * hold that ran out before the app saw it (the app was closed) still gets the reads that are left, and
+ * each hold gets the same times however often it is asked (0.19.0, `ShopifyProvider`).
+ */
+export function cartReadTimesAfterHold(cart: Cart, holdEndsAt: number, extensions: readonly CartExtension[]): number[] {
+  const askedAt = holdEndsAt - 1;
+  return cartRefreshDelays(cart, askedAt, extensions).map((delay) => askedAt + delay);
 }
 
 /** Some extension says a reservation in these lines has run out. */

@@ -1,9 +1,8 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useMemo, useRef, useState } from "react";
 import {
   canIncreaseLine,
   cartAmountsDueNow,
   cartLineFacts,
-  cartRefreshDelays,
   increaseAddsLine,
   orderCartLines,
   preorderAmounts,
@@ -79,7 +78,7 @@ const NO_LINES: ReadonlySet<string> = new Set();
  * - **Line facts** come from the provider's `cartExtensions` (`cartLineFacts`): a reservation's expiry,
  *   a giveaway prize and its price, a service line. A prize or service line shows no reservation.
  * - **The cart is read again** when an extension asks (Cart Hold: after a reservation runs out, so the
- *   swept line goes).
+ *   swept line goes): by the provider since 0.19.0, on every screen, so not here as well.
  * - **Checkout** waits for a note still saving, reports `checkout:started` (with the cart's shows), then
  *   prepares the cart (`useCheckout().prepare`, which asks the extensions about a lapsed reservation).
  *
@@ -106,17 +105,6 @@ export function useCartPage(options: UseCartPageOptions = {}): CartPage {
   cartRef.current = cart;
 
   useAppDiscountCode(appDiscountCode, { onError: (error) => reportError(error, "cart.appDiscountCode") });
-
-  // Read the cart again when an extension asks (after a reservation runs out).
-  useEffect(() => {
-    if (!cart) return;
-    const timers = cartRefreshDelays(cart, Date.now(), extensions).map((delay) =>
-      setTimeout(() => {
-        refresh().catch(() => undefined);
-      }, delay),
-    );
-    return () => timers.forEach(clearTimeout);
-  }, [cart, extensions, refresh]);
 
   const [busyLineIds, setBusyLineIds] = useState<ReadonlySet<string>>(NO_LINES);
   const [justAddedLineId, setJustAddedLineId] = useState<string | null>(null);

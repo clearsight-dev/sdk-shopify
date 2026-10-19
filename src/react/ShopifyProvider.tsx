@@ -16,6 +16,7 @@ import { showsInCart, type AttributionSource, type ShowsInCart } from "../attrib
 import { hasLapsedHoldIn, type CartExtension } from "../cartPage";
 import { createAttributionRecorder } from "./attributionRecorder";
 import { CHECKOUT_STARTED_KEY, createCartRecovery, type CartRecovery } from "./cartRecovery";
+import { createHoldEndWatch, type HoldEndWatch } from "./holdEndWatch";
 import {
   LINK_TAGS_STORAGE_KEY,
   cartHasLinkTags,
@@ -422,6 +423,11 @@ export type ShopifyEventType =
   | "checkout:completed"
   /** A quantity change the cart refused (the product page's stepper). */
   | "cart:updateFailed"
+  /**
+   * A line's reservation ran out (0.19.0): raised at that moment, on any screen, once per hold, with the
+   * cart (`reservationExpiredAlert`). Severity `info`: news, not a refusal.
+   */
+  | "cart:reservationExpired"
   /** `useOrder().buyAgain()`: every item went back in the cart. */
   | "orders:boughtAgain"
   /** Some did; the message counts both. */
@@ -565,6 +571,7 @@ const EVENT_MESSAGE: Partial<Record<ShopifyEventType, AlertMessageKey>> = {
   "checkout:reservationExpired": "checkout.reservationExpired",
   "checkout:couldNotStart": "checkout.couldNotStart",
   "cart:updateFailed": "cart.updateFailed",
+  "cart:reservationExpired": "cart.reservationExpired",
   "orders:boughtAgain": "orders.boughtAgain",
   "orders:boughtAgainPartly": "orders.boughtAgainPartly",
   "orders:nothingToBuyAgain": "orders.nothingToBuyAgain",
@@ -585,6 +592,11 @@ const ERROR_EVENTS: ReadonlySet<ShopifyEventType> = new Set<ShopifyEventType>([
   "cart:updateFailed",
   "orders:nothingToBuyAgain",
   "auth:couldNotReachStore",
+]);
+
+/** Alerts that are news rather than the answer to something the shopper did: `info`, not `success`. */
+const INFO_EVENTS: ReadonlySet<ShopifyEventType> = new Set<ShopifyEventType>([
+  "cart:reservationExpired",
 ]);
 
 export interface ShopifyProviderProps {
@@ -662,6 +674,15 @@ export interface ShopifyProviderProps {
    */
   cartExtensions?: readonly CartExtension[];
   /**
+   * Tells the shopper when a line's reservation runs out (0.19.0, ENG-695): `cart:reservationExpired`
+   * (`cart.reservationExpired`'s words, severity `info`) at the moment a hold the `cartExtensions` report
+   * ends, on any screen, once per hold. Not for a hold that had already run out when the provider first saw
+   * its line (the app was closed then), a line the shopper took out first, or a cart that was swapped. On
+   * unless `enabled` is false; read when a hold ends, so a Live Layer publish applies at once. The cart is
+   * read again after each hold ends (the extensions' `refreshDelays`) whether this is on or off.
+   */
+  reservationExpiredAlert?: { enabled: boolean };
+  /**
    * Where `useGridColumns` keeps the shopper's products-per-row choice in `storage` (0.15.0). Default
    * `shopify:grid-columns:v1`; an app that kept it elsewhere passes its own key.
    */
@@ -701,6 +722,7 @@ export function ShopifyProvider({
   attribution,
   linkTags,
   cartExtensions = NO_CART_EXTENSIONS,
+  reservationExpiredAlert,
   gridColumnsStorageKey = "shopify:grid-columns:v1",
   productsPerPage,
 }: ShopifyProviderProps) {
@@ -751,7 +773,7 @@ export function ShopifyProvider({
     const max = maxLineItems();
     const event: ShopifyEvent = {
       type,
-      severity: ERROR_EVENTS.has(type) ? "error" : key ? "success" : "info",
+      severity: ERROR_EVENTS.has(type) ? "error" : key && !INFO_EVENTS.has(type) ? "success" : "info",
       ...(key
         ? {
             messageKey: key,
@@ -929,6 +951,31 @@ export function ShopifyProvider({
   // The cart the last write returned, for work queued behind it that must not read a stale render.
   const cartRef = useRef<Cart | null>(null);
 
+  // ── Holds that run out (0.19.0, ENG-695) ── Told once at that moment, on any screen, and the cart read
+  // again after (`holdEndWatch.ts`). Every cart the provider shows is handed to it (`persistCart`, and the
+  // cart loaded at launch).
+  const extensionsRef = useRef(cartExtensions);
+  extensionsRef.current = cartExtensions;
+  const announceHoldEnds = useRef(true);
+  announceHoldEnds.current = reservationExpiredAlert?.enabled !== false;
+  /** `refresh`, defined further down. */
+  const readCartRef = useRef<() => Promise<Cart | null>>(async () => null);
+  const holdWatchRef = useRef<HoldEndWatch | null>(null);
+  if (!holdWatchRef.current) {
+    holdWatchRef.current = createHoldEndWatch({
+      extensions: () => extensionsRef.current,
+      announcing: () => announceHoldEnds.current,
+      announce: (heldCart) => emit("cart:reservationExpired", { cart: heldCart }),
+      readCart: () => readCartRef.current(),
+    });
+  }
+  const holdWatch = holdWatchRef.current;
+  // Stopped when the provider unmounts; started again from the cart it shows (React's dev double mount).
+  useEffect(() => {
+    holdWatch.follow(cartRef.current);
+    return () => holdWatch.stop();
+  }, [holdWatch]);
+
   /**
    * A guard is advisory: a hook that throws must not take the cart down with it. `fallback` is what
    * that failure means — approval for the `before*` hooks, nothing for the observers.
@@ -1072,7 +1119,10 @@ export function ShopifyProvider({
           await recovery.saveSnapshot(next, next !== stored);
           cartRef.current = next;
           await recorder.sync(next);
-          if (mounted) setCart(next);
+          if (mounted) {
+            setCart(next);
+            holdWatch.follow(next);
+          }
           // A stored cart from before the last link, or a link that landed while the cart loaded.
           void syncLinkTagsRef.current();
         } finally {
@@ -1178,6 +1228,7 @@ export function ShopifyProvider({
     latestCart.current = next;
     setCart(next);
     cartRef.current = next;
+    holdWatch.follow(next);
     const synced = recorder.sync(next);
     const s = storageRef.current;
     if (s) {
@@ -1186,7 +1237,7 @@ export function ShopifyProvider({
     }
     await recovery.saveSnapshot(next, written);
     await synced;
-  }, [recorder, recovery]);
+  }, [recorder, recovery, holdWatch]);
   const persistCartRef = useRef(persistCart);
   persistCartRef.current = persistCart;
 
@@ -1492,6 +1543,8 @@ export function ShopifyProvider({
       update = { ...approved, ...(approved.attributes === undefined && nextAttributes ? { attributes: nextAttributes } : {}) };
     }
 
+    // At 0 the shopper is taking the line out: a hold that runs out meanwhile isn't announced.
+    const lineLeft = update.quantity <= 0 ? holdWatch.lineLeaving(lineId) : null;
     setCartLoad(true);
     try {
       let next: Cart;
@@ -1530,14 +1583,17 @@ export function ShopifyProvider({
       }
       return true;
     } finally {
+      lineLeft?.();
       setCartLoad(false);
     }
-  }, [cart, persistCart, runGuard, releaseRejected, emit, reportCartFailure, writeCart, recovery, recorder]);
+  }, [cart, persistCart, runGuard, releaseRejected, emit, reportCartFailure, writeCart, recovery, recorder, holdWatch]);
 
   const cartRemoveLine = useCallback(async (lineId: string) => {
     if (!cart?.id) return;
     const guard = guardRef.current;
     const previous = cart.lines.find((line) => line.id === lineId) ?? null;
+    // A hold that runs out while the remove is on its way isn't announced: the shopper took it out first.
+    const lineLeft = holdWatch.lineLeaving(lineId);
     setCartLoad(true);
     try {
       const next = await writeCart((current) => shopify.cart.removeLines(current.id, [lineId]));
@@ -1564,9 +1620,10 @@ export function ShopifyProvider({
         );
       }
     } finally {
+      lineLeft();
       setCartLoad(false);
     }
-  }, [cart, persistCart, runGuard, emit, writeCart, recovery, recorder]);
+  }, [cart, persistCart, runGuard, emit, writeCart, recovery, recorder, holdWatch]);
 
   const cartApplyDiscounts = useCallback(async (codes: string[]) => {
     if (!cart?.id) return;
@@ -1639,6 +1696,7 @@ export function ShopifyProvider({
     // Queued, so it can't run alongside a write's own replacement of the same cart.
     return serialize(() => recovery.recover(id, { confirm: false }));
   }, [persistCart, serialize, recovery]);
+  readCartRef.current = cartRefresh;
 
   /**
    * Makes the cart's link tags the saved ones that still count: a newer link's replace an older

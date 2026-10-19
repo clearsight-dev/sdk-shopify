@@ -84,6 +84,7 @@ export {
   cartLineFacts,
   increaseAddsLine,
   cartRefreshDelays,
+  cartReadTimesAfterHold,
   hasLapsedHoldIn,
   isVariantHeldOut,
   orderCartLines,
