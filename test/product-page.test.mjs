@@ -77,7 +77,7 @@ global.fetch = async (_url, init) => {
     return reply({ collection: { handle: variables.handle, title: 'Skirts', products: { nodes: [skirt(false)], filters: [],
       pageInfo: { hasNextPage: false, hasPreviousPage: false, startCursor: null, endCursor: null } } } });
   }
-  if (name === 'ProductByHandle') return reply({ product: skirt(true) });
+  if (name === 'ProductByHandle') return reply({ product: variables.handle === 'preorder-skirt' ? preorderSkirt() : skirt(true) });
   if (name === 'Recommended') {
     // Shopify can list the product itself; one recommendation is in an auction.
     return reply({ productRecommendations: [skirt(false), rec(2, 'top'), rec(3, 'auction', ['SEARCH-BLOCKED']), rec(4, 'belt'), rec(5, 'scarf')] });
@@ -85,6 +85,13 @@ global.fetch = async (_url, init) => {
   return reply({});
 };
 const rec = (n, handle, tags = []) => ({ ...skirt(false), id: `gid://shopify/Product/${n}`, handle, title: handle, tags });
+// The skirt with M on a pre-order plan: sold out in Wine (0 left), oversold in Ivory (-10 left).
+const PREORDER_PLAN = { id: 'gid://shopify/SellingPlan/1', name: 'Pre-order' };
+const onPlan = (v, qty) => ({ ...v, availableForSale: true, quantityAvailable: qty, sellingPlanAllocations: { nodes: [{ sellingPlan: PREORDER_PLAN }] } });
+const preorderSkirt = () => ({
+  ...skirt(true), id: 'gid://shopify/Product/9', handle: 'preorder-skirt',
+  variants: { nodes: [VARIANTS[0], onPlan(VARIANTS[1], 0), VARIANTS[2], onPlan(VARIANTS[3], -10)] },
+});
 
 const sdk = await import('../dist/index.js');
 const {
@@ -125,6 +132,23 @@ await check('option states: each value with what it would select, following the 
   assert.deepEqual(color.values.map((v) => [v.value, v.available]), [['Wine', true], ['Ivory', true]]);
   const custom = optionStates(selectableOptions(OPTIONS), V, { Size: 'S', Color: 'Wine' }, () => false);
   assert.equal(custom.every((s) => s.values.every((v) => v.available)), true, 'a custom availability rule wins');
+  assert.equal(states.every((s) => s.values.every((v) => v.preorder === false)), true, 'no plan, no pre-order');
+});
+await check('option states: a size sold out on its pre-order plan is a pre-order, oversold too; never when blocked (0.19.0)', () => {
+  const PLAN = { id: 'gid://shopify/SellingPlan/1', name: 'Pre-order' };
+  const planned = [
+    { ...V[0], sellingPlan: PLAN }, // 2 left: bought, not pre-ordered
+    { ...V[1], availableForSale: true, sellingPlan: PLAN }, // 0 left, still for sale
+    { ...V[2], quantityAvailable: -10, sellingPlan: PLAN }, // oversold
+    { ...V[3], sellingPlan: PLAN }, // stock not tracked: bought (decided 2026-10-06)
+  ];
+  const sizes = (selection, rules) => optionStates(selectableOptions(OPTIONS), planned, selection, undefined, rules)
+    .find((s) => s.name === 'Size').values.map((v) => [v.value, v.available, v.quantityAvailable, v.preorder]);
+  assert.deepEqual(sizes({ Size: 'S', Color: 'Wine' }), [['S', true, 2, false], ['M', false, 0, true]], 'at 0: a pre-order, still not available');
+  assert.deepEqual(sizes({ Size: 'S', Color: 'Ivory' }), [['S', true, -10, true], ['M', true, null, false]], 'below 0: a pre-order; untracked: not');
+  assert.deepEqual(sizes({ Size: 'S', Color: 'Wine' }, { blocked: true }), [['S', true, 2, false], ['M', false, 0, false]], 'an auction: never');
+  const soldOut = optionStates(selectableOptions(OPTIONS), [{ ...V[1], sellingPlan: PLAN }], { Size: 'M', Color: 'Wine' });
+  assert.equal(soldOut.find((s) => s.name === 'Size').values[1].preorder, false, 'no longer for sale: not a pre-order');
 });
 await check('price: the variant\'s, compare-at only when higher; without a variant the product\'s lowest', () => {
   assert.deepEqual(variantPrice(V[0]), { price: money('50.00'), compareAtPrice: money('60.00'), onSale: true });
@@ -276,6 +300,21 @@ await check('customised: blocked rule, deferred description, starting variant, o
   assert.deepEqual(p.selection.options.map((o) => o.name), ['Size', 'Color']);
   assert.equal(p.selection.lowStock, false);
   await page.unmount();
+});
+
+await check('pre-order sizes in the option states, and none on a blocked product (0.19.0)', async () => {
+  const page = await mount(() => useProductPage('preorder-skirt'));
+  const sizes = () => page.now().selection.optionStates.find((s) => s.name === 'Size').values
+    .map((v) => [v.value, v.available, v.quantityAvailable, v.preorder]);
+  assert.deepEqual(sizes(), [['S', true, 2, false], ['M', false, 0, true]]);
+  await page.act(async () => page.now().selection.setOption('Color', 'Ivory'));
+  assert.deepEqual(sizes(), [['S', true, 5, false], ['M', true, -10, true]], 'oversold on the plan: still a pre-order');
+  await page.unmount();
+
+  const auction = await mount(() => useProductPage('preorder-skirt', { isBlocked: () => true }));
+  assert.equal(auction.now().status, 'blocked');
+  assert.equal(auction.now().selection.optionStates.every((s) => s.values.every((v) => v.preorder === false)), true, 'isBlocked: no pre-order');
+  await auction.unmount();
 });
 
 await check('add to cart: lands, and the SDK-only ceiling field never reaches Shopify', async () => {
