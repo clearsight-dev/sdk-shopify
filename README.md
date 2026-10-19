@@ -697,7 +697,7 @@ an `on…` option. Each page's `viewed()` keeps one identity, for `useFocusEffec
 | Order confirmed | `useOrderConfirmation(checkoutOpenedAt)` → `orderNumber`, `email` | |
 | Order history | `useOrders()` → `status`, `orders`, `loadMore`, `pullToRefresh`, `viewed` | |
 | One order | `useOrder(id, { onBoughtAgain })` → `order`, `buyAgain`, `buyingAgain`, `viewed` | the cart |
-| Store credit | `useStoreCreditPage()` → `balance`, `history`, states, `pullToRefresh`, `viewed` | |
+| Store credit | `useStoreCreditPage()` → `balance`, `history`, states, `pullToRefresh`, `retry`, `retrying`, `viewed` | |
 | Store credit on the cart | `useCartStoreCredit()` → `status`, `balance`, `applied`, `apply`, `remove`, `blockedBy`, `errorMessage`, `suggestedAmount`, `viewed` | |
 | Product page's buy bar | `useProductPage(handle, { onSignInNeeded, onJoinedWaitlist }).purchase` | sign-in; the waitlist |
 | A product card's Add to Cart | `useQuickAdd({ credit, onChooseVariant, onAdded })` | the variant page |
@@ -1114,8 +1114,13 @@ Each line comes with a `kind` (`signupBonus`, `liveShowReward`, `orderReward`, `
 never negative and `isCredit` says which way it went. `note` is the store's own words for a change made
 by hand (Tile Credit only, and only when they read as a sentence); `orderName` is the order it came
 from (`#1043`) when the source names it. A refresh starts the list over from the newest page and keeps
-what is shown if it fails. Tested in `test/store-credit-history.test.mjs` (20 checks: each source's
-lines and pages, and the hook through the provider).
+what is shown if it fails.
+
+A store-credit page uses `useStoreCreditPage()`: the balance and the activity, read again on `viewed()`,
+on a pull (`pullToRefresh`, `refreshing`) and on Retry (`retry`, `retrying`: both again, the activity's
+first-load spinner and the balance's meanwhile, not their errors; 0.19.0). Tested in
+`test/store-credit-history.test.mjs` (25 checks: each source's lines and pages, the hook through the
+provider, and the page's Retry).
 
 ### Store credit on the cart: `useCartStoreCredit`
 
@@ -1138,7 +1143,7 @@ await remove();                              // takes off only the app's card
 - **No upper limit in the app**: an amount over the balance comes back `insufficient_balance`, outside the store's limits `validation`. `error` is a `TileCreditError`; the app words its `code`.
 - `typedAmountToCents(text)` reads a typed amount: `1500`, `1,500`, `1500.5`, `$1,500.00` and a decimal comma (`12,50`); null for letters, a minus or two decimal points.
 
-Tested in `test/cart-store-credit.test.mjs` (19 checks) and `test/tile-credit-client.test.mjs` (16 checks: the parser, the token, the provider's session).
+Tested in `test/cart-store-credit.test.mjs` (19 checks) and `test/tile-credit-client.test.mjs` (23 checks: the parser, the token, a read's one more try after a blip, the provider's session).
 
 ### Orders
 
@@ -1421,6 +1426,11 @@ mint two cards: allow one at a time.
 **Auth.** `Authorization: Customer <token>` (a `shcat_…` Customer Account API token or a classic
 Storefront one) and `x-shopify-shop-domain`. A 401 means the token was refused, or the service doesn't
 know the shop or has no credentials for it; the client renews the token once and never signs anyone out.
+
+**A blip.** A read (GET) that gets a 429, 502, 503 or 504, or no answer (offline, or past `timeoutMs`),
+is sent once more a second later, with the same token; the second answer stands. Once per call, beside
+the 401's renewal. A write (`redeem`) is never sent again, and neither is a request cancelled through
+`signal` (0.19.0, ENG-674).
 
 **Errors.** Every method rejects with a `TileCreditError`; branch on `.code`, not `.message`:
 `unauthorized` (401), `forbidden` (403), `not_found` (404), `validation` (400: under the store's minimum

@@ -7,7 +7,9 @@
  *   expire, sharing the session's one refresh);
  * - **a 401 renews it once and sends the request again** (`customer.renewAccessToken`; a password session
  *   can't renew, so it has no second try). A second 401 is `TileCreditError('unauthorized')`, and the
- *   shopper stays signed in: the service also answers 401 for a shop it doesn't know.
+ *   shopper stays signed in: the service also answers 401 for a shop it doesn't know;
+ * - **a read that meets a blip is sent once more, a second later** (429, 502, 503, 504, or no answer:
+ *   the balance, the ledger, the gift cards, the config). A redeem never is (ENG-674, 2026-10-19).
  *
  * A new client per use is cheap (it holds no connection); there is no shared instance to go stale.
  */

@@ -13,7 +13,8 @@
  * caller allows one at a time (`useCartStoreCredit` does).
  *
  * The token is read before every request (`getAccessToken`) and renewed once on a 401
- * (`renewAccessToken`). This file is dependency-free (pure `fetch`).
+ * (`renewAccessToken`). A read (GET) that meets a blip (429, 502, 503, 504, or no answer) is sent once
+ * more a second later; a write (`redeem`) never is. This file is dependency-free (pure `fetch`).
  */
 import { getConfig } from './client';
 import { addGiftCardsKeepingBuyer, cart as cartApi } from './cart';
@@ -83,6 +84,17 @@ function statusToCode(status: number, bodyMsg?: string): TileCreditErrorCode {
 
 const DEFAULT_TIMEOUT = 20_000;
 
+/**
+ * Answers that say the service, or Shopify behind it, was busy or down for a moment: too many requests
+ * (429), Shopify not answering it (502), the service unavailable (503), or its gateway out of time
+ * (504). They say nothing about the request, so the same read can work a second later.
+ */
+const BLIP_STATUSES = new Set([429, 502, 503, 504]);
+/** How long a read waits before it is sent once more after a blip (ENG-674, 2026-10-19). */
+const RETRY_DELAY_MS = 1_000;
+
+const wait = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
+
 interface SentRequest {
   status: number;
   ok: boolean;
@@ -120,10 +132,32 @@ export class TileCreditClient implements TileCreditAPI {
    * One request with a token read just now. A 401 renews the token once (`renewAccessToken`) and sends
    * the request again; a second 401, or no new token, is `unauthorized`. Nothing here signs anyone out:
    * the service also answers 401 for a shop it doesn't know.
+   *
+   * A read (GET) that meets a blip (`BLIP_STATUSES`, or no answer at all) is sent once more, with the
+   * same token, a second later (ENG-674: one blip used to end the shopper's store-credit page). Once per
+   * call, whichever send meets it, so a call is at most three sends (a blip, the try after it, and a
+   * renewal's). A write (`redeem`) is never sent again, so a lost answer can't mint a second card; nor
+   * is a request the caller cancelled (`signal`).
    */
   private async call<T>(path: string, init: { method?: 'GET' | 'POST'; body?: unknown } = {}): Promise<T> {
+    let retriesLeft = (init.method ?? 'GET') === 'GET' ? 1 : 0;
+    const sendRetryingOnce = async (token: string): Promise<SentRequest> => {
+      if (retriesLeft > 0) {
+        try {
+          const answer = await this.send(path, init, token);
+          if (!BLIP_STATUSES.has(answer.status)) return answer;
+        } catch (error) {
+          // `send` throws only `network`: no answer (offline, or past `timeoutMs`), or cancelled.
+          if (this.signal?.aborted) throw error;
+        }
+        retriesLeft = 0;
+        await wait(RETRY_DELAY_MS);
+      }
+      return this.send(path, init, token);
+    };
+
     const token = await this.tokenOrThrow(() => this.getAccessToken());
-    const first = await this.send(path, init, token);
+    const first = await sendRetryingOnce(token);
     if (first.status !== 401 || !this.renewAccessToken) return this.read<T>(first);
     const renew = this.renewAccessToken;
     const renewed = await this.tokenOrThrow(() => renew()).catch((error: unknown) => {
@@ -132,7 +166,7 @@ export class TileCreditClient implements TileCreditAPI {
       throw error;
     });
     if (!renewed) return this.read<T>(first);
-    return this.read<T>(await this.send(path, init, renewed));
+    return this.read<T>(await sendRetryingOnce(renewed));
   }
 
   /** A token from `source`, or `unauthorized` (signed out) / `network` (couldn't be renewed). */

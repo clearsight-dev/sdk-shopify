@@ -1,5 +1,6 @@
 // Tile Credit's client and its token (decided 2026-10-05): the token is read before every request, a
 // 401 renews it once and sends the request again, and a 401 that stays never signs the shopper out.
+// A read that meets a blip is sent once more a second later, a write never (ENG-674, 2026-10-19).
 // Then the provider's session as the source of both (`useStoreCredit` through `tileCreditClientFor`),
 // for a Shopify sign-in (renews by refreshing) and a password one (can't renew). Plus the two pure
 // helpers the cart's store credit leans on: the typed-amount parser and finding a card by its ending.
@@ -153,6 +154,208 @@ await t.check('a renewal that fails (offline) is `network`', async () => {
 await t.check('a client needs a token source and a shop', () => {
   assert.throws(() => new TileCreditClient({ shopDomain: 'shop.myshopify.com' }));
   assert.throws(() => new TileCreditClient({ getAccessToken: async () => 'a' }));
+});
+
+// ── A blip: one more try for a read, a second later (ENG-674) ────────────────
+t.section('a read that meets a blip');
+
+/**
+ * Fake timers: `setTimeout` waits until the test moves the clock with `tick`, so the client's one-second
+ * wait takes no time and the test can see the request not yet sent again at 999 ms.
+ */
+function fakeTimers() {
+  const real = { setTimeout: globalThis.setTimeout, clearTimeout: globalThis.clearTimeout };
+  const waiting = new Map();
+  let now = 0;
+  let nextId = 1;
+  globalThis.setTimeout = (run, ms = 0) => {
+    const id = nextId++;
+    waiting.set(id, { at: now + ms, run });
+    return id;
+  };
+  globalThis.clearTimeout = (id) => { waiting.delete(id); };
+  return {
+    tick(ms) {
+      now += ms;
+      for (const [id, timer] of [...waiting]) {
+        if (timer.at <= now) { waiting.delete(id); timer.run(); }
+      }
+    },
+    restore() { Object.assign(globalThis, real); },
+  };
+}
+/** Lets every promise that can move on do so (`setImmediate` isn't faked). */
+const flush = async () => { for (let i = 0; i < 20; i++) await new Promise((r) => setImmediate(r)); };
+
+/** The service answers from a script, one entry per request: a status, or 'offline' (no answer). */
+let script = [];
+const blipSent = [];
+const scriptedFetch = async (url, init = {}) => {
+  blipSent.push({ url: String(url), method: init.method, auth: init.headers.Authorization });
+  const next = script.shift() ?? 200;
+  if (next === 'offline') throw new TypeError('Network request failed');
+  return response(next, next === 200 ? wallet : { error: 'blip', message: `status ${next}` });
+};
+const readClient = (more = {}) => new TileCreditClient({ shopDomain: 'shop.myshopify.com', getAccessToken: async () => 'a', ...more });
+/** Starts `run` and lets it reach its first answer. `outcome` settles with `{ value }` or `{ error }` when the call ends. */
+const begin = async (run) => {
+  const outcome = run().then((value) => ({ value }), (error) => ({ error }));
+  await flush();
+  return { outcome };
+};
+
+await t.check('a 503 on a read: sent once more after a second (not before), and that answer is the result', async () => {
+  const clock = fakeTimers();
+  try {
+    global.fetch = scriptedFetch;
+    blipSent.length = 0;
+    script = [503, 200];
+    const { outcome } = await begin(() => readClient().getWallet());
+    assert.equal(blipSent.length, 1);
+    clock.tick(999);
+    await flush();
+    assert.equal(blipSent.length, 1, 'not sent again before the second is up');
+    clock.tick(1);
+    await flush();
+    assert.equal(blipSent.length, 2);
+    const { value } = await outcome;
+    assert.equal(value.balanceCents, 4200);
+    assert.deepEqual(blipSent.map((s) => s.auth), ['Customer a', 'Customer a'], 'the same token');
+  } finally {
+    clock.restore();
+  }
+});
+await t.check('429, 502 and 504 too, and no answer at all (offline)', async () => {
+  const clock = fakeTimers();
+  try {
+    for (const blip of [429, 502, 504, 'offline']) {
+      blipSent.length = 0;
+      script = [blip, 200];
+      const { outcome } = await begin(() => readClient().getLedger());
+      clock.tick(1000);
+      await flush();
+      assert.ok('value' in (await outcome), String(blip));
+      assert.equal(blipSent.length, 2, String(blip));
+    }
+  } finally {
+    clock.restore();
+  }
+});
+await t.check('a blip that stays: one more try only, then the second answer’s error', async () => {
+  const clock = fakeTimers();
+  try {
+    blipSent.length = 0;
+    script = [502, 502, 200];
+    let { outcome } = await begin(() => readClient().getWallet());
+    clock.tick(1000);
+    await flush();
+    let { error } = await outcome;
+    assert.equal(error.code, 'shopify_upstream');
+    assert.equal(blipSent.length, 2);
+
+    blipSent.length = 0;
+    script = ['offline', 'offline', 200];
+    ({ outcome } = await begin(() => readClient().getWallet()));
+    clock.tick(1000);
+    await flush();
+    ({ error } = await outcome);
+    assert.equal(error.code, 'network');
+    assert.equal(blipSent.length, 2);
+  } finally {
+    clock.restore();
+  }
+});
+await t.check('an answer about the request is final: 500, 400, 403 and 404 are sent once', async () => {
+  const clock = fakeTimers();
+  try {
+    for (const status of [500, 400, 403, 404]) {
+      blipSent.length = 0;
+      script = [status, 200];
+      const { error } = await (await begin(() => readClient().getWallet())).outcome;
+      assert.ok(error instanceof TileCreditError, String(status));
+      assert.equal(blipSent.length, 1, String(status));
+    }
+  } finally {
+    clock.restore();
+  }
+});
+await t.check('a write is never sent again: a redeem that meets a 503 or no answer is sent once', async () => {
+  const clock = fakeTimers();
+  try {
+    for (const blip of [503, 'offline']) {
+      blipSent.length = 0;
+      script = [blip, 200];
+      const { outcome } = await begin(() => readClient().redeem({ amountCents: 500, idempotencyKey: 'k' }));
+      clock.tick(5000);
+      await flush();
+      const { error } = await outcome;
+      assert.equal(error.code, blip === 'offline' ? 'network' : 'internal', String(blip));
+      assert.equal(blipSent.length, 1, String(blip));
+      assert.equal(blipSent[0].method, 'POST');
+    }
+  } finally {
+    clock.restore();
+  }
+});
+await t.check('with a 401: the renewal still works, and the blip try is spent once per call, never stacked', async () => {
+  const clock = fakeTimers();
+  try {
+    let renewals = 0;
+    const renewing = () => readClient({ renewAccessToken: async () => { renewals += 1; return 'b'; } });
+
+    // A blip, the try after it is a 401, the renewed token's answer is a blip again: no third try.
+    blipSent.length = 0;
+    script = [503, 401, 503, 200];
+    let { outcome } = await begin(() => renewing().getWallet());
+    clock.tick(1000);
+    await flush();
+    let { error } = await outcome;
+    assert.equal(error.code, 'internal');
+    assert.equal(renewals, 1);
+    assert.deepEqual(blipSent.map((s) => s.auth), ['Customer a', 'Customer a', 'Customer b']);
+
+    // A 401 first: renewed, and the renewed request still gets its one try after a blip.
+    blipSent.length = 0;
+    renewals = 0;
+    script = [401, 504, 200];
+    ({ outcome } = await begin(() => renewing().getWallet()));
+    clock.tick(1000);
+    await flush();
+    const { value } = await outcome;
+    assert.equal(value.balanceCents, 4200);
+    assert.equal(renewals, 1);
+    assert.deepEqual(blipSent.map((s) => s.auth), ['Customer a', 'Customer b', 'Customer b']);
+
+    // A 401 that stays is still `unauthorized` after one renewal, with no blip try.
+    blipSent.length = 0;
+    script = [401, 401, 200];
+    ({ error } = await (await begin(() => renewing().getWallet())).outcome);
+    assert.equal(error.code, 'unauthorized');
+    assert.equal(blipSent.length, 2);
+  } finally {
+    clock.restore();
+  }
+});
+await t.check('a read the caller cancelled is not sent again', async () => {
+  const clock = fakeTimers();
+  try {
+    blipSent.length = 0;
+    const controller = new AbortController();
+    controller.abort();
+    global.fetch = async (url, init) => {
+      blipSent.push({ url: String(url) });
+      if (init.signal.aborted) throw new DOMException('Aborted', 'AbortError');
+      return response(200, wallet);
+    };
+    const { outcome } = await begin(() => readClient({ signal: controller.signal }).getWallet());
+    clock.tick(1000);
+    await flush();
+    const { error } = await outcome;
+    assert.equal(error.code, 'network');
+    assert.equal(blipSent.length, 1);
+  } finally {
+    clock.restore();
+  }
 });
 
 // ── Through the provider's session ────────────────────────────────────────────

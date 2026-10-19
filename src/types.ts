@@ -1138,9 +1138,12 @@ export interface TileCreditConfig {
   customerAccessToken?: string;
   /** `{shop}.myshopify.com` — case-insensitive; lower-cased internally. */
   shopDomain: string;
-  /** Cancels every in-flight request when aborted. */
+  /** Cancels every in-flight request when aborted. A cancelled read is not sent again. */
   signal?: AbortSignal;
-  /** Per-request timeout. Default 20_000ms. */
+  /**
+   * Per-request timeout. Default 20_000ms. A read (GET) with no answer in time, or a 429, 502, 503 or
+   * 504, is sent once more a second later; a write (`redeem`) never is.
+   */
   timeoutMs?: number;
 }
 

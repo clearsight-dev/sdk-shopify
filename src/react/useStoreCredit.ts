@@ -285,14 +285,25 @@ export interface StoreCreditPage {
   history: StoreCreditHistoryState;
   /** The activity can be shown: signed in with a source this shopper can read. */
   historyShown: boolean;
-  /** The activity's first page is on its way (a stored session being read counts). */
+  /**
+   * The activity's first page is on its way (a stored session being read counts, and so does a
+   * `retry` with nothing shown: the list's first-load spinner stands in for its error meanwhile).
+   */
   historyLoading: boolean;
-  /** The activity's read failed with nothing to show. */
+  /** The activity's read failed with nothing to show. False while a `retry` runs. */
   historyFailed: boolean;
   /** A pull to refresh is running. */
   refreshing: boolean;
   /** Reads the balance and the activity again, with `refreshing` true meanwhile. */
   pullToRefresh: () => void;
+  /** A `retry` is running: until both the balance and the activity have answered. */
+  retrying: boolean;
+  /**
+   * Reads the balance and the activity again after a failure (the activity's Retry), with `retrying`
+   * true meanwhile. Both, not only the one that failed: offline, both did. Does nothing signed out or
+   * while a retry runs. Keeps one identity.
+   */
+  retry: () => void;
   /** Call each time the page comes into view: reads both again when signed in. Keeps one identity. */
   viewed: () => void;
 }
@@ -304,7 +315,8 @@ export interface StoreCreditPage {
  * on a pull. While a stored session is read, both say they're loading, so a returning shopper never
  * sees the sign-in prompt first. A failed refresh keeps what is shown. A source this shopper can't read
  * (Shopify's store credit for an email-and-password session) shows no activity and a balance that
- * couldn't load.
+ * couldn't load. `retry` (0.19.0, ENG-674) reads both again after a failure, and the page shows them
+ * loading meanwhile, not failed.
  */
 export function useStoreCreditPage(options: UseStoreCreditHistoryOptions = {}): StoreCreditPage {
   const customer = useCustomer();
@@ -328,8 +340,21 @@ export function useStoreCreditPage(options: UseStoreCreditHistoryOptions = {}): 
     void Promise.all([refreshCredit(), refreshHistory()]).finally(() => setRefreshing(false));
   }, [refreshCredit, refreshHistory]);
 
+  const [retrying, setRetrying] = useState(false);
+  const retryRunning = useRef(false);
+  const retry = useCallback(() => {
+    if (!loggedInRef.current || retryRunning.current) return;
+    retryRunning.current = true;
+    setRetrying(true);
+    void Promise.all([refreshCredit(), refreshHistory()]).finally(() => {
+      retryRunning.current = false;
+      setRetrying(false);
+    });
+  }, [refreshCredit, refreshHistory]);
+
   const signedOut = !loggedIn && !restoring;
   const balance = credit.available ? credit.balance : null;
+  const noActivityShown = history.entries.length === 0;
   return {
     signedOut,
     balance,
@@ -337,10 +362,12 @@ export function useStoreCreditPage(options: UseStoreCreditHistoryOptions = {}): 
     balanceFailed: loggedIn && !credit.loading && !balance && (!!credit.error || !credit.available),
     history,
     historyShown: !signedOut && !(loggedIn && !history.available),
-    historyLoading: restoring || history.loading,
-    historyFailed: !!history.error && history.entries.length === 0,
+    historyLoading: restoring || history.loading || (retrying && noActivityShown),
+    historyFailed: !retrying && !!history.error && noActivityShown,
     refreshing,
     pullToRefresh,
+    retrying,
+    retry,
     viewed,
   };
 }

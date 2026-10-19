@@ -1,5 +1,38 @@
 # Changelog
 
+## Unreleased (0.19.0)
+
+### Fixed: store credit on a flaky network (ENG-674, 2026-10-19)
+
+One blip from Tile Credit (a 502 while Shopify throttled it, a moment offline) ended a store-credit
+page's read, and its Retry read the activity again but not the balance, with nothing on screen to say it
+was trying.
+
+- **A Tile Credit read that meets a blip is sent once more, a second later** (`TileCreditClient`, so
+  `useStoreCredit`, `useStoreCreditHistory`, `useCartStoreCredit`'s balance and `getHistory`'s gift
+  cards): a 429, 502, 503 or 504, or no answer at all (offline, or past `timeoutMs`). With the same
+  token, once per call: a call is at most three sends (the blip, the try after it, and a 401's renewal,
+  which works as before). A second blip's answer is the error. **A write (`redeem`) is never sent
+  again**, so a lost answer can't mint a second card, and neither is a request the caller cancelled
+  (`signal`). A 500, 400, 402, 403, 404 or 409 says something about the request and stands at once.
+- **`useStoreCreditPage()` → `retry()` and `retrying`**: Retry reads the balance and the activity again
+  (it was `history.refresh`, the activity alone: offline, the balance had failed too), once at a time
+  and only signed in. While it runs, an activity with nothing to show counts as loading
+  (`historyLoading`, the list's first-load spinner) and not failed (`historyFailed`), and a missing
+  balance as loading (`balanceLoading`, as for any read). `retrying` stays true until both answer.
+
+### Changed
+
+- **`StoreCreditPage` has two more fields** (`retry`, `retrying`): an object built as one by hand (a
+  screen test's mock) needs them to typecheck.
+
+Tests: 7 more in `test/tile-credit-client.test.mjs` (with fake timers: a 503 sent again at 1,000 ms and not
+at 999; 429, 502, 504 and no answer; a blip that stays; 500, 400, 403 and 404 sent once; a redeem sent
+once after a 503 or no answer; with a 401, the renewal and one blip try per call; a cancelled read), and
+5 more in `test/store-credit-history.test.mjs` (`useStoreCreditPage`'s Retry: both read again and shown
+loading meanwhile, one at a time, both shown when they answer, nothing signed out; and a 503 on the
+ledger asked once more).
+
 ## 0.18.0 (2026-10-19)
 
 ### New: every blog with its newest articles, and a blog's articles a page at a time

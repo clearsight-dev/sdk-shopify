@@ -1,10 +1,10 @@
 // Store-credit history (`useStoreCreditHistory`) from both sources: Tile Credit's ledger and Shopify's
 // store-credit transactions (Customer Account API). The pure pieces first (how each line reads, how
 // each source pages), then the hook rendered in jsdom with the real ShopifyProvider and the services
-// stubbed at `fetch`.
+// stubbed at `fetch`. Last, the page's Retry (`useStoreCreditPage`): the balance and the activity again.
 import assert from 'node:assert/strict';
 import { JSDOM } from 'jsdom';
-import { counterRandom, harness, keychain, response } from './auth-helpers.mjs';
+import { counterRandom, deferred, harness, keychain, response } from './auth-helpers.mjs';
 
 const dom = new JSDOM('<!doctype html><div id="root"></div>', { url: 'http://localhost/' });
 global.window = dom.window;
@@ -17,6 +17,7 @@ const {
   ShopifyProvider,
   useShopify,
   useStoreCreditHistory,
+  useStoreCreditPage,
   tileCreditEntry,
   tileCreditHistory,
   shopifyStoreCreditHistory,
@@ -198,12 +199,18 @@ const LEDGER = [
 ];
 const tileCalls = [];
 let ledgerFails = false;
+/** The whole service failing with an answer that isn't a blip (500): read once, not again. */
+let tileDown = false;
+/** Set: every Tile Credit answer waits for it, so a test can look at the page while a read is on its way. */
+let tileHeld = null;
 let accountCalls = 0;
 global.fetch = async (url, init = {}) => {
   url = String(url);
   if (url.startsWith('https://tile-credit.test/')) {
     const { searchParams, pathname } = new URL(url);
     tileCalls.push({ path: pathname, before: searchParams.get('before'), limit: searchParams.get('limit'), auth: init.headers.Authorization, shop: init.headers['x-shopify-shop-domain'] });
+    if (tileHeld) await tileHeld.promise;
+    if (tileDown) return response(500, { error: 'internal', message: 'down' });
     if (pathname === '/public/me/ledger') {
       if (ledgerFails) return response(503, { error: 'down' });
       const start = searchParams.get('before') ? Number(searchParams.get('before')) : 0;
@@ -251,12 +258,12 @@ const root = createRoot(document.getElementById('root'));
 const settle = () => runAct(async () => { await new Promise((r) => setTimeout(r, 30)); });
 const secure = keychain();
 const auth = { method: 'password', secureStorage: secure, random: counterRandom(), customerAccount: { shopId: SHOP_ID, clientId: 'client-1' } };
-async function render(storeCredit) {
+async function render(storeCredit, probe = Probe) {
   await runAct(async () => {
     root.render(React.createElement(
       ShopifyProvider,
       { config: { storeDomain: 'Shop.myshopify.com', storefrontAccessToken: 't', apiVersion: '2026-07' }, auth, storeCredit },
-      React.createElement(Probe),
+      React.createElement(probe),
     ));
   });
   await settle();
@@ -302,12 +309,15 @@ await t.check('at the end, loadMore reads nothing', () => {
 });
 
 ledgerFails = true;
+const ledgerReads = () => tileCalls.filter((call) => call.path === '/public/me/ledger').length;
+const readsBeforeBlip = ledgerReads();
 await runAct(async () => { await history.refresh(); });
 await settle();
-await t.check('a failed refresh keeps the lines on screen and says so', () => {
+await t.check('a failed refresh keeps the lines on screen and says so (a 503: asked once more a second later first)', () => {
   assert.deepEqual(history.entries.map((e) => e.id), ['g3', 'g2', 'g1']);
   assert.ok(history.error);
   assert.equal(history.loading, false);
+  assert.equal(ledgerReads() - readsBeforeBlip, 2);
 });
 
 ledgerFails = false;
@@ -348,6 +358,71 @@ await render(undefined);
 await t.check('no store credit chosen: nothing', () => {
   assert.equal(history.source, null);
   assert.equal(history.available, false);
+});
+
+t.section('useStoreCreditPage: Retry');
+let page = null;
+function PageProbe() {
+  api = useShopify();
+  page = useStoreCreditPage({ pageSize: 2 });
+  return null;
+}
+const TILE = { source: 'tile', tileCreditBaseUrl: 'https://tile-credit.test' };
+const reads = (path) => tileCalls.filter((call) => call.path === path).length;
+
+tileDown = true;
+await render(TILE, PageProbe);
+await t.check('both reads failed: the card says it couldn’t load, the activity offers Retry', () => {
+  assert.equal(page.balanceFailed, true);
+  assert.equal(page.historyFailed, true);
+  assert.equal(page.historyLoading, false);
+  assert.equal(page.retrying, false);
+});
+
+tileDown = false;
+tileHeld = deferred();
+const walletBefore = reads('/public/me');
+const ledgerBefore = reads('/public/me/ledger');
+await runAct(async () => { page.retry(); });
+await settle();
+await t.check('Retry reads the balance and the activity again, both shown loading meanwhile, not failed', () => {
+  assert.equal(page.retrying, true);
+  assert.equal(page.historyLoading, true, 'the list’s first-load spinner, in place of its error');
+  assert.equal(page.historyFailed, false);
+  assert.equal(page.balanceLoading, true);
+  assert.equal(page.balanceFailed, false);
+  assert.equal(reads('/public/me') - walletBefore, 1, 'the balance, not only the activity');
+  assert.equal(reads('/public/me/ledger') - ledgerBefore, 1);
+});
+
+await runAct(async () => { page.retry(); });
+await settle();
+await t.check('a second Retry while one runs reads nothing more', () => {
+  assert.equal(reads('/public/me') - walletBefore, 1);
+  assert.equal(reads('/public/me/ledger') - ledgerBefore, 1);
+});
+
+await runAct(async () => { tileHeld.resolve(); });
+tileHeld = null;
+await settle();
+await t.check('when both answer: the balance and the lines, nothing loading or failed', () => {
+  assert.equal(page.retrying, false);
+  assert.deepEqual(page.balance, { amount: '42.00', currencyCode: 'USD' });
+  assert.deepEqual(page.history.entries.map((e) => e.id), ['g3', 'g2']);
+  assert.equal(page.historyLoading, false);
+  assert.equal(page.historyFailed, false);
+  assert.equal(page.balanceFailed, false);
+});
+
+await runAct(async () => { await api.customer.logout(); });
+await settle();
+const callsSignedOut = tileCalls.length;
+await runAct(async () => { page.retry(); });
+await settle();
+await t.check('signed out, Retry reads nothing', () => {
+  assert.equal(page.signedOut, true);
+  assert.equal(page.retrying, false);
+  assert.equal(tileCalls.length, callsSignedOut);
 });
 
 await runAct(async () => { root.unmount(); });
