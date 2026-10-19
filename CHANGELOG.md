@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased (0.19.0)
+## 0.19.0 (2026-10-19)
 
 ### New: the shopper is told when a reservation runs out, on any screen (ENG-695, 2026-10-19)
 
