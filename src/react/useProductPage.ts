@@ -70,12 +70,17 @@ export interface UseVariantSelectionOptions {
   separator?: string;
   /** The selection starts over when this changes (default: the product's id). */
   resetKey?: string | null;
+  /**
+   * The product can't be bought at all (an auction), so no value's state is a `preorder` (0.19.0).
+   * `useProductPage` sets it from `isBlocked`.
+   */
+  blocked?: boolean;
 }
 
 export interface VariantSelection {
   /** The options shown as selectors, in display order. */
   options: ProductOption[];
-  /** Each option with every value's state: selected, available, units left, the variant it picks. */
+  /** Each option with every value's state: selected, available, units left, pre-order, the variant it picks. */
   optionStates: OptionState[];
   selection: OptionSelection;
   setOption: (name: string, value: string) => void;
@@ -163,11 +168,12 @@ export function useVariantSelection(
     setPickCount(0);
   }, []);
 
+  const blocked = options.blocked ?? false;
   const states = useMemo(
-    () => buildOptionStates(selectable, variants, selection, isUnavailable),
+    () => buildOptionStates(selectable, variants, selection, isUnavailable, { blocked }),
     // isUnavailable is a rule, read each time; its identity isn't part of the key.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [selectable, variants, selection],
+    [selectable, variants, selection, blocked],
   );
 
   const threshold = options.lowStockThreshold === undefined ? DEFAULT_LOW_STOCK_THRESHOLD : options.lowStockThreshold;
@@ -361,7 +367,7 @@ export interface ProductPageAdd {
   variant: ProductVariant | null;
 }
 
-export interface UseProductPageOptions extends UseVariantSelectionOptions, Omit<UseAddToCartOptions, 'onAdded'> {
+export interface UseProductPageOptions extends Omit<UseVariantSelectionOptions, 'blocked'>, Omit<UseAddToCartOptions, 'onAdded'> {
   /**
    * An add that landed, with what it was of (0.15.0: a show's analytics, a live room's announcement, a
    * "Success!" sheet). `onRefused` has every refusal.
@@ -372,7 +378,10 @@ export interface UseProductPageOptions extends UseVariantSelectionOptions, Omit<
   onError?: (error: unknown, context: { at: string; handle: string }) => void;
   /** Open the gallery on the first video. */
   playVideo?: boolean;
-  /** The product can't be bought at all (e.g. live in an auction): `status: 'blocked'`. */
+  /**
+   * The product can't be bought at all (e.g. live in an auction): `status: 'blocked'`, and no option
+   * value is a `preorder`.
+   */
   isBlocked?: (product: ProductLike) => boolean;
   /**
    * Parse the description: true (default), false to wait (e.g. until after the screen's
@@ -437,7 +446,12 @@ export function useProductPage(handle: string | null | undefined, options: UsePr
   const { product, preview } = result;
   const shown: ProductLike | null = product ?? preview ?? null;
 
-  const selection = useVariantSelection(shown, { ...options, resetKey: options.resetKey !== undefined ? options.resetKey : (handle ?? null) });
+  const blocked = !!shown && !!options.isBlocked?.(shown);
+  const selection = useVariantSelection(shown, {
+    ...options,
+    resetKey: options.resetKey !== undefined ? options.resetKey : (handle ?? null),
+    blocked,
+  });
   // What an add was of, read when it lands: the callback is handed over before the page has them.
   const addedOf = useRef<ProductPageAdd>({ product: null, variant: null });
   addedOf.current = { product: shown, variant: selection.variant };
@@ -466,7 +480,6 @@ export function useProductPage(handle: string | null | undefined, options: UsePr
     [parse, html],
   );
 
-  const blocked = !!shown && !!options.isBlocked?.(shown);
   const status: ProductPageStatus = !shown
     ? 'loading'
     : blocked

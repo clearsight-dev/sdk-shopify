@@ -4,6 +4,7 @@
 // on these; an app that wants its own page can use them directly, piece by piece.
 import { getConfig, isConfigured } from './client';
 import type { ProductBase } from './productStore';
+import { preorderPlanFor, type PreorderOptions } from './purchaseRules';
 import type { Cart, Money, Product, ProductMedia, ProductOption, ProductVariant } from './types';
 
 /** What the page logic needs of a product: the full product, or the store's preview of it. */
@@ -82,6 +83,12 @@ export interface OptionValueState {
   available: boolean;
   /** Units left of that variant; null when Shopify doesn't track it. */
   quantityAvailable: number | null;
+  /**
+   * That variant is sold out but sells on its pre-order plan (`preorderPlanFor`): a chip says
+   * "Pre-order", not "Waitlist", and isn't crossed out. Read it before `available`, which stays as it
+   * was (false at 0 left, true when oversold below 0). Never on a blocked product, an auction (0.19.0).
+   */
+  preorder: boolean;
 }
 
 export interface OptionState {
@@ -92,13 +99,15 @@ export interface OptionState {
 
 /**
  * Every value of every option with what choosing it would give. Stock is per combination, so a
- * Size's count follows the selected Color and vice versa.
+ * Size's count follows the selected Color and vice versa. `blocked`: the product can't be bought at
+ * all (an auction), so no value is a pre-order.
  */
 export function optionStates(
   options: ProductOption[],
   variants: ProductVariant[] | null | undefined,
   selection: OptionSelection,
   isUnavailable: (variant: ProductVariant | null) => boolean = isVariantUnavailable,
+  { blocked = false }: PreorderOptions = {},
 ): OptionState[] {
   return options.map((option) => ({
     name: option.name,
@@ -111,6 +120,7 @@ export function optionStates(
         variant,
         available: !isUnavailable(variant),
         quantityAvailable: variant?.quantityAvailable ?? null,
+        preorder: preorderPlanFor(variant, { blocked }) != null,
       };
     }),
   }));

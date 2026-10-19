@@ -1,5 +1,32 @@
 # Changelog
 
+## Unreleased (0.19.0)
+
+### New: an option value says it is a pre-order (ENG-607, 2026-10-19)
+
+A size sold out but sold on its pre-order plan had nothing in its option state to say so: `available`
+was false at 0 left, so a chip under it said "Waitlist" (or crossed it out) while the buy bar offered
+pre-order; oversold below 0, it was available, and a chip printed the count ("-10 Left"). On the test
+store, 294 pre-orderable sizes read "Waitlist" or were crossed out, and 9 showed a count below 0.
+
+- **`OptionValueState.preorder`**: the size the value picks is pre-ordered (`preorderPlanFor`: sold
+  out, still for sale, on a plan of its own), at 0 left or oversold below it. Never on a product that
+  can't be bought (an auction). `available` and `quantityAvailable` are unchanged.
+- **`optionStates(options, variants, selection, isUnavailable, { blocked })`**: a fifth argument, the
+  same `PreorderOptions` as `preorderPlanFor`; left out, nothing is blocked.
+- **`useVariantSelection({ blocked })`**, and **`useProductPage` passes its `isBlocked`** through, so
+  a product under auction has no pre-order value, as its bar already offers none.
+
+### Changed
+
+- **`OptionValueState` has one more field** (`preorder`): an object built as one by hand (a tile's
+  fixture, a screen test's mock) needs it to typecheck.
+
+Tests: 2 more in `test/product-page.test.mjs` (pure: at 0 and below 0 a pre-order, with stock or with
+stock not tracked not, no longer for sale not, blocked never; through `useProductPage`: a sold-out and
+an oversold size on a plan, and none with `isBlocked`), and one more assertion in its option-states
+check (no plan, no pre-order).
+
 ## 0.18.0 (2026-10-19)
 
 ### New: every blog with its newest articles, and a blog's articles a page at a time

@@ -300,7 +300,7 @@ const page = useProductPage(handle, {
 
 page.shown;                      // product ?? preview: render now (variants included since 0.9)
 page.status;                     // 'loading' | 'unknown' | 'available' | 'unavailable' | 'blocked'
-page.selection.optionStates;     // each option, each value: selected, available, units left, its variant
+page.selection.optionStates;     // each option, each value: selected, available, units left, preorder, its variant
 page.selection.setOption(name, value);   page.selection.selectVariant(id);
 page.selection.variant;  page.selection.label;  page.selection.price;   // { price, compareAtPrice, onSale }
 page.selection.lowStock;
@@ -402,6 +402,11 @@ const action = waitlistActionFor(item.variant, cart, { blocked: isAuctioned(item
   reservation service's refusal), every unit already in this cart, buy.
 - A waitlist card: blocked, pre-order, add to cart (back in stock with a unit to spare), in cart, else
   waiting. `StandaloneVariant.product.tags` (0.10) is there for the card's `blocked` rule.
+- **An option value** (`optionStates`, 0.19.0) carries `preorder`: the same rule for the size that value
+  picks, so a chip can say "Pre-order" where it said "Waitlist" (or crossed it out), and the bar offers
+  pre-order for it. Read it before `available`, which keeps its old meaning (false at 0 left, true when
+  oversold below 0). `useProductPage` passes its `isBlocked` through (`useVariantSelection({ blocked })`),
+  so a product under auction has no pre-order value.
 - Tested in `test/purchase-rules.test.mjs` (16 checks).
 
 **Use only the part you need.** `useVariantSelection(product, options)` is the selection, states,
