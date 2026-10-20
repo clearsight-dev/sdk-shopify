@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased (0.20.0)
+## 0.20.0 (2026-10-20)
 
 ### New: star ratings on every product, from Shopify's review metafields (2026-10-20)
 
