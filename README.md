@@ -242,6 +242,45 @@ useProduct(handle, { imageTransform: { maxWidth: 1080 } });
 - Each transform is its own cache entry. A product page's first-render `preview` uses the image the
   grid fetched, so the image on screen is already in the image cache.
 
+### Star ratings on products (0.20.0)
+
+Every product the SDK returns carries `rating`, read from **Shopify's standard review metafields**,
+the ones review apps (Judge.me, Yotpo, Okendo and others) write on each product they have reviews
+for:
+
+- `reviews.rating`, a `rating` value: `{ "value": "4.6", "scale_min": "1.0", "scale_max": "5.0" }`
+- `reviews.rating_count`, an integer: `"12"`
+
+```ts
+product.rating; // { value: 4.6, scaleMax: 5, count: 12 } | null
+const filledStars = product.rating ? (product.rating.value / product.rating.scaleMax) * 5 : 0;
+```
+
+- **Every product read asks for both** (collection pages, search, recommendations, `byIds` and so
+  recently viewed and products from past orders, the wishlist, `list`, and the product page's
+  `byHandle`/`byId`), so a card has its stars with no second request. The rating is a base key, so a
+  product page opened from a card shows them in its first frame. On a 50-product collection page
+  the two metafields add 7 to Shopify's query cost (723 to 730) and about 30 bytes a product
+  without reviews (measured on the test store, 2026-10-20).
+- `value` is kept between 0 and `scaleMax` (the scale's top, 5 for most apps; another scale is kept
+  as it is). `count` is the number of reviews, 0 when the app wrote no count.
+- **`rating` is null**, and nothing should be drawn, when the product has no reviews, when what the
+  app wrote can't be read as a rating, or when the store hasn't set things up (below). Reading one
+  never throws.
+- They are read under their own name (`ratingMetafields`), so they work beside the app's own
+  `productMetafields`, and adding `reviews.rating` there as well is harmless.
+
+**What the store must do, or `rating` is null on every product:**
+
+1. **Give the two metafield definitions Storefront access.** Shopify admin → Settings → Custom
+   data → Products → the definition (`reviews.rating`, then `reviews.rating_count`: Shopify's
+   standard "Product rating" and "Product rating count") → its Access section → turn on
+   **Storefront access**. The Storefront API returns a metafield only when its definition allows
+   it; otherwise it answers null, with no error.
+2. **Have a review app fill them.** Most write these two metafields themselves; some only once a
+   setting in the app is on, so check the app's settings. With no app, or no reviews, they are
+   empty.
+
 ### Cache-first pages: `useProduct`, `useCollectionProducts`, `useSearch`
 
 Each hook renders what this device already knows **on its first render**, then reads the network in
@@ -262,15 +301,15 @@ const results = useSearch(term, { debounceMs: 300 }); // results.query is the de
 - **Every product read records its base keys** (`PRODUCT_BASE_KEYS`): `id`, `handle`, `title`,
   `featuredImage`, `priceRange`, `compareAtPriceRange`, and since 0.9 also `options`, `variants`,
   `description`, `descriptionHtml`, `availableForSale`, `totalInventory`, `tags`, `vendor` and
-  `productType`. Collections, search, recommendations, lists, `byIds` and the wishlist already fetch
+  `productType`, and since 0.20 `rating`. Collections, search, recommendations, lists, `byIds` and the wishlist already fetch
   all of these, so keeping them costs no request. `byHandle`/`byId` record the full product (which
   adds the gallery's media). So a product tapped anywhere opens with its picker, stock state and
   description in the first frame, and a product page seen before opens complete.
 - **Kept on the device** across cold starts, one key per product, read only when something asks
   (nothing is loaded in bulk at launch). Caps: 2,500 base entries (3-10 KB each with variants and
   description, so roughly 10-25 MB at the cap), 30 full products, 20 first pages; anything older
-  than 7 days is dropped. A schema change bumps the key version (now `v3`, since each variant
-  carries `sellingPlan`), and the old versions' keys are cleared from the device once, after launch. Keys carry a schema version and the store, market,
+  than 7 days is dropped. A schema change bumps the key version (now `v4`, since each product
+  carries `rating`; `v3` was each variant's `sellingPlan`), and the old versions' keys are cleared from the device once, after launch. Keys carry a schema version and the store, market,
   API version and metafields, so nothing mismatched is ever shown. Catalogue data only: never cart,
   customer, orders or wallet.
 - **Storage:** on iOS/Android, **MMKV 3** (synchronous, read in microseconds inside a render). List
@@ -1481,7 +1520,7 @@ shows one shopper's wallet to the next.
 
 ```ts
 import type {
-  Product, ProductVariant, ProductOption,
+  Product, ProductVariant, ProductOption, ProductRating,
   Cart, CartLine, CartLineInput, CartLineUpdateInput,
   Collection, Customer, Order, Blog, Article,
   OrderSummary, OrderDetails, OrderLine, OrderProgress,

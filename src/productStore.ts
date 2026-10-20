@@ -4,9 +4,9 @@
  *
  * - **Base** keys (`PRODUCT_BASE_KEYS`) are recorded from EVERY read that returns products:
  *   collections, search, recommendations, lists, `byIds`, the wishlist. They are what a product page
- *   shows instantly: title, image, price, the variant picker (options, variants), stock state and the
- *   description. Every one of those reads fetches them anyway; only the gallery's media waits for
- *   the product's own read.
+ *   shows instantly: title, image, price, the variant picker (options, variants), stock state, the
+ *   description and the star rating. Every one of those reads fetches them anyway; only the gallery's
+ *   media waits for the product's own read.
  * - **Full** products are recorded by `byHandle` / `byId`, for returning to a product page.
  * - **Lists**: the first page of each collection or search, for `useCollectionProducts` /
  *   `useSearch` to show before revalidating.
@@ -41,6 +41,7 @@ export const PRODUCT_BASE_KEYS = [
   'tags',
   'vendor',
   'productType',
+  'rating',
 ] as const;
 export type ProductBase = Pick<Product, (typeof PRODUCT_BASE_KEYS)[number]>;
 
@@ -64,13 +65,14 @@ export interface CachedList {
 }
 
 /**
- * v3: every variant carries `sellingPlan` (its pre-order plan, or null), so a stored variant without
- * one is never read as "no plan". v2: base entries carry options, variants, stock and the description
- * (v1 had six keys).
+ * v4: every product carries `rating` (its stars, or null), so a stored product without one is never
+ * read as "no rating". v3: every variant carries `sellingPlan` (its pre-order plan, or null), so a
+ * stored variant without one is never read as "no plan". v2: base entries carry options, variants,
+ * stock and the description (v1 had six keys).
  */
-const VERSION = 'v3';
+const VERSION = 'v4';
 /** Earlier schema versions, cleared from the device once per session. */
-const OLD_VERSIONS = ['v1', 'v2'];
+const OLD_VERSIONS = ['v1', 'v2', 'v3'];
 const DAY = 24 * 60 * 60 * 1000;
 /** Older than this, an entry is dropped rather than shown. */
 export const MAX_AGE_MS = 7 * DAY;
@@ -181,6 +183,7 @@ export function toProductBase(p: Product): ProductBase {
     tags: p.tags ?? [],
     vendor: p.vendor ?? '',
     productType: p.productType ?? '',
+    rating: p.rating ?? null,
   };
 }
 

@@ -289,9 +289,27 @@ export interface Product {
    * product doesn't carry (or whose definition denies storefront access) is simply absent.
    */
   metafields: Record<string, string>;
+  /**
+   * The product's star rating (0.20.0), from Shopify's standard review metafields that a review app
+   * writes (`reviews.rating`, `reviews.rating_count`). Null when the product has none, when the store
+   * hasn't given those metafield definitions Storefront access, or when the value can't be read.
+   */
+  rating: ProductRating | null;
   /** ISO 8601. */
   updatedAt: string;
   createdAt: string;
+}
+
+/**
+ * A product's star rating (0.20.0). Stars to fill out of five: `value / scaleMax * 5`.
+ */
+export interface ProductRating {
+  /** The average rating, between 0 and `scaleMax`: 4.6. */
+  value: number;
+  /** The top of the rating's scale: 5 for most review apps. */
+  scaleMax: number;
+  /** How many reviews it is the average of. 0 when the review app didn't write a count. */
+  count: number;
 }
 
 // Collections

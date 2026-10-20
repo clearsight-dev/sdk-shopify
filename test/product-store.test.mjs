@@ -71,7 +71,7 @@ const CONFIG = { storeDomain: 'shop.myshopify.com', storefrontAccessToken: 't', 
 const wait = (ms) => new Promise((r) => setTimeout(r, ms));
 /** What a cold start looks like: the process forgot everything, the device kept its store. */
 const coldStart = () => { store.resetProductStoreMemory(); clearRequestCache(); };
-const storedKeys = () => Object.keys(localStorage).filter((k) => k.startsWith('tiledev.sdk-shopify:v3:'));
+const storedKeys = () => Object.keys(localStorage).filter((k) => k.startsWith('tiledev.sdk-shopify:v4:'));
 
 let pass = 0;
 const check = async (label, fn) => { await fn(); pass++; console.log('  ✓', label); };
@@ -129,10 +129,11 @@ console.log('product store');
 await shopify.init(CONFIG);
 
 await check('a collection read records the base keys of every product, and only those', async () => {
-  // Left by earlier SDKs (schema v1, and v2 whose variants had no sellingPlan): cleared by the
-  // session's prune, checked further down.
+  // Left by earlier SDKs (schema v1, v2 whose variants had no sellingPlan, and v3 whose products had
+  // no rating): cleared by the session's prune, checked further down.
   localStorage.setItem('tiledev.sdk-shopify:v1:abc:b:gid://shopify/Product/1', '{"b":{},"t":1}');
   localStorage.setItem('tiledev.sdk-shopify:v2:abc:b:gid://shopify/Product/1', '{"b":{},"t":1}');
+  localStorage.setItem('tiledev.sdk-shopify:v3:abc:b:gid://shopify/Product/1', '{"b":{},"t":1}');
   await shopify.collections.products('new-arrivals', { first: 12 });
   const entry = peekProduct('p-1');
   assert.ok(entry, 'known after a collection read');
@@ -266,10 +267,11 @@ await check('never seen (a deep link): loading, then the full product', async ()
   await pdp.unmount();
 });
 
-await check('keys from earlier schemas (v1, v2) are cleared from the device, off the hot path', async () => {
+await check('keys from earlier schemas (v1, v2, v3) are cleared from the device, off the hot path', async () => {
   await wait(3100); // the session's prune runs 3 s after the first read
   assert.equal(localStorage.getItem('tiledev.sdk-shopify:v1:abc:b:gid://shopify/Product/1'), null);
   assert.equal(localStorage.getItem('tiledev.sdk-shopify:v2:abc:b:gid://shopify/Product/1'), null);
+  assert.equal(localStorage.getItem('tiledev.sdk-shopify:v3:abc:b:gid://shopify/Product/1'), null);
   assert.ok(storedKeys().length > 0, 'the current schema is kept');
 });
 

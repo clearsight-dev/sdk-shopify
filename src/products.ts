@@ -1,6 +1,7 @@
 import { request } from './client';
 import { rememberProducts } from './productStore';
 import { normalizeMetafields } from './metafields';
+import { productRatingFrom } from './ratings';
 import { ShopifyError, ImageOptions } from './types';
 import {
   nodesAsProductsQuery,
@@ -201,6 +202,7 @@ export function normalizeProduct(p: any): Product {
     hasVideo: mediaTypes.some((type: string) => VIDEO_CONTENT_TYPES.has(type)),
     media: toMedia(p.media?.nodes ?? []),
     metafields: normalizeMetafields(p.metafields),
+    rating: productRatingFrom(p.ratingMetafields),
     updatedAt: p.updatedAt,
     createdAt: p.createdAt,
   };

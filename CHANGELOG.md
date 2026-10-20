@@ -1,5 +1,44 @@
 # Changelog
 
+## Unreleased (0.20.0)
+
+### New: star ratings on every product, from Shopify's review metafields (2026-10-20)
+
+Product cards had no way to show stars: no product read asked for a rating. Decided 2026-10-20: cards
+show the rating "from metafields", Shopify's standard review metafields that review apps write.
+
+- **`Product.rating: ProductRating | null`**, `{ value, scaleMax, count }`: the average (kept between 0
+  and `scaleMax`), the top of its scale (5 for most apps; another is kept as it is) and how many
+  reviews (0 when the app wrote no count). Read from `reviews.rating` (a `rating` JSON,
+  `{ value, scale_min, scale_max }`) and `reviews.rating_count` (an integer). Null when the product has
+  none, when the store hasn't given those definitions Storefront access, or when the value can't be
+  read as a rating; reading one never throws.
+- **Every product read asks for both**, in `ProductCoreFields` (so `ProductCardFields` and
+  `ProductFields`): collection pages, search, recommendations, `byIds` (recently viewed, products from
+  past orders, `useProductsById`), the wishlist, `list`, and the product page's `byHandle` / `byId`.
+  Selected as `ratingMetafields: metafields(identifiers: …)`, beside the app's own `productMetafields`
+  (two unnamed `metafields` selections with different identifiers would be a GraphQL error). On the
+  test store's 50-product collection page: query cost 723 to 730, about 30 bytes a product with none.
+- **`rating` is a base key** (`PRODUCT_BASE_KEYS`), so a product page opened from a card shows its stars
+  in the first frame. The product store's keys move to **`v4`** (a stored product without `rating` is
+  never read as "no rating"); `v3` keys are cleared from the device once, after launch, like `v1`/`v2`.
+- A wishlist product saved by an earlier SDK reads as `rating: null` until its refresh, never undefined.
+- **Upgrading:** `rating` is required on `Product`, so a `Product` an app builds by hand (a module's
+  `fixtures.ts`) needs `rating: null` (or a rating) to type-check.
+- **Store-side**: the metafield definitions need Storefront access (Settings → Custom data → Products →
+  the definition → Storefront access), and a review app must fill them; README, "Star ratings on
+  products". On skandi-apparel (the test store), none of its 446 products has either metafield today,
+  so `rating` is null on every one.
+
+Tests: `test/product-ratings.test.mjs` (18 checks: a rating and its count, either order, numbers or
+text; a scale other than 5; missing (no metafields, Storefront's nulls, a count alone); malformed
+(unreadable JSON, a bare number, no value, no scale, a scale of 0 or below, a value that isn't text);
+kept on the scale; a count missing, unreadable, fractional or below 0; both fragments carry the
+selection inside `ProductCoreFields`, and each read (collection page, search, recommendations,
+`byIds`, both product-page reads, `list`, the wishlist refresh) sends it beside the app's own
+metafields and returns the rating; the rating in the base keys; a wishlist product saved before it).
+`test/product-store.test.mjs`: keys are `v4`, and `v3` keys are cleared.
+
 ## 0.19.0 (2026-10-19)
 
 ### New: the shopper is told when a reservation runs out, on any screen (ENG-695, 2026-10-19)

@@ -1,4 +1,5 @@
 import { memoizeQuery, metafieldSelection } from './metafields';
+import { RATING_METAFIELDS_SELECTION } from './ratings';
 
 export const MONEY_FRAGMENT = /* GraphQL */ `
   fragment MoneyFields on MoneyV2 {
@@ -42,11 +43,15 @@ export const VARIANT_FRAGMENT = /* GraphQL */ `
  * Each variant carries its first selling-plan allocation (`variant.sellingPlan`, its pre-order plan):
  * one is all a page adds with, and every product read carries it, so a page opened from a card knows
  * it in its first frame. It isn't in `VariantFields`, which the cart shares: a cart line has its own.
+ *
+ * Each product also carries its star rating's two review metafields (`ratingMetafields`, 0.20.0): a
+ * card shows the stars, so every product read asks for them (`ratings.ts`).
  */
 const productCoreFragment = () => /* GraphQL */ `
   ${VARIANT_FRAGMENT}
   fragment ProductCoreFields on Product {
     ${metafieldSelection()}
+    ${RATING_METAFIELDS_SELECTION}
     id
     handle
     title

@@ -77,7 +77,7 @@ if (notFound) return <NotFound />;
 // level: 'base' (only preview so far) | 'full' | null (nothing known: show the skeleton)
 ```
 
-- Every product read anywhere in the SDK records the product's **base keys** (`PRODUCT_BASE_KEYS`): collections, search, recommendations, `byIds`, the wishlist. Since 0.9 they include the options, variants, stock state and description, which those reads fetch anyway. So a product tapped on any grid, search result or rail opens with its title, image, price, **variant picker, Add to Cart and description in the same frame**; only the gallery's other media waits for the product's own read. A product page seen before opens complete.
+- Every product read anywhere in the SDK records the product's **base keys** (`PRODUCT_BASE_KEYS`): collections, search, recommendations, `byIds`, the wishlist. Since 0.9 they include the options, variants, stock state and description, and since 0.20 the star rating, which those reads fetch anyway. So a product tapped on any grid, search result or rail opens with its title, image, price, **variant picker, Add to Cart and description in the same frame**; only the gallery's other media waits for the product's own read. A product page seen before opens complete.
 - To warm a page before the tap lands, read the store on `onPressIn`: `peekProduct(handle)`.
 
 ### Listing page: `useCollectionProducts`

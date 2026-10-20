@@ -64,6 +64,11 @@ function isStoredProduct(v: unknown, productId: string): v is Product {
   return !!p && typeof p === 'object' && p.id === productId && typeof p.handle === 'string' && !!p.priceRange;
 }
 
+/** A product saved before 0.20.0 has no `rating`: none until the refresh reads it, never undefined. */
+function withRating(p: Product): Product {
+  return p.rating === undefined ? { ...p, rating: null } : p;
+}
+
 /**
  * What is kept of a product: everything a card and a product page's instant view use, without the
  * gallery (images past the first, media), which a product page fetches anyway. `hasVideo` stays.
@@ -84,7 +89,7 @@ const stored = createStoredList<WishlistItem>({
     const productId = toProductGid(rawId);
     const basic: WishlistItem['basic'] = e.basic && typeof e.basic === 'object' ? { ...(e.basic as WishlistItem['basic']) } : {};
     if (!basic.handle && typeof e.handle === 'string') basic.handle = e.handle;
-    const product = e.product === null ? null : isStoredProduct(e.product, productId) ? e.product : undefined;
+    const product = e.product === null ? null : isStoredProduct(e.product, productId) ? withRating(e.product) : undefined;
     return { productId, basic, addedAt: typeof e.addedAt === 'number' ? e.addedAt : 0, product };
   },
   write(item, details) {
