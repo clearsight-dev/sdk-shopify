@@ -1,5 +1,55 @@
 # Changelog
 
+## 0.21.0 (2026-10-21)
+
+### New: the base app's tile helpers, from the package root (2026-10-21)
+
+Every Tile app built on amore-v2 (sparkl-v2, k-marie-v2) carried its own copy of three small helpers its
+tiles' wiring imports: `src/core/utils/images.ts`, `src/core/utils/auction.ts`, and `openWebPage` from
+`src/core/services/storeLinks.ts`. They are in the SDK now, with the same names, values and behaviour, so
+the wiring imports them from `@tiledev/sdk-shopify`, beside `sizedImageUrl`.
+
+- **Card and product page image sizes:** `CARD_IMAGE_WIDTH` (660), `CARD_IMAGE` (`{ maxWidth: 660 }`)
+  for every list of product cards, `PRODUCT_PAGE_IMAGE` (`{ maxWidth: 1080 }`) for every read of a whole
+  product. `cardImageUrl(url)` is the card-sized copy of an image (`sizedImageUrl(url, 660)`);
+  `cardPhotoUrl(url)` is the URL a card actually loads: an image Shopify already sized
+  (`photo_1080x.jpg`, `photo_330x@2x.jpg`, `…_100x100_crop_center.jpg`) as it is, else the card size.
+  Both return `string | null`, null for no URL.
+- **The auction tag:** `AUCTION_TAG` (`'SEARCH-BLOCKED'`) and `isAuctioned(product)`, true while the
+  product carries it (exact case), for `useProductPage`'s and `useWaitlistPage`'s `isBlocked`. Anything
+  with `tags` will do (a product, a waitlist variant's `product`); no tags is false.
+- **`openWebPage(url)`:** a page on the store's own website opens in the in-app browser
+  (expo-web-browser's `openBrowserAsync`), any other link with the phone (`Linking.openURL`: its browser,
+  or the app that owns the link). A plain function, for an `onPress`. Nothing is thrown or rejected: a
+  page that can't open just doesn't. On the web (the editor preview, browsers) every link opens in a new
+  tab, `window.open(url, '_blank', 'noopener')`, as React Native Web's `Linking` does.
+- **`ShopifyConfig.webDomains?: string[]`:** the store's website, as hosts in any case (amore-v2's
+  app.json `extra.shopify.webDomains`, which the three apps already spread into their config).
+  `ShopifyProvider` sets them on its first render and again when its config brings others;
+  `shopify.init` sets them too. **`isStoreWebLink(url)`**: https only, the host in any case, on one of
+  them. Unset: no link is the store's, so every link goes to the phone.
+- **`expo-web-browser` is a new optional peer** (`>=12.0.0`). The phone's build
+  (`openWebPage.native.ts`, which Metro picks on iOS and Android) requires it only when a store page
+  opens, inside `try`, so an app without it in its binary opens store pages with `Linking.openURL`
+  instead of crashing. React Native is required the same way, as `AppState` already is; the SDK still
+  doesn't depend on it. The web build (`openWebPage.ts`) requires neither.
+- **What stays in the app:** turning a store link into the app's own link and routing it to a screen
+  (`asAppLink`, `openStorePage`, `shopifyPathForApp`) and the link-tag days, which read its route table,
+  its scheme and its Live Layer.
+- **Upgrading:** import these from `@tiledev/sdk-shopify` instead of `@/core/utils/images`,
+  `@/core/utils/auction` and `@/core/services/storeLinks`; nothing else changes while the config handed to
+  `ShopifyProvider` carries `webDomains`.
+
+Tests: `test/tile-helpers.test.mjs` (23 checks: the sizes; `cardImageUrl` on an original, one with a
+query, a sized URL and none; `cardPhotoUrl` keeping sized URLs and sizing originals, and answering as
+amore-v2's did URL for URL; the tag, with other tags, none, null, another case, a filter and a waitlist
+variant's product; `isStoreWebLink` with no domains, set by `shopify.init` in any case, http, lookalikes,
+the Shopify domain and the app's scheme, and cleared; set by `ShopifyProvider` on its first render, again
+for other domains, and none without; on the phone's build, store pages to the in-app browser and the rest
+to `Linking`, at once, store pages to `Linking` with no domains or no expo-web-browser, and rejections,
+a throwing browser and no React Native swallowed with no unhandled rejection; on the web build, a new tab,
+and nothing thrown without a window).
+
 ## 0.20.0 (2026-10-20)
 
 ### New: star ratings on every product, from Shopify's review metafields (2026-10-20)

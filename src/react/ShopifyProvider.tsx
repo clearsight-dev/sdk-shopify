@@ -31,6 +31,7 @@ import { wouldExceedLineLimit, maxLineItems } from "../cartPolicy";
 import { quantityInCart, withinCeiling } from "../productPage";
 import { isMissingCartError, isOutOfStockError, isUserErrorRejection } from "../errors";
 import { fillMessage, limitExceededMessage, message, setMessageResolver } from "../messages";
+import { setStoreWebDomains } from "../storeLinks";
 import { ShopifyError } from "../types";
 import { createCustomerSession, type CustomerSession, type ProfileChanges, type SessionState, type SignupInput } from "../auth/session";
 import type {
@@ -894,6 +895,17 @@ export function ShopifyProvider({
     } catch {
       // A bad config is reported by `init` below, where it has always been reported.
     }
+  }
+
+  /**
+   * The store's web domains, for `openWebPage` and `isStoreWebLink` (0.21.0). Set during render for the
+   * same reason, so a tap on the first frame already knows them, and set again whenever the host passes
+   * others: the config above is set once, and `init` runs once.
+   */
+  const appliedWebDomains = useRef<{ domains: string[] | undefined } | null>(null);
+  if (!appliedWebDomains.current || appliedWebDomains.current.domains !== config.webDomains) {
+    setStoreWebDomains(config.webDomains);
+    appliedWebDomains.current = { domains: config.webDomains };
   }
 
   /**

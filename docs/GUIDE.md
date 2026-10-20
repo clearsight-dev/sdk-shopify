@@ -39,6 +39,7 @@ import { ShopifyProvider } from '@tiledev/sdk-shopify';
     },
     // cache: { ttl: { CollectionProducts: 0 }, maxEntries: 50 },   // tune (§5.1)
     // cache: false,                                               // turn all caching off
+    webDomains: ['store.com'],                // the store's website: openWebPage opens its pages in the in-app browser (0.21)
   }}
   storage={AsyncStorage}                      // cart id + wishlist across launches; web defaults to localStorage
   // wishlistStorageKey={`${APPTILE_APP_ID}_WishlistProducts`}   // moving from Apptile's engine: its key, read as is
@@ -151,6 +152,7 @@ Every call that returns images takes an optional `imageTransform`: Shopify's ser
 - It applies to every image in the answer: product, featured, media, variants, collection, cart lines, orders, articles.
 - **Don't rely on `preferredContentType`.** Shopify's CDN picks the format from the device's `Accept` header (`Vary: Accept`), so asking for WEBP made no difference in our tests. Devices that accept WEBP or AVIF get it anyway.
 - Each transform is its own cache entry. Use the **same** transform for the same surface across screens, or the image cache can't reuse the download.
+- A Tile app built on amore-v2 uses the SDK's own sizes (0.21): `CARD_IMAGE` (`{ maxWidth: 660 }`) for every list of product cards, `PRODUCT_PAGE_IMAGE` (`{ maxWidth: 1080 }`) for every read of a whole product, and `cardImageUrl` / `cardPhotoUrl` for the URL a card drew.
 - The product page's first-render `preview` uses the image the grid fetched, so the picture on screen is already in the image cache when the page opens.
 
 ---

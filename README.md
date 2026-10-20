@@ -242,6 +242,27 @@ useProduct(handle, { imageTransform: { maxWidth: 1080 } });
 - Each transform is its own cache entry. A product page's first-render `preview` uses the image the
   grid fetched, so the image on screen is already in the image cache.
 
+### Card and product page sizes (0.21.0)
+
+The sizes every Tile app built on amore-v2 asks for, from its `src/core/utils/images.ts`: same names,
+values and behaviour, so a tile imports them from the package root.
+
+```ts
+import { CARD_IMAGE, PRODUCT_PAGE_IMAGE, cardImageUrl, cardPhotoUrl } from '@tiledev/sdk-shopify';
+
+useCollectionProducts({ handle, imageTransform: CARD_IMAGE });          // { maxWidth: 660 }
+useProductPage(handle, { imageTransform: PRODUCT_PAGE_IMAGE });         // { maxWidth: 1080 }
+cardImageUrl(page.media.previewImageUrl);  // …/dress_1080x.jpg → …/dress_660x.jpg; an original gets ?width=660
+cardPhotoUrl(url);                         // what a card loads: a URL Shopify already sized as it is, else 660
+```
+
+- `CARD_IMAGE_WIDTH` (660) is the width of every list of product cards. The product page draws the
+  same URL as its first image, so it must stay one constant shared by the grids and the page.
+- `PRODUCT_PAGE_IMAGE` is for every read of a whole product (the product page, a buy sheet): the
+  product store keeps one full product per handle, and the page draws whichever read landed last.
+- `cardImageUrl` and `cardPhotoUrl` return `string | null`: null for no URL. `cardPhotoUrl` is what to
+  prefetch so a card finds its photo in the image cache.
+
 ### Star ratings on products (0.20.0)
 
 Every product the SDK returns carries `rating`, read from **Shopify's standard review metafields**,
@@ -331,7 +352,7 @@ keeps only what is the app's: layout, navigation, its own rules (passed as optio
 const page = useProductPage(handle, {
   imageTransform: { maxWidth: 1080 },
   playVideo: params.playVideo === '1',
-  isBlocked: (p) => p.tags.includes('SEARCH-BLOCKED'),       // e.g. live in an auction
+  isBlocked: isAuctioned,                                    // live in an auction: tagged SEARCH-BLOCKED (0.21.0)
   parseDescription: afterTransition,                          // false to wait; or your own parser
   onView: (p) => analytics.track('productView', params(p)),   // once per product, full product
   onAdded: () => setSheetVisible(true),
@@ -437,6 +458,10 @@ const action = waitlistActionFor(item.variant, cart, { blocked: isAuctioned(item
 - **A blocked product** (an auction) can't be pre-ordered or bought anywhere: the page's mode and a
   waitlist card's action are both `'blocked'`. Decided 2026-10-06, Head of Engineering: "Auction notice
   wins".
+- **The auction rule** (0.21.0, from amore-v2's `src/core/utils/auction.ts`): `isAuctioned(product)`,
+  true while the product carries `AUCTION_TAG` (`'SEARCH-BLOCKED'`, exact case), for `isBlocked` and a
+  waitlist card's `blocked`. Anything with `tags` will do (a product, a waitlist variant's `product`);
+  no tags is false.
 - The page's mode, the first that applies: blocked, pre-order, sold out, held in other carts (a
   reservation service's refusal), every unit already in this cart, buy.
 - A waitlist card: blocked, pre-order, add to cart (back in stock with a unit to spare), in cart, else
@@ -1466,6 +1491,40 @@ const subscribe = (onLink: (url: string) => void) => {
 - Pure helpers: `linkTagsFrom(url)`, `isLinkTagKey`, `liveLinkTags`, `withLinkTags`, `cartHasLinkTags`,
   `readSavedLinkTags`. Tests: `test/link-tags.test.mjs` (12 checks) and
   `test/link-tags-provider.test.mjs` (16, the real provider).
+
+### The store's own pages: `openWebPage` (0.21.0)
+
+A page on the store's own website (a policy, Contact Us) opens in the in-app browser; any other link
+goes to the phone. From amore-v2's `src/core/services/storeLinks.ts`. A plain function, so a tile's
+`onPress` can call it:
+
+```tsx
+import { openWebPage, isStoreWebLink } from '@tiledev/sdk-shopify';
+
+<ShopifyProvider config={{ storeDomain, storefrontAccessToken, webDomains: ['store.com', 'www.store.com'] }}>
+
+<MenuLink01 {...policyLink} onPress={openWebPage} />
+openWebPage('https://store.com/policies/privacy-policy'); // the in-app browser
+openWebPage('https://instagram.com/store');               // Linking.openURL: the phone's browser, or Instagram
+isStoreWebLink('HTTPS://STORE.COM/pages/about');           // true
+```
+
+- **`config.webDomains`** is the store's website, as hosts in any case (amore-v2's app.json
+  `extra.shopify.webDomains`, so an app that spreads `extra.shopify` into its config already passes
+  them). `ShopifyProvider` sets them on its first render and again when its config brings others;
+  `shopify.init` sets them too. Unset: no link is the store's.
+- **`isStoreWebLink(url)`**: https only, the host in any case, on one of them. Not `storeDomain` (the
+  `.myshopify.com` one) unless it is listed.
+- **Why the in-app browser:** once an app owns the store's domain (app links), Android hands a store
+  link opened with `Linking.openURL` straight back to the app, so the page would never show.
+- **Never throws or rejects**: a page that can't open just doesn't.
+- **`expo-web-browser`** is an optional peer: the phone's build (`openWebPage.native.ts`) requires it
+  only when a store page opens, inside `try`. Without it in the binary, store pages open with
+  `Linking.openURL` too. React Native is required the same way; the SDK still doesn't depend on it.
+- **On the web** (the editor preview, browsers) every link opens in a new tab, as React Native Web's
+  `Linking` does: `window.open(url, '_blank', 'noopener')`.
+- What stays in the app: turning a store link into the app's own link and routing it to a screen
+  (amore-v2's `asAppLink`, `openStorePage`), which read its route table and scheme.
 
 ## Tile Credit
 

@@ -42,6 +42,13 @@ export interface ShopifyConfig {
    * A transform passed to a call directly (`cart.get(id, { imageTransform })`) wins.
    */
   imageTransforms?: { cart?: ImageTransform; wishlist?: ImageTransform; waitlist?: ImageTransform };
+  /**
+   * The store's own website, as hosts in any case: `['store.com', 'www.store.com']` (0.21.0).
+   * `openWebPage` opens a link to one of them in the in-app browser and any other link with the
+   * phone; `isStoreWebLink` tells them apart. Unset: no link is the store's. `storeDomain` (the
+   * `.myshopify.com` one) is not among them unless listed.
+   */
+  webDomains?: string[];
 }
 
 /**
