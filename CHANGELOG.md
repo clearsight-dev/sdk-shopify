@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.21.1 (2026-10-21)
+
+- **`BLOG_IMAGE`** (`{ maxWidth: 1080 }`), from the package root: the size every read of a blog's articles asks
+  Shopify for, so a blog's list and the article it opens share one download. From the base app's
+  `src/core/utils/images.ts`, which its blog tiles' wiring imported; now they import it from here, as
+  `CARD_IMAGE` since 0.21.0.
+- **`longDate(iso)`**, from the package root: "June 14, 2026", a blog article's day as the blog tiles show it, in
+  the phone's time zone; empty for no date or one that can't be read. From the base app's
+  `src/core/utils/dates.ts`, for the article page's byline.
+
 ## 0.21.0 (2026-10-21)
 
 ### New: the base app's tile helpers, from the package root (2026-10-21)

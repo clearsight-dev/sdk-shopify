@@ -80,7 +80,8 @@ export {
   type DescriptionSpan,
   type DescriptionBlock,
 } from './productPage';
-export { CARD_IMAGE_WIDTH, CARD_IMAGE, PRODUCT_PAGE_IMAGE, cardImageUrl, cardPhotoUrl } from './images';
+export { CARD_IMAGE_WIDTH, CARD_IMAGE, PRODUCT_PAGE_IMAGE, BLOG_IMAGE, cardImageUrl, cardPhotoUrl } from './images';
+export { longDate } from './dates';
 export { AUCTION_TAG, isAuctioned } from './auction';
 export { isStoreWebLink } from './storeLinks';
 export { openWebPage } from './openWebPage';

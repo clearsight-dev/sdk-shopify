@@ -46,6 +46,8 @@ const {
   CARD_IMAGE_WIDTH,
   CARD_IMAGE,
   PRODUCT_PAGE_IMAGE,
+  BLOG_IMAGE,
+  longDate,
   cardImageUrl,
   cardPhotoUrl,
   AUCTION_TAG,
@@ -66,6 +68,7 @@ await t.check('the values are amore-v2\'s: cards 660 wide, the product page 1080
   assert.equal(CARD_IMAGE_WIDTH, 660);
   assert.deepEqual(CARD_IMAGE, { maxWidth: 660 });
   assert.deepEqual(PRODUCT_PAGE_IMAGE, { maxWidth: 1080 });
+  assert.deepEqual(BLOG_IMAGE, { maxWidth: 1080 });
 });
 await t.check('cardImageUrl: an original gets width=660, a sized URL is rewritten to 660, no URL is null', () => {
   assert.equal(cardImageUrl(`${CDN}/dress.jpg`), `${CDN}/dress.jpg?width=660`);
@@ -332,6 +335,18 @@ await t.check('no window (Node), or a window that throws: nothing opens, nothing
   } finally {
     delete globalThis.open;
   }
+});
+
+// ── Blog dates ──────────────────────────────────────────────────────────────
+t.section('longDate (0.21.1)');
+await t.check("a blog article's day in full; empty for no date or one that can't be read", () => {
+  // Noon UTC is the same day in every time zone the phone could be in.
+  assert.equal(longDate('2026-06-14T12:00:00Z'), 'June 14, 2026');
+  assert.equal(longDate('2026-01-02T12:00:00Z'), 'January 2, 2026');
+  assert.equal(longDate(null), '');
+  assert.equal(longDate(undefined), '');
+  assert.equal(longDate(''), '');
+  assert.equal(longDate('not a date'), '');
 });
 
 t.done();

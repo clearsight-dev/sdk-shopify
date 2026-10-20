@@ -248,12 +248,13 @@ The sizes every Tile app built on amore-v2 asks for, from its `src/core/utils/im
 values and behaviour, so a tile imports them from the package root.
 
 ```ts
-import { CARD_IMAGE, PRODUCT_PAGE_IMAGE, cardImageUrl, cardPhotoUrl } from '@tiledev/sdk-shopify';
+import { BLOG_IMAGE, CARD_IMAGE, PRODUCT_PAGE_IMAGE, cardImageUrl, cardPhotoUrl } from '@tiledev/sdk-shopify';
 
 useCollectionProducts({ handle, imageTransform: CARD_IMAGE });          // { maxWidth: 660 }
 useProductPage(handle, { imageTransform: PRODUCT_PAGE_IMAGE });         // { maxWidth: 1080 }
 cardImageUrl(page.media.previewImageUrl);  // …/dress_1080x.jpg → …/dress_660x.jpg; an original gets ?width=660
 cardPhotoUrl(url);                         // what a card loads: a URL Shopify already sized as it is, else 660
+useArticle(blogHandle, articleHandle, { imageTransform: BLOG_IMAGE }); // { maxWidth: 1080 } (0.21.1)
 ```
 
 - `CARD_IMAGE_WIDTH` (660) is the width of every list of product cards. The product page draws the

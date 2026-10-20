@@ -30,6 +30,13 @@ export const CARD_IMAGE: ImageTransform = { maxWidth: CARD_IMAGE_WIDTH };
  */
 export const PRODUCT_PAGE_IMAGE: ImageTransform = { maxWidth: 1080 };
 
+/**
+ * A blog's photos (0.21.1): full width at phone density, for every read of an article (a blog's list,
+ * the article page, its slideshow), so the list's photo and the page it opens are the same download.
+ * From the base app's `src/core/utils/images.ts`, as the sizes above.
+ */
+export const BLOG_IMAGE: ImageTransform = { maxWidth: 1080 };
+
 /** The card-sized copy of a product image: what the tapped card already drew, so it's in cache. */
 export function cardImageUrl(url: string | null | undefined): string | null {
   return sizedImageUrl(url, CARD_IMAGE_WIDTH);
