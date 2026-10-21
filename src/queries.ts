@@ -1,4 +1,4 @@
-import { memoizeQuery, metafieldSelection } from './metafields';
+import { memoizeQuery, metafieldSelection, variantMetafieldSelection } from './metafields';
 import { RATING_METAFIELDS_SELECTION } from './ratings';
 
 export const MONEY_FRAGMENT = /* GraphQL */ `
@@ -75,6 +75,7 @@ const productCoreFragment = () => /* GraphQL */ `
       nodes {
         ...VariantFields
         sellingPlanAllocations(first: 1) { nodes { sellingPlan { id name } } }
+        ${variantMetafieldSelection()}
       }
     }
     images(first: 20) { nodes { ...ImageFields } }

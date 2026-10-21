@@ -264,6 +264,23 @@ useArticle(blogHandle, articleHandle, { imageTransform: BLOG_IMAGE }); // { maxW
 - `cardImageUrl` and `cardPhotoUrl` return `string | null`: null for no URL. `cardPhotoUrl` is what to
   prefetch so a card finds its photo in the image cache.
 
+### Product customisation (0.22.0)
+
+Questions as JSON in a metafield (the format is in `src/customisation.ts`), named in config and read with products:
+
+```ts
+shopify.init({ ...credentials, customisation: { product: 'custom.customisations_config', variant: 'custom.customisations_config_variant' },
+  productMetafields: [{ namespace: 'custom', key: 'customisations_config' }],
+  variantMetafields: [{ namespace: 'custom', key: 'customisations_config_variant' }] });
+const form = useProductCustomisation({ productHandle, variantId, cartLineId }); // questions, answers, setAnswer, complete, save()
+const { lineIds, known } = useCartCustomisation();                              // hold checkout while lineIds isn't empty
+```
+
+### Variant metafields (0.22.0)
+
+`variantMetafields` works like `productMetafields`, for each variant: `productMetafield(variant, 'ns.key')`.
+A description's links arrive as `DescriptionSpan.href`.
+
 ### Star ratings on products (0.20.0)
 
 Every product the SDK returns carries `rating`, read from **Shopify's standard review metafields**,
@@ -1179,6 +1196,15 @@ refuses the same keys. Without `secureStorage`, both go to `storage` (the web pr
 
 **Changed from 0.8:** `loggedIn` means a session exists (it was "a profile loaded"), and the
 session is restored even when the shop fails to load.
+
+### The customer's tags: `useCustomerTags` (0.22.0)
+
+```tsx
+const tags = useCustomerTags({ active: useIsFocused() }); // re-read when the screen comes back
+if (!tags.known) …               // unread: don't treat as untagged
+tags.hasTag("no-bidding");       // trimmed, case-insensitive
+await tags.refresh({ force: true });
+```
 
 ### Store credit
 

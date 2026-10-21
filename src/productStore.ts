@@ -100,6 +100,7 @@ function scope(): string {
       (c.language || '').toUpperCase(),
       c.apiVersion || '',
       JSON.stringify(c.productMetafields ?? []),
+      ...(c.variantMetafields?.length ? [JSON.stringify(c.variantMetafields)] : []),
     ].join('|'),
   );
 }

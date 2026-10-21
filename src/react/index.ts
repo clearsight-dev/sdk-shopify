@@ -176,3 +176,15 @@ export {
   type PastOrderProducts,
   type PastOrderItem,
 } from "./usePastOrderProducts";
+export {
+  useCustomerTags,
+  type UseCustomerTagsOptions,
+  type CustomerTags,
+} from "./useCustomerTags";
+export {
+  useProductCustomisation,
+  useCartCustomisation,
+  CUSTOMISATION_STORAGE_KEY,
+  type ProductCustomisation,
+  type CartCustomisation,
+} from "./useCustomisation";

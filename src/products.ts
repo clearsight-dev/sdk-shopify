@@ -1,6 +1,6 @@
 import { request } from './client';
 import { rememberProducts } from './productStore';
-import { normalizeMetafields } from './metafields';
+import { getVariantMetafields, normalizeMetafields } from './metafields';
 import { productRatingFrom } from './ratings';
 import { ShopifyError, ImageOptions } from './types';
 import {
@@ -162,9 +162,11 @@ async function byIds(
  * as `sellingPlan` (`{ id, name }`, or null when the store enrolled it in none).
  */
 function normalizeProductVariant(node: any): ProductVariant {
-  const { sellingPlanAllocations, ...variant } = node ?? {};
+  const { sellingPlanAllocations, metafields, ...variant } = node ?? {};
   const plan = sellingPlanAllocations?.nodes?.[0]?.sellingPlan ?? null;
-  return { ...variant, sellingPlan: plan ? { id: plan.id, name: plan.name } : null };
+  const out: ProductVariant = { ...variant, sellingPlan: plan ? { id: plan.id, name: plan.name } : null };
+  if (getVariantMetafields().length) out.metafields = normalizeMetafields(metafields);
+  return out;
 }
 
 export function normalizeProduct(p: any): Product {
