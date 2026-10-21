@@ -29,6 +29,8 @@ export interface UseSearchPageOptions {
   recommendedCount?: number;
   /** How many products a search with no match shows. Default `SEARCH_FALLBACK_COUNT` (10). */
   fallbackCount?: number;
+  /** What is sent for the term (0.22.0; `useSearch`'s `queryTemplate`). `query` stays what was typed. */
+  queryTemplate?: string | null;
   /**
    * Called once per term the shopper settled on (the debounced one), once its answer is in, with every
    * match counted (production's `search` event).
@@ -123,7 +125,7 @@ export function useSearchPage(options: UseSearchPageOptions = {}): SearchPage {
   }, [openedWith]);
   const [sortId, setSortId] = useState<SearchSortId>("relevance");
 
-  const results = useSearch(term, { imageTransform, sort: SEARCH_SORTS[sortId] });
+  const results = useSearch(term, { imageTransform, sort: SEARCH_SORTS[sortId], queryTemplate: options.queryTemplate });
   const { query } = results;
   const searching = query.length > 0;
   const hasResults = searching && results.products.length > 0;

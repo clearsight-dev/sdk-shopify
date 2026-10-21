@@ -13,7 +13,7 @@ global.IS_REACT_ACT_ENVIRONMENT = true;
 
 // ── Storefront stub ─────────────────────────────────────────────────────────
 const money = (amount) => ({ amount, currencyCode: 'USD' });
-const net = { online: true, descriptionSize: 20 };
+const net = { online: true, descriptionSize: 20, wishlistReads: [] };
 const productNode = (id) => {
   const n = id.split('/').pop();
   return {
@@ -47,6 +47,7 @@ global.fetch = async (_url, init) => {
   if (name === 'ShopInfo') return reply({ shop: { moneyFormat: '${{amount}}', paymentSettings: { currencyCode: 'USD' } } });
   if (name === 'CartCreate') return reply({ cartCreate: { cart: emptyCart, userErrors: [] } });
   if (name === 'CartGet') return reply({ cart: emptyCart });
+  if (name === 'WishlistNodes') net.wishlistReads.push(variables.ids.length);
   if (name === 'WishlistNodes') return reply({ nodes: variables.ids.map((id) => (id.endsWith('/404') ? null : productNode(id))) });
   return reply({});
 };
@@ -236,5 +237,56 @@ await check("with no network the cart can't load, yet the wishlist is there, pro
   assert.equal(api.wishlist.items[0].product?.title, 'Product 5');
 });
 await runAct(async () => root.unmount());
+
+console.log('provider, lazy');
+net.online = true;
+net.wishlistReads = [];
+const many = memory({ [APPTILE_KEY]: JSON.stringify(Array.from({ length: 45 }, (_, i) => ({ id: `${900 + i}`, handle: `p-${900 + i}` }))) });
+const lazyRoot = createRoot(document.getElementById('root'));
+await runAct(async () => {
+  lazyRoot.render(React.createElement(sdk.ShopifyProvider, { config: CONFIG, storage: many, wishlistStorageKey: APPTILE_KEY, wishlistHydrateOnInit: false, wishlistBatchSize: 20 },
+    React.createElement(Probe)));
+});
+await runAct(async () => { await settle(); await settle(); });
+await check('wishlistHydrateOnInit false: the launch reads no saved product; the list is there from the device', () => {
+  assert.deepEqual(net.wishlistReads, []);
+  assert.equal(api.wishlist.items.length, 45);
+});
+await runAct(async () => { await api.wishlist.refresh(); });
+await check('wishlistBatchSize: a re-read asks for that many products at a time', () => {
+  assert.deepEqual(net.wishlistReads, [20, 20, 5]);
+});
+await runAct(async () => lazyRoot.unmount());
+
+console.log('favourites page, gone products');
+net.wishlistReads = [];
+const withGone = memory({ [APPTILE_KEY]: JSON.stringify([{ id: '7', handle: 'p-7' }, { id: '404', handle: 'gone-ring' }]) });
+await shopify.wishlist.init({ storage: withGone, storageKey: APPTILE_KEY, hydrateOnInit: false });
+await shopify.wishlist.add('gid://shopify/Product/404', { handle: 'gone-ring', title: 'Gone Ring', image: 'https://cdn.test/gone.jpg', price: money('30.00') });
+await shopify.wishlist.refresh({ keepDeleted: true });
+let page = null;
+let pageShowingGone = null;
+function Favourites() { page = sdk.useFavoritesPage(); pageShowingGone = sdk.useFavoritesPage({ showGone: true }); return null; }
+const favRoot = createRoot(document.getElementById('root'));
+await runAct(async () => {
+  favRoot.render(React.createElement(sdk.ShopifyProvider, { config: CONFIG, storage: withGone, wishlistStorageKey: APPTILE_KEY, wishlistKeepDeleted: true, wishlistHydrateOnInit: false },
+    React.createElement(Favourites)));
+});
+await runAct(async () => { await settle(); await settle(); });
+await check('by default a product the store no longer has is not shown', () => {
+  assert.deepEqual(page.products.map((p) => p.title), ['Product 7']);
+  assert.deepEqual(page.goneIds, []);
+});
+await check('showGone: it stays as a card from what was saved, not for sale, in goneIds', () => {
+  const titles = pageShowingGone.products.map((p) => p.title);
+  assert.ok(titles.includes('Product 7') && titles.includes('Gone Ring'));
+  const gone = pageShowingGone.products.find((p) => p.title === 'Gone Ring');
+  assert.deepEqual(pageShowingGone.goneIds, [gone.id]);
+  assert.equal(gone.availableForSale, false);
+  assert.equal(gone.featuredImage.url, 'https://cdn.test/gone.jpg');
+  assert.equal(gone.priceRange.min.amount, '30.00');
+  assert.equal(pageShowingGone.status, 'ready');
+});
+await runAct(async () => favRoot.unmount());
 
 console.log(`\n${pass} checks passed`);

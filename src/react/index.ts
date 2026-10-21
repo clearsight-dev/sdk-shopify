@@ -63,7 +63,7 @@ export {
   type WaitlistPageItem,
   type UseWaitlistPageOptions,
 } from "./useWaitlistPage";
-export { useFavoritesPage, type FavoritesPage } from "./useFavoritesPage";
+export { useFavoritesPage, type FavoritesPage, type UseFavoritesPageOptions } from "./useFavoritesPage";
 export {
   useSignIn,
   useSignInPage,
@@ -91,6 +91,7 @@ export {
 } from "./useCollectionProducts";
 export {
   useSearch,
+  searchQueryFrom,
   SEARCH_PAGE_SIZE,
   SEARCH_DEBOUNCE_MS,
   type SearchSort,
@@ -184,7 +185,11 @@ export {
 export {
   useProductCustomisation,
   useCartCustomisation,
+  useSavedCustomisations,
+  useItemsCustomisation,
   CUSTOMISATION_STORAGE_KEY,
   type ProductCustomisation,
   type CartCustomisation,
+  type SavedCustomisations,
+  type ItemsCustomisation,
 } from "./useCustomisation";

@@ -816,7 +816,7 @@ an `on…` option. Each page's `viewed()` keeps one identity, for `useFocusEffec
 | Product page's buy bar | `useProductPage(handle, { onSignInNeeded, onJoinedWaitlist }).purchase` | sign-in; the waitlist |
 | A product card's Add to Cart | `useQuickAdd({ credit, onChooseVariant, onAdded, addStraightToCart })`: one variant for sale goes straight into the cart unless `addStraightToCart`, or else the provider's `quickAddStraightToCart`, is false | the variant page |
 | Collection | `useCollectionPage({ handle, initialSortId, onView })` → the feed, `sortId`, `setSortId`, `removeFilter` | |
-| Search | `useSearchPage({ query, recommendedCollection, onSearched })` | |
+| Search | `useSearchPage({ query, recommendedCollection, queryTemplate, onSearched })` | |
 | Waitlist | `useWaitlistPage({ isBlocked })` → `items`, filters, counts, `addToCart`, `justAdded`, `remove`, `viewed` | |
 | Favourites | `useFavoritesPage()` → `status`, `products`, `retry`, `viewed` | |
 | Sign in, from anywhere | `useSignIn({ onOpenSignInPage })` → `start`, `signingIn`, `failed` | the sign-in page |

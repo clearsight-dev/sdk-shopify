@@ -11,11 +11,22 @@
 - **Product customisation**: questions a product asks before checkout, as JSON in a product or variant
   metafield (`ShopifyConfig.customisation`). `useProductCustomisation({ productHandle, variantId, cartLineId })`
   (questions, prefilled answers, `save()` onto the line and this device) and `useCartCustomisation()` (the lines
-  that still need answers, for holding checkout); the rules are pure exports (`visibleQuestions`,
+  that still need answers, for holding checkout) and `useSavedCustomisations()` (what this device saved per
+  variant, answers and line attributes) with `useItemsCustomisation(items)` (the same gate for items paid on a
+  cart made later, such as an auction's wins); the rules are pure exports (`visibleQuestions`,
   `customisationComplete`, `customisationAttributes`, `answersFromAttributes`, `lineNeedsCustomisation`).
 - **`DescriptionSpan.href`**: a description link's address (http(s), mailto and tel only).
 - **`useWishlist().remove(productId, { silent: true })`**: removes without the `wishlist:remove` event (and its
   toast), for removals the shopper didn't ask for, such as what an order just bought.
+- **`queryTemplate`** on `useSearch` and `useSearchPage`: what is sent for the term, `{query}` standing for it
+  (`{query}* -tag:hidden` for prefix matches without a store's hidden products); `searchQueryFrom(term, template)`
+  is the rule. The page's `query` stays what was typed. Unset, the term is sent as it is.
+- **`ShopifyProvider` `wishlistHydrateOnInit` and `wishlistBatchSize`**: the wishlist's `hydrateOnInit` and
+  `batchSize`, which only `shopify.wishlist.init` took. False skips the launch re-read of every saved product;
+  `useFavoritesPage` re-reads when it opens.
+- **`useFavoritesPage({ showGone: true })`**: a saved product the store no longer has stays as a card from what
+  the device saved (title, photo, price; not for sale), listed in `goneIds`. Needs `wishlistKeepDeleted`. Unset,
+  nothing changes.
 
 ## 0.22.0 (2026-10-22)
 
