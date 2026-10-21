@@ -209,7 +209,8 @@ interface WishlistState {
   /** Alias for `has`. */
   isWishlisted: (productId: string) => boolean;
   add:          (product: Product | string) => Promise<void>;
-  remove:       (productId: string) => Promise<void>;
+  /** `silent` (0.22.0): no `wishlist:remove` event, so no toast (e.g. what an order just bought). */
+  remove:       (productId: string, options?: { silent?: boolean }) => Promise<void>;
   toggle:       (product: Product | string) => Promise<boolean>;
   clear:        () => Promise<void>;
   refresh:      () => Promise<void>;
@@ -1804,9 +1805,9 @@ export function ShopifyProvider({
   }, [emit]);
   // `remove` emits too. It used not to, so "Removed From Wishlist" only ever
   // fired via `toggle` — a dedicated remove button showed nothing.
-  const wlRemove  = useCallback(async (id: string)          => {
+  const wlRemove  = useCallback(async (id: string, options?: { silent?: boolean }) => {
     const removed = await shopify.wishlist.remove(id);
-    if (removed) emit("wishlist:remove", { productId: id });
+    if (removed && !options?.silent) emit("wishlist:remove", { productId: id });
   }, [emit]);
   const wlToggle  = useCallback(async (p: Product | string) => {
     const nowSaved = await (shopify.wishlist.toggle as any)(p);

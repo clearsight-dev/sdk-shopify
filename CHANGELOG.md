@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.22.0 (unreleased)
+
+- **`useWishlist().remove(productId, { silent: true })`**: removes without the `wishlist:remove` event (and its
+  toast), for removals the shopper didn't ask for, such as what an order just bought.
+
 ## 0.21.1 (2026-10-21)
 
 - **`BLOG_IMAGE`** (`{ maxWidth: 1080 }`), from the package root: the size every read of a blog's articles asks
