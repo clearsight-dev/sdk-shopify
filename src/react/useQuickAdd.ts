@@ -2,7 +2,7 @@ import { useCallback, useRef, useState } from "react";
 import type { AttributionSource } from "../attribution";
 import { stockCeiling } from "../productPage";
 import type { CartLineAttribute, Product, ProductVariant } from "../types";
-import { useCart } from "./ShopifyProvider";
+import { useCart, useShopify } from "./ShopifyProvider";
 
 /** What credits a quick add to a show. Every field is optional; without any, an add is the app's own. */
 export interface QuickAddCredit {
@@ -20,6 +20,12 @@ export interface UseQuickAddOptions {
    * opens its variant page to choose.
    */
   onChooseVariant?: (product: Product) => void;
+  /**
+   * A product with one variant, for sale, goes straight into the cart; false, every tap goes to
+   * `onChooseVariant`, that product too (0.22.0). Unset: the provider's `quickAddStraightToCart` (the app's
+   * "Allow Quick Add to Cart"; true by default). Read at the tap.
+   */
+  addStraightToCart?: boolean;
   /** An add that landed (a show's analytics, a live room's announcement). */
   onAdded?: (product: Product, variant: ProductVariant) => void;
 }
@@ -34,21 +40,27 @@ export interface QuickAdd {
 /**
  * Add to Cart from a product card (0.15.0, moved from amore-v2's `useQuickAdd`). A product with one
  * variant, for sale, has nothing to choose, so it is added here with its stock as the ceiling (the
- * provider's "Added to cart" alert, or its refusal, follows). Every other product goes to
- * `onChooseVariant`. A card has already turned its button off for a product that can't be bought.
+ * provider's "Added to cart" alert, or its refusal, follows), unless `addStraightToCart` (or, unset, the
+ * provider's `quickAddStraightToCart`) is false. Every
+ * other product goes to `onChooseVariant`. A card has already turned its button off for a product that
+ * can't be bought.
  */
 export function useQuickAdd(options: UseQuickAddOptions = {}): QuickAdd {
   const { addLine } = useCart();
+  const { quickAddStraightToCart } = useShopify();
   const [addingProductIds, setAddingProductIds] = useState<string[]>([]);
-  // Read at the tap, so `add` keeps one identity while the screen's credit and routes change.
+  // Read at the tap, so `add` keeps one identity while the screen's credit and routes, and the app's
+  // setting, change.
   const optionsRef = useRef(options);
   optionsRef.current = options;
+  const appSettingRef = useRef(quickAddStraightToCart);
+  appSettingRef.current = quickAddStraightToCart;
 
   const add = useCallback(
     (product: Product) => {
-      const { credit, onChooseVariant, onAdded } = optionsRef.current;
+      const { credit, onChooseVariant, onAdded, addStraightToCart = appSettingRef.current } = optionsRef.current;
       const [onlyVariant, ...otherVariants] = product.variants;
-      if (!onlyVariant || otherVariants.length > 0 || !onlyVariant.availableForSale) {
+      if (!addStraightToCart || !onlyVariant || otherVariants.length > 0 || !onlyVariant.availableForSale) {
         onChooseVariant?.(product);
         return;
       }

@@ -397,6 +397,46 @@ await t.check('a choice to make (several sizes, or its one not for sale): onChoo
   assert.deepEqual(chosen, ['p-2', 'p-3']);
   assert.equal(added.length, 1);
 });
+await runAct(async () => root.unmount());
+root = null;
+
+// The app's "Allow Quick Add to Cart" off: every tap chooses, one size for sale too (0.22.0).
+const chosenWhenOff = [];
+function QuickAddOffProbe() {
+  probe.quickAdd = useQuickAdd({ addStraightToCart: false, onChooseVariant: (product) => chosenWhenOff.push(product.id) });
+  return null;
+}
+await mount(QuickAddOffProbe);
+const addsBefore = calls.filter((call) => call.name === 'CartLinesAdd').length;
+await runAct(async () => { probe.quickAdd.add(ONE_SIZE); probe.quickAdd.add(MANY_SIZES); });
+await settle();
+await t.check('addStraightToCart false: one size goes to onChooseVariant too, nothing is added', () => {
+  assert.deepEqual(chosenWhenOff, ['p-1', 'p-2']);
+  assert.equal(calls.filter((call) => call.name === 'CartLinesAdd').length, addsBefore);
+  assert.deepEqual(probe.quickAdd.addingProductIds, []);
+});
+
+// The same off, app-wide: the provider's quickAddStraightToCart, for every useQuickAdd under it (another
+// SDK's too) that doesn't pass its own; one that does wins.
+const chosenByProvider = [];
+function QuickAddProviderProbe() {
+  probe.quickAdd = useQuickAdd({ onChooseVariant: (product) => chosenByProvider.push(product.id) });
+  probe.ownChoice = useQuickAdd({ addStraightToCart: true, onChooseVariant: (product) => chosenByProvider.push(`own:${product.id}`) });
+  return null;
+}
+await mount(QuickAddProviderProbe, {}, { quickAddStraightToCart: false });
+await runAct(async () => { probe.quickAdd.add(ONE_SIZE); });
+await settle();
+await t.check('the provider\'s quickAddStraightToCart false: one size goes to onChooseVariant, nothing is added', () => {
+  assert.deepEqual(chosenByProvider, ['p-1']);
+  assert.equal(calls.filter((call) => call.name === 'CartLinesAdd').length, 0);
+});
+await runAct(async () => { probe.ownChoice.add(ONE_SIZE); });
+await settle();
+await t.check('a call\'s own addStraightToCart wins over the provider\'s', () => {
+  assert.deepEqual(chosenByProvider, ['p-1']);
+  assert.equal(calls.filter((call) => call.name === 'CartLinesAdd').length, 1);
+});
 
 t.section('useSignIn');
 const pagesOpened = [];

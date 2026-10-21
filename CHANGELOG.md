@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.22.0 (2026-10-22)
+
+- **What a card's Add to Cart does, app-wide: `ShopifyProvider`'s `quickAddStraightToCart`** (default
+  `true`, as before). False sends every `useQuickAdd` tap under the provider to `onChooseVariant`, a product
+  with one variant for sale too: another SDK's quick adds as well (sdk-apptile-live-selling's Live and
+  Replay products), with no change to their calls. For the app's Common Buttons "Allow Quick Add to Cart",
+  which decides what a card's Add to Cart does rather than whether it shows (decided 2026-10-22, Head of
+  Engineering): on, one variant goes straight into the cart and more open the variant page; off, every tap
+  opens the variant page. Live-updatable, read at the tap.
+- **`useQuickAdd`'s `addStraightToCart`**: the same for one call, over the provider's.
+
 ## 0.21.1 (2026-10-21)
 
 - **`BLOG_IMAGE`** (`{ maxWidth: 1080 }`), from the package root: the size every read of a blog's articles asks

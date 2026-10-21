@@ -797,7 +797,7 @@ an `on…` option. Each page's `viewed()` keeps one identity, for `useFocusEffec
 | Store credit | `useStoreCreditPage()` → `balance`, `history`, states, `pullToRefresh`, `retry`, `retrying`, `viewed` | |
 | Store credit on the cart | `useCartStoreCredit()` → `status`, `balance`, `applied`, `apply`, `remove`, `blockedBy`, `errorMessage`, `suggestedAmount`, `viewed` | |
 | Product page's buy bar | `useProductPage(handle, { onSignInNeeded, onJoinedWaitlist }).purchase` | sign-in; the waitlist |
-| A product card's Add to Cart | `useQuickAdd({ credit, onChooseVariant, onAdded })` | the variant page |
+| A product card's Add to Cart | `useQuickAdd({ credit, onChooseVariant, onAdded, addStraightToCart })`: one variant for sale goes straight into the cart unless `addStraightToCart`, or else the provider's `quickAddStraightToCart`, is false | the variant page |
 | Collection | `useCollectionPage({ handle, initialSortId, onView })` → the feed, `sortId`, `setSortId`, `removeFilter` | |
 | Search | `useSearchPage({ query, recommendedCollection, onSearched })` | |
 | Waitlist | `useWaitlistPage({ isBlocked })` → `items`, filters, counts, `addToCart`, `justAdded`, `remove`, `viewed` | |

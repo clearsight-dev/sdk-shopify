@@ -359,6 +359,8 @@ interface ShopifyContextType {
   gridColumnsStorageKey: string;
   /** `useCollectionPage`'s page size unless it is given one (`productsPerPage`). */
   productsPerPage: number | null;
+  /** `useQuickAdd`'s `addStraightToCart` unless it is given one (`quickAddStraightToCart`, 0.22.0). */
+  quickAddStraightToCart: boolean;
   /** For `useCartPage` (0.14.0): the provider's `cartExtensions`, and its two events. */
   cartPage: {
     extensions: readonly CartExtension[];
@@ -639,6 +641,14 @@ export interface ShopifyProviderProps {
   /** Cart rules. Live-updatable for the same reason. */
   cartPolicy?: CartPolicy;
   /**
+   * What a product card's Add to Cart does, app-wide (`useQuickAdd`, 0.22.0): true (the default), a
+   * product with one variant for sale goes straight into the cart and one with more opens the variant
+   * page; false, every tap opens the variant page. The app's Common Buttons "Allow Quick Add to Cart".
+   * Every `useQuickAdd` under the provider follows it, another SDK's included, unless the call passes
+   * its own `addStraightToCart`. Live-updatable, and read at the tap.
+   */
+  quickAddStraightToCart?: boolean;
+  /**
    * Attributes stamped on every cart this provider creates, and backfilled onto a stored cart that
    * predates them. They reach the order as its `customAttributes`.
    *
@@ -726,6 +736,7 @@ export function ShopifyProvider({
   reservationExpiredAlert,
   gridColumnsStorageKey = "shopify:grid-columns:v1",
   productsPerPage,
+  quickAddStraightToCart = true,
 }: ShopifyProviderProps) {
   const pageSizeSetting =
     typeof productsPerPage === "number" && Number.isFinite(productsPerPage) && productsPerPage >= 1
@@ -1921,6 +1932,7 @@ export function ShopifyProvider({
     deviceStorage: storageRef.current,
     gridColumnsStorageKey,
     productsPerPage: pageSizeSetting,
+    quickAddStraightToCart,
     cart: {
       cart, loading: cartLoading, itemCount: cart?.totalQuantity ?? 0,
       lineCount:          cart?.lines.length ?? 0,
@@ -2001,7 +2013,7 @@ export function ShopifyProvider({
     wtItems, wtIds, wtHas, wtAdd, wtRemove, wtRefresh,
     sessionState, session, authMethod, auth?.signInSurface, profileUpdate, storeCreditOptions,
     checkoutStarted, checkoutOrderPlaced, checkoutPaymentFailed, checkoutPrepare,
-    cartPage,
+    cartPage, quickAddStraightToCart,
   ]);
 
   return <ShopifyContext.Provider value={value}>{children}</ShopifyContext.Provider>;
