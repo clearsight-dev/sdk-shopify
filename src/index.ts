@@ -83,6 +83,13 @@ export {
 export { CARD_IMAGE_WIDTH, CARD_IMAGE, PRODUCT_PAGE_IMAGE, BLOG_IMAGE, cardImageUrl, cardPhotoUrl } from './images';
 export { longDate } from './dates';
 export { AUCTION_TAG, isAuctioned } from './auction';
+export {
+  CUSTOMER_TAGS_MIN_GAP_MS,
+  hasCustomerTag,
+  createCustomerTagsStore,
+  type CustomerTagsState,
+  type CustomerTagsStore,
+} from './customerTags';
 export { isStoreWebLink } from './storeLinks';
 export { openWebPage } from './openWebPage';
 export {
@@ -173,6 +180,8 @@ export {
 export {
   setProductMetafields,
   getProductMetafields,
+  setVariantMetafields,
+  getVariantMetafields,
   productMetafield,
 } from './metafields';
 export { TileCreditError } from './types';
@@ -244,6 +253,9 @@ export {
   type ProductsById,
   useMetaobject,
   clearMetaobjects,
+  useCustomerTags,
+  type UseCustomerTagsOptions,
+  type CustomerTags,
   type UseMetaobjectOptions,
   type MetaobjectState,
   useBlogArticles,

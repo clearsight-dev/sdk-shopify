@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.22.0 (unreleased)
+
+- **`useCustomerTags({ active?, everyMs? })`**: the signed-in customer's tags (`tags`, `known`, `hasTag`,
+  `refresh`), for rules a store keys on them. `tags` is null until read; a failed re-read keeps the last known.
+  One shared read, re-read on sign-in, account change, focus (`active`), foreground and `everyMs`, at most once
+  per 30 s unless forced. Customer Account API for a Shopify sign-in, Storefront for a password session.
+- **`ShopifyConfig.variantMetafields`**: like `productMetafields`, read on every product read's variants as
+  `variant.metafields`. Unset, nothing changes.
+- **`DescriptionSpan.href`**: a description link's address (http(s), mailto and tel only).
+
 ## 0.21.1 (2026-10-21)
 
 - **`BLOG_IMAGE`** (`{ maxWidth: 1080 }`), from the package root: the size every read of a blog's articles asks

@@ -176,3 +176,8 @@ export {
   type PastOrderProducts,
   type PastOrderItem,
 } from "./usePastOrderProducts";
+export {
+  useCustomerTags,
+  type UseCustomerTagsOptions,
+  type CustomerTags,
+} from "./useCustomerTags";

@@ -30,6 +30,8 @@ export interface ShopifyConfig {
    * Each needs a Shopify metafield definition with storefront read access, or it comes back empty.
    */
   productMetafields?: MetafieldIdentifier[];
+  /** Variant metafields to fetch on every product read's variants, read back as `variant.metafields` (0.22.0). */
+  variantMetafields?: MetafieldIdentifier[];
   /**
    * Reuse of recent catalogue answers (memory only). Identical requests in flight are always shared.
    * `false` turns reuse off; `{ ttl: { CollectionProducts: 0 } }` changes one operation's time.
@@ -227,6 +229,8 @@ export interface ProductVariant {
    * absent on a cart line's `merchandise` (the line has `sellingPlanId`), hence optional.
    */
   sellingPlan?: Pick<SellingPlan, 'id' | 'name'> | null;
+  /** `ShopifyConfig.variantMetafields`, keyed `namespace.key` (0.22.0); only when configured. */
+  metafields?: Record<string, string>;
 }
 
 /** A pre-order/deferred-payment plan the store has enrolled a variant in. */
