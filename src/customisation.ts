@@ -48,6 +48,11 @@ export type CustomisationAnswers = Record<string, CustomisationAnswer>;
 export interface CustomisationConfig {
   product?: string;
   variant?: string;
+  /**
+   * The customer metafield the shopper's answers are kept in too, `namespace.key` (a JSON metafield; see
+   * `AccountCustomisations`). Unset: answers stay on the device.
+   */
+  accountMetafield?: string;
 }
 
 /** The questions in a metafield's JSON; a typo or anything else reads as none. Only entries with an id. */
@@ -112,21 +117,24 @@ export function customisationAttributes(questions: readonly CustomisationQuestio
   });
 }
 
-/** Answers back from saved attributes (a line's, or any `key: label` record): labels mapped to option ids. */
+/**
+ * Answers back from saved attributes (a line's, or any `key: label` record, a list of labels for several):
+ * labels mapped to option ids.
+ */
 export function answersFromAttributes(
   questions: readonly CustomisationQuestion[],
-  attributes: ReadonlyArray<{ key: string; value: string | null }> | Record<string, string> | null | undefined,
+  attributes: ReadonlyArray<{ key: string; value: string | null }> | Record<string, string | string[]> | null | undefined,
 ): CustomisationAnswers {
-  const byKey: Record<string, string> = Array.isArray(attributes)
+  const byKey: Record<string, string | string[]> = Array.isArray(attributes)
     ? Object.fromEntries(attributes.filter((a) => a.value != null).map((a) => [a.key, a.value as string]))
     : { ...(attributes ?? {}) };
   const out: CustomisationAnswers = {};
   for (const q of questions) {
     const saved = q.key ? byKey[q.key] : undefined;
-    if (!saved) continue;
-    if (isFreeText(q)) out[q.id] = saved;
+    if (!saved || (Array.isArray(saved) && !saved.length)) continue;
+    if (isFreeText(q)) out[q.id] = Array.isArray(saved) ? saved.join(', ') : saved;
     else {
-      const labels = saved.split(', ');
+      const labels = Array.isArray(saved) ? saved.map(String) : saved.split(', ');
       const ids = (q.options ?? []).filter((o) => labels.includes(o.label)).map((o) => o.id);
       if (ids.length) out[q.id] = q.type === 'multi_select' ? ids : ids[0];
     }
@@ -138,4 +146,75 @@ export function answersFromAttributes(
 export function lineNeedsCustomisation(questions: readonly CustomisationQuestion[], attributes: ReadonlyArray<{ key: string; value: string | null }>): boolean {
   const saved = new Set(attributes.filter((a) => a.value && !a.key.startsWith('_')).map((a) => a.key));
   return questions.some((q) => !q.condition?.length && !!q.key && !saved.has(q.key));
+}
+
+// ─── On the customer's account (0.23.0) ──────────────────────────────────────────────────────────────
+
+/**
+ * What a customer's metafield (`CustomisationConfig.accountMetafield`) holds: one JSON object, shared with
+ * the store's website, of two shapes told apart by their value:
+ *
+ * - under a variant's id (`gid://shopify/ProductVariant/…`), an object: the answers the shopper saved for
+ *   that variant, by question key, as labels (several as a list);
+ * - under any other name, a label or a list of labels: what the shopper chose last anywhere, a question's
+ *   answer (by its key) or a product option (`Size: '6"'`), so the next product opens on it.
+ */
+export type AccountCustomisations = Record<string, unknown>;
+/** Labels by question key or option name; a list for several. */
+export type SavedLabels = Record<string, string | string[]>;
+
+/** The metafield's value as an object; none is empty. **Throws** for anything else, so a write never replaces what it couldn't read. */
+export function parseAccountCustomisations(raw: string | null | undefined): AccountCustomisations {
+  if (!raw) return {};
+  const parsed = JSON.parse(raw) as unknown;
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) throw new Error('[sdk-shopify] the customisation metafield is not a JSON object');
+  return parsed as AccountCustomisations;
+}
+
+/** A variant's key in the record: its full id. */
+export function accountVariantKey(variantId: string): string {
+  return variantId.startsWith('gid://') ? variantId : `gid://shopify/ProductVariant/${variantId}`;
+}
+
+const isLabels = (value: unknown): value is string | string[] =>
+  typeof value === 'string' || (Array.isArray(value) && value.every((v) => typeof v === 'string'));
+const labelsOf = (value: unknown): SavedLabels =>
+  Object.fromEntries(Object.entries(value && typeof value === 'object' && !Array.isArray(value) ? value : {}).filter(([, v]) => isLabels(v))) as SavedLabels;
+
+/** The answers saved for a variant, by question key. */
+export function accountAnswersFor(record: AccountCustomisations, variantId: string | null | undefined): SavedLabels {
+  return variantId ? labelsOf(record[accountVariantKey(variantId)]) : {};
+}
+
+/** What the shopper chose last anywhere: the record's labels, without the variants' answers. */
+export function accountPreferences(record: AccountCustomisations): SavedLabels {
+  return labelsOf(record);
+}
+
+/** The answers as the record keeps them: the questions showing that have a key, as labels (a list for `multi_select`). */
+export function customisationLabels(questions: readonly CustomisationQuestion[], answers: CustomisationAnswers): SavedLabels {
+  const out: SavedLabels = {};
+  for (const q of visibleQuestions(questions, answers)) {
+    const answer = answers[q.id];
+    if (!q.key || !isAnswered(q, answer)) continue;
+    if (isFreeText(q)) out[q.key] = String(answer);
+    else {
+      const labels = (q.options ?? []).filter((o) => given(answer).includes(o.id)).map((o) => o.label);
+      if (labels.length) out[q.key] = q.type === 'multi_select' ? labels : labels[0];
+    }
+  }
+  return out;
+}
+
+const chosen = (labels: SavedLabels): SavedLabels =>
+  Object.fromEntries(Object.entries(labels).filter(([, v]) => (Array.isArray(v) ? v.length > 0 : !!v)));
+
+/** The record with a variant's answers saved: under the variant, and as the shopper's last answers. */
+export function withSavedCustomisation(record: AccountCustomisations, variantId: string, labels: SavedLabels): AccountCustomisations {
+  return { ...record, [accountVariantKey(variantId)]: labels, ...chosen(labels) };
+}
+
+/** The record with the shopper's choices remembered (empty ones left out). */
+export function withPreferences(record: AccountCustomisations, preferences: SavedLabels): AccountCustomisations {
+  return { ...record, ...chosen(preferences) };
 }

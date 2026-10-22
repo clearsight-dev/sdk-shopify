@@ -5,6 +5,7 @@ import assert from 'node:assert/strict';
 const {
   parseCustomisation, customisationQuestions, visibleQuestions, customisationComplete,
   customisationAttributes, answersFromAttributes, lineNeedsCustomisation,
+  parseAccountCustomisations, accountAnswersFor, accountPreferences, customisationLabels, withSavedCustomisation, withPreferences,
 } = await import('../dist/index.js');
 
 const config = JSON.stringify({ questions: [
@@ -62,6 +63,50 @@ check('a cart line needs answers while a question that always shows has no attri
   assert.equal(lineNeedsCustomisation(questions, [{ key: '_wrist_size', value: '6' }]), true);
   assert.equal(lineNeedsCustomisation(questions, [{ key: 'wrist_size', value: '6' }, { key: 'engraving', value: 'No' }, { key: 'charms', value: 'Heart' }]), false);
   assert.equal(lineNeedsCustomisation([], []), false);
+});
+
+// The customer's account copy (0.23.0): one JSON object, a variant's answers under its id, the last choices at the top.
+const blob = {
+  'gid://shopify/ProductVariant/77': { wrist_size: '6.5', engraving: 'Yes', charms: ['Heart', 'Star'] },
+  Size: '6"',
+  engraving: 'No',
+  charms: ['Star'],
+  odd: 3,
+};
+
+check('the account value: an object; none is empty; anything else throws, so no write replaces it', () => {
+  assert.deepEqual(parseAccountCustomisations(JSON.stringify(blob)), blob);
+  assert.deepEqual(parseAccountCustomisations(null), {});
+  assert.deepEqual(parseAccountCustomisations(''), {});
+  assert.throws(() => parseAccountCustomisations('[1]'));
+  assert.throws(() => parseAccountCustomisations('{not json'));
+});
+
+check('a variant’s answers by its id (or its number); the last choices are the labels at the top, never a variant’s object', () => {
+  assert.deepEqual(accountAnswersFor(blob, '77'), { wrist_size: '6.5', engraving: 'Yes', charms: ['Heart', 'Star'] });
+  assert.deepEqual(accountAnswersFor(blob, 'gid://shopify/ProductVariant/77'), accountAnswersFor(blob, '77'));
+  assert.deepEqual(accountAnswersFor(blob, '88'), {});
+  assert.deepEqual(accountPreferences(blob), { Size: '6"', engraving: 'No', charms: ['Star'] });
+});
+
+check('saved labels read back as answers: a list for several, labels to option ids', () => {
+  assert.deepEqual(answersFromAttributes(questions, accountAnswersFor(blob, '77')), { q1: '6.5', q2: 'y', q4: ['h', 's'] });
+  assert.deepEqual(answersFromAttributes(questions, accountPreferences(blob)), { q2: 'n', q4: ['s'] });
+});
+
+check('answers as the account keeps them: labels by key, a list for multi_select, only what shows', () => {
+  assert.deepEqual(customisationLabels(questions, { q1: '6.5', q2: 'n', q3: 'hidden', q4: ['h', 's'], q5: 'x' }), {
+    wrist_size: '6.5', engraving: 'No', charms: ['Heart', 'Star'],
+  });
+});
+
+check('a save: the variant’s answers under its id and as the last choices; the rest kept', () => {
+  const next = withSavedCustomisation(blob, '88', { wrist_size: '7', charms: [] });
+  assert.deepEqual(next['gid://shopify/ProductVariant/88'], { wrist_size: '7', charms: [] });
+  assert.equal(next.wrist_size, '7');
+  assert.deepEqual(next.charms, ['Star'], 'an empty answer doesn’t clear the last choice');
+  assert.deepEqual(next['gid://shopify/ProductVariant/77'], blob['gid://shopify/ProductVariant/77']);
+  assert.deepEqual(withPreferences(blob, { Size: '7"', Color: '' }), { ...blob, Size: '7"' });
 });
 
 console.log(`\n${pass} checks passed`);

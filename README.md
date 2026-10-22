@@ -276,6 +276,16 @@ const form = useProductCustomisation({ productHandle, variantId, cartLineId }); 
 const { lineIds, known } = useCartCustomisation();                              // hold checkout while lineIds isn't empty
 ```
 
+Kept on the customer's account too, with a Shopify sign-in: name a JSON customer metafield as
+`customisation.accountMetafield` (`'apptile.customizations'`, say). The page prefills from it and `save()` writes
+to it; a product page opens on the shopper's remembered options:
+
+```ts
+const prefs = useOptionPreferences();
+const size = prefs.preferredValue('Size', sizeOption.values); // the remembered size, if this product offers it
+await prefs.remember({ Size: chosenSize });                   // on add to cart or bid, not on every browse
+```
+
 ### Variant metafields (0.23.0)
 
 `variantMetafields` works like `productMetafields`, for each variant: `productMetafield(variant, 'ns.key')`.
