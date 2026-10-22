@@ -10,6 +10,10 @@
   Engineering): on, one variant goes straight into the cart and more open the variant page; off, every tap
   opens the variant page. Live-updatable, read at the tap.
 - **`useQuickAdd`'s `addStraightToCart`**: the same for one call, over the provider's.
+- **The favourites' alerts say "favorites"** (ENG-945): `wishlist.added` "Saved to your favorites",
+  `wishlist.removed` "Removed from favorites", `wishlist.empty` "You have no favorites yet". Shoppers know the
+  list by the star as their favorites; "wishlist" stays the code's name for it. An app's `messages` still
+  override them.
 
 ## 0.21.1 (2026-10-21)
 

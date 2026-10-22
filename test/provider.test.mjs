@@ -193,7 +193,7 @@ await runAct(async () => { await api.wishlist.remove('gid://product/1'); });
 check('wishlist remove emits — the hole this fixes', () => {
   const [e] = take();
   assert.equal(e.type, 'wishlist:remove');
-  assert.equal(e.message, 'Removed from wishlist');
+  assert.equal(e.message, 'Removed from favorites');
 });
 check('wishlist.ids drops a removed product', () => { assert.deepEqual(api.wishlist.ids, []); });
 await runAct(async () => { await api.wishlist.remove('gid://product/nope'); });
@@ -259,7 +259,7 @@ check('payment failed emits as an error', () => {
 
 console.log('non-toast copy');
 check('wishlist.empty is readable for a placeholder', () => {
-  assert.equal(api.message('wishlist.empty'), 'Your wishlist is empty');
+  assert.equal(api.message('wishlist.empty'), 'You have no favorites yet');
 });
 
 console.log('session restore');

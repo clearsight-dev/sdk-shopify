@@ -23,9 +23,10 @@ export const DEFAULT_MESSAGES: Readonly<Record<AlertMessageKey, string>> = {
   'cart.limitExceeded': 'You can not add more than 25 items on cart',
   'cart.noMoreStock': 'No more stock available',
   'cart.outOfStock': 'Sorry, this item is out of stock',
-  'wishlist.added': 'Saved to your wishlist',
-  'wishlist.removed': 'Removed from wishlist',
-  'wishlist.empty': 'Your wishlist is empty',
+  // Shoppers know the list as their favorites (the star); "wishlist" is only the code's name (0.22.0).
+  'wishlist.added': 'Saved to your favorites',
+  'wishlist.removed': 'Removed from favorites',
+  'wishlist.empty': 'You have no favorites yet',
   'waitlist.added': 'Added to waitlist',
   'auth.loginSuccess': 'Welcome back!',
   'auth.loginFailed': 'Incorrect email or password',
