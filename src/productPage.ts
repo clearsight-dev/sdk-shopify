@@ -258,7 +258,7 @@ export function sizedImageUrl(url: string | null | undefined, pixels: number): s
 // Description
 // ---------------------------------------------------------------------------
 
-/** A run of a description's text; `href` (0.22.0) when it is a link to an http(s), mailto or tel address. */
+/** A run of a description's text; `href` (0.23.0) when it is a link to an http(s), mailto or tel address. */
 export type DescriptionSpan = { text: string; bold: boolean; href?: string };
 /** A paragraph or a bullet. */
 export type DescriptionBlock = { spans: DescriptionSpan[]; bullet: boolean };

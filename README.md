@@ -264,7 +264,7 @@ useArticle(blogHandle, articleHandle, { imageTransform: BLOG_IMAGE }); // { maxW
 - `cardImageUrl` and `cardPhotoUrl` return `string | null`: null for no URL. `cardPhotoUrl` is what to
   prefetch so a card finds its photo in the image cache.
 
-### Product customisation (0.22.0)
+### Product customisation (0.23.0)
 
 Questions as JSON in a metafield (the format is in `src/customisation.ts`), named in config and read with products:
 
@@ -276,7 +276,7 @@ const form = useProductCustomisation({ productHandle, variantId, cartLineId }); 
 const { lineIds, known } = useCartCustomisation();                              // hold checkout while lineIds isn't empty
 ```
 
-### Variant metafields (0.22.0)
+### Variant metafields (0.23.0)
 
 `variantMetafields` works like `productMetafields`, for each variant: `productMetafield(variant, 'ns.key')`.
 A description's links arrive as `DescriptionSpan.href`.
@@ -1197,13 +1197,31 @@ refuses the same keys. Without `secureStorage`, both go to `storage` (the web pr
 **Changed from 0.8:** `loggedIn` means a session exists (it was "a profile loaded"), and the
 session is restored even when the shop fails to load.
 
-### The customer's tags: `useCustomerTags` (0.22.0)
+### The customer's tags: `useCustomerTags` (0.23.0)
 
 ```tsx
 const tags = useCustomerTags({ active: useIsFocused() }); // re-read when the screen comes back
 if (!tags.known) …               // unread: don't treat as untagged
-tags.hasTag("no-bidding");       // trimmed, case-insensitive
+tags.bidding;                    // "allowed" | "blocked" (BIDBLOCKED or APPBLOCKED) | "unknown"
+tags.commentsMuted;              // APPBLOCKED
+tags.hasTag("VIP");              // any other tag: trimmed, case-insensitive
 await tags.refresh({ force: true });
+```
+
+`BIDBLOCKED` and `APPBLOCKED` are the store-data standard (`BID_BLOCKED_TAG`, `APP_BLOCKED_TAG`,
+`customerRestrictionsOf`).
+
+### VIP early access: `useEarlyAccess` (0.23.0)
+
+A product with `custom.allowed_segments` (a JSON list of customer tags) and `custom.early_access_end` is locked
+until the end for everyone but those tags, who may buy from `custom.early_access_start`. The metafields are
+read with every product.
+
+```tsx
+const access = useEarlyAccess(productPage.product, { active: isFocused });
+access.locked;      // not yet buyable by this customer: "Unlocks in" until access.unlocksAtMs
+access.isVip;       // has one of the product's tags
+access.gated;       // an early-access product until access.gatedUntilMs (the badge)
 ```
 
 ### Store credit

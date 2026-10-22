@@ -1,5 +1,5 @@
 /**
- * Product customisation on a page and on the cart (0.22.0; `../customisation.ts`).
+ * Product customisation on a page and on the cart (0.23.0; `../customisation.ts`).
  *
  * - `useProductCustomisation({ productHandle, variantId, cartLineId? })`: the questions for the variant,
  *   answers prefilled from the cart line, else what this device last saved for the variant, and `save()`:
@@ -251,7 +251,7 @@ export interface ItemsCustomisation {
 }
 
 /**
- * `useCartCustomisation` for items that aren't cart lines yet (0.22.0): an auction's wins, paid on a cart
+ * `useCartCustomisation` for items that aren't cart lines yet (0.23.0): an auction's wins, paid on a cart
  * made at checkout. Each item's product (with its metafields) and variant; answers are this device's
  * (`useSavedCustomisations`), to put on the cart that is made for them.
  */

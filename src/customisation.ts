@@ -1,5 +1,5 @@
 /**
- * Product customisation (0.22.0): questions a product asks before checkout, answered onto its cart line.
+ * Product customisation (0.23.0): questions a product asks before checkout, answered onto its cart line.
  *
  * The questions are JSON in a product metafield, or a variant's (the variant's wins), named by
  * `ShopifyConfig.customisation` and read with every product (add the same ids to `productMetafields` /

@@ -1,4 +1,4 @@
-// The search query template (0.22.0): `useSearch` / `useSearchPage` send the term through a store's
+// The search query template (0.23.0): `useSearch` / `useSearchPage` send the term through a store's
 // template (`{query}* -tag:hidden`), while the page keeps showing what was typed.
 import assert from 'node:assert/strict';
 import { JSDOM } from 'jsdom';
@@ -45,6 +45,14 @@ await check('a template without {query} goes after the term; none, or no term, s
   assert.equal(searchQueryFrom('  ', '{query}*'), '');
 });
 
+await check('every search keeps lots (SEARCH-BLOCKED) out, once; no term adds nothing', async () => {
+  const { shopify } = await import('../dist/index.js');
+  await shopify.init({ storeDomain: 'shop.myshopify.com', storefrontAccessToken: 't' });
+  await shopify.products.search('ring');
+  await shopify.products.search('band -tag:SEARCH-BLOCKED');
+  assert.deepEqual(searched.splice(0), ['ring -tag:SEARCH-BLOCKED', 'band -tag:SEARCH-BLOCKED']);
+});
+
 let result = null;
 function Screen({ template }) {
   result = useSearch('ring', { debounceMs: 0, queryTemplate: template });
@@ -58,14 +66,14 @@ const render = (template) => runAct(async () => root.render(React.createElement(
 await render('{query}* -tag:hidden');
 await settle();
 await check('useSearch sends the template, and still reports the term typed', () => {
-  assert.deepEqual(searched, ['ring* -tag:hidden']);
+  assert.deepEqual(searched, ['ring* -tag:hidden -tag:SEARCH-BLOCKED'], 'lots are kept out of every search');
   assert.equal(result.query, 'ring');
 });
 
 await render(undefined);
 await settle();
 await check('without one, the term as typed (its own cache entry)', () => {
-  assert.deepEqual(searched, ['ring* -tag:hidden', 'ring']);
+  assert.deepEqual(searched, ['ring* -tag:hidden -tag:SEARCH-BLOCKED', 'ring -tag:SEARCH-BLOCKED']);
 });
 
 await runAct(async () => root.unmount());

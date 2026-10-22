@@ -12,7 +12,7 @@ export interface FavoritesPage {
   /** Saved products the store still has, newest first; with `showGone`, those it no longer has too. */
   products: Product[];
   /**
-   * With `showGone` (0.22.0): the ids in `products` the store no longer has, drawn from what the device
+   * With `showGone` (0.23.0): the ids in `products` the store no longer has, drawn from what the device
    * saved (title, photo, price), not for sale. For a card that opens nothing and can still be removed.
    */
   goneIds: string[];
@@ -29,7 +29,7 @@ export interface FavoritesPage {
 export interface UseFavoritesPageOptions {
   /**
    * Keep saved products the store no longer has (a deleted or unpublished product, which Storefront can't
-   * tell apart) as cards from what the device saved, in `goneIds` (0.22.0). Needs the provider's
+   * tell apart) as cards from what the device saved, in `goneIds` (0.23.0). Needs the provider's
    * `wishlistKeepDeleted`, which keeps their entries. Default: false, they aren't shown.
    */
   showGone?: boolean;

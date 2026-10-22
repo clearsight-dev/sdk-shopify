@@ -29,7 +29,7 @@ export interface UseSearchPageOptions {
   recommendedCount?: number;
   /** How many products a search with no match shows. Default `SEARCH_FALLBACK_COUNT` (10). */
   fallbackCount?: number;
-  /** What is sent for the term (0.22.0; `useSearch`'s `queryTemplate`). `query` stays what was typed. */
+  /** What is sent for the term (0.23.0; `useSearch`'s `queryTemplate`). `query` stays what was typed. */
   queryTemplate?: string | null;
   /**
    * Called once per term the shopper settled on (the debounced one), once its answer is in, with every

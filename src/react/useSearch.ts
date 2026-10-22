@@ -24,7 +24,7 @@ export const SEARCH_PAGE_SIZE = 12;
 export const SEARCH_DEBOUNCE_MS = 300;
 
 /**
- * The search sent for a term (0.22.0): `template` with `{query}` replaced by the term, e.g.
+ * The search sent for a term (0.23.0): `template` with `{query}` replaced by the term, e.g.
  * `{query}* -tag:hidden` for prefix matches without the store's hidden products. A template without
  * `{query}` is added after the term. No template, or no term: the term as it is.
  */

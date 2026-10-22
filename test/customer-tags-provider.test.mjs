@@ -90,6 +90,7 @@ await t.check('signed out: nothing restricted, known, nothing read', () => {
   assert.equal(screenA.customerId, null);
   assert.equal(screenA.known, true);
   assert.deepEqual(screenA.tags, []);
+  assert.equal(screenA.bidding, 'allowed');
   assert.equal(tagReads.length, 0);
 });
 
@@ -119,11 +120,23 @@ await t.check('a forced re-read picks up a new tag, on every caller', () => {
   assert.equal(screenB.hasTag('no-bidding'), true);
 });
 
+accountTags = ['vip', 'APPBLOCKED'];
+await runAct(async () => { await screenB.refresh({ force: true }); });
+await settle();
+await t.check('the standard tags: APPBLOCKED blocks bidding and mutes comments, on every caller', () => {
+  assert.equal(screenA.bidding, 'blocked');
+  assert.equal(screenA.commentsMuted, true);
+  assert.equal(screenB.bidding, 'blocked');
+});
+accountTags = ['vip', 'no-bidding'];
+await runAct(async () => { await screenB.refresh({ force: true }); });
+await settle();
+
 tagsAnswerNoCustomer = true;
 await runAct(async () => { await screenA.refresh({ force: true }); });
 await settle();
 await t.check('no customer in the answer is a failed read: what was known stays', () => {
-  assert.equal(tagReads.length, 3);
+  assert.equal(tagReads.length, 5);
   assert.equal(screenA.known, true);
   assert.equal(screenA.hasTag('no-bidding'), true);
 });

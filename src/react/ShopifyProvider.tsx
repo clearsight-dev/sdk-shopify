@@ -209,7 +209,7 @@ interface WishlistState {
   /** Alias for `has`. */
   isWishlisted: (productId: string) => boolean;
   add:          (product: Product | string) => Promise<void>;
-  /** `silent` (0.22.0): no `wishlist:remove` event, so no toast (e.g. what an order just bought). */
+  /** `silent` (0.23.0): no `wishlist:remove` event, so no toast (e.g. what an order just bought). */
   remove:       (productId: string, options?: { silent?: boolean }) => Promise<void>;
   toggle:       (product: Product | string) => Promise<boolean>;
   clear:        () => Promise<void>;
@@ -622,11 +622,11 @@ export interface ShopifyProviderProps {
   /** See `WishlistInitOptions.migrateFrom`: keys an earlier app kept its wishlist under. */
   wishlistMigrateFrom?: string[];
   /**
-   * See `WishlistInitOptions.hydrateOnInit` (0.22.0). False: saved products aren't re-read at launch, only
+   * See `WishlistInitOptions.hydrateOnInit` (0.23.0). False: saved products aren't re-read at launch, only
    * when a page asks (`useFavoritesPage` does when it opens). For a long wishlist read only where it shows.
    */
   wishlistHydrateOnInit?: boolean;
-  /** See `WishlistInitOptions.batchSize` (0.22.0): products per re-read request. */
+  /** See `WishlistInitOptions.batchSize` (0.23.0): products per re-read request. */
   wishlistBatchSize?: number;
   /** See `WaitlistInitOptions.storageKey`: an app moving from Apptile's engine passes its old key. */
   waitlistStorageKey?: string;

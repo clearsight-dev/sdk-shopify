@@ -1,11 +1,12 @@
 /**
- * The signed-in customer's tags (0.22.0; `../customerTags.ts`). One read per session, shared by every
+ * The signed-in customer's tags (0.23.0; `../customerTags.ts`). One read per session, shared by every
  * caller: on sign-in and account change, then when a caller becomes `active` (pass the screen's focus),
  * on return to the foreground while active, and every `everyMs` while active.
  *
  * ```tsx
  * const tags = useCustomerTags({ active: useIsFocused() });
- * const blocked = tags.hasTag("no-bidding");
+ * const early = tags.hasTag("VIP");
+ * if (tags.bidding !== "allowed") … // BIDBLOCKED / APPBLOCKED, or not read yet
  * ```
  *
  * A Shopify sign-in reads the Customer Account API, a password session the Storefront API. Signed out:
@@ -16,7 +17,9 @@ import { request as storefrontRequest } from '../client';
 import {
   createCustomerTagsStore,
   CUSTOMER_ACCOUNT_TAGS_QUERY,
+  customerRestrictionsOf,
   hasCustomerTag,
+  type CustomerRestrictions,
   STOREFRONT_CUSTOMER_TAGS_QUERY,
   type CustomerTagsState,
   type CustomerTagsStore,
@@ -31,7 +34,7 @@ export interface UseCustomerTagsOptions {
   everyMs?: number;
 }
 
-export interface CustomerTags extends CustomerTagsState {
+export interface CustomerTags extends CustomerTagsState, CustomerRestrictions {
   /** Trimmed, case-insensitive. False while unread. */
   hasTag: (tag: string) => boolean;
   refresh: (options?: { force?: boolean }) => Promise<CustomerTagsState>;
@@ -99,6 +102,6 @@ export function useCustomerTags({ active = true, everyMs }: UseCustomerTagsOptio
     // Never another customer's tags, while the account changes hands.
     const shown: CustomerTagsState =
       state.customerId === customerId ? state : { customerId, tags: customerId ? null : [], known: !customerId };
-    return { ...shown, hasTag: (tag: string) => hasCustomerTag(shown.tags, tag), refresh };
+    return { ...shown, ...customerRestrictionsOf(shown), hasTag: (tag: string) => hasCustomerTag(shown.tags, tag), refresh };
   }, [state, customerId, refresh]);
 }

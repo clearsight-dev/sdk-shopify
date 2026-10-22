@@ -6,8 +6,20 @@
   `refresh`), for rules a store keys on them. `tags` is null until read; a failed re-read keeps the last known.
   One shared read, re-read on sign-in, account change, focus (`active`), foreground and `everyMs`, at most once
   per 30 s unless forced. Customer Account API for a Shopify sign-in, Storefront for a password session.
+- **The store-data standard's customer tags** (decided 2026-10-22): `BIDBLOCKED` stops bidding, `APPBLOCKED`
+  stops bidding and mutes the customer's comments. `useCustomerTags` adds `bidding` (`allowed`, `blocked`, or
+  `unknown` while unread) and `commentsMuted`; `customerRestrictionsOf(state)` is the rule.
 - **`ShopifyConfig.variantMetafields`**: like `productMetafields`, read on every product read's variants as
-  `variant.metafields`. Unset, nothing changes.
+  `variant.metafields`.
+- **The store-data standard's metafields, read with every product** (`STANDARD_PRODUCT_METAFIELDS`,
+  `STANDARD_VARIANT_METAFIELDS`): `auction.winners` on the product and its variants and `auction.allowedQty` on
+  its variants (the per-size auction gates), and VIP early access's `custom.early_access_start`, `_end` and
+  `allowed_segments`. Every product query now carries them; the configured ones follow.
+- **VIP early access**: `earlyAccessOf(product, customerTags, nowMs)` and `useEarlyAccess(product)` (`locked`,
+  `unlocksAtMs`, `isVip`, `gated`, `known`). Before the start nobody buys; from it a customer with one of
+  `allowed_segments`; from the end everyone. The hook draws again when the lock lifts.
+- **Lots are kept out of every search**: `products.search` (and so `useSearch`, `useSearchPage`) adds
+  `-tag:SEARCH-BLOCKED` (`AUCTION_TAG`) to the term; `withoutLots(query)` is the rule.
 - **Product customisation**: questions a product asks before checkout, as JSON in a product or variant
   metafield (`ShopifyConfig.customisation`). `useProductCustomisation({ productHandle, variantId, cartLineId })`
   (questions, prefilled answers, `save()` onto the line and this device) and `useCartCustomisation()` (the lines
