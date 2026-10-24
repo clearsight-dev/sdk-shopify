@@ -1,5 +1,5 @@
 /**
- * Opt-in product metafields.
+ * Opt-in product (and, 0.23.0, variant) metafields.
  *
  * Configure once at startup and every product the SDK returns carries them:
  *
@@ -23,16 +23,13 @@ const SAFE_IDENT = /^[A-Za-z0-9_.:$-]+$/;
 /** Shopify caps a single `metafields(identifiers:)` selection at 250. */
 const MAX_IDENTIFIERS = 250;
 
-let identifiers: MetafieldIdentifier[] = [];
-let signature = '';
-
 function assertSafe(part: string, what: string): void {
   if (!part || !SAFE_IDENT.test(part)) {
     throw new Error(`sdk-shopify: invalid metafield ${what} ${JSON.stringify(part)}`);
   }
 }
 
-export function setProductMetafields(list: MetafieldIdentifier[] | undefined | null): void {
+function checkedList(list: MetafieldIdentifier[] | undefined | null, what: string): MetafieldIdentifier[] {
   const seen = new Set<string>();
   const next: MetafieldIdentifier[] = [];
 
@@ -46,11 +43,33 @@ export function setProductMetafields(list: MetafieldIdentifier[] | undefined | n
   }
 
   if (next.length > MAX_IDENTIFIERS) {
-    throw new Error(`sdk-shopify: at most ${MAX_IDENTIFIERS} product metafields, got ${next.length}`);
+    throw new Error(`sdk-shopify: at most ${MAX_IDENTIFIERS} ${what} metafields, got ${next.length}`);
   }
+  return next;
+}
 
-  identifiers = next;
-  signature = next.map(i => `${i.namespace}.${i.key}`).join('|');
+const idsOf = (list: MetafieldIdentifier[]) => list.map(i => `${i.namespace}.${i.key}`).join('|');
+
+let identifiers: MetafieldIdentifier[] = [];
+let variantIdentifiers: MetafieldIdentifier[] = [];
+let signature = '';
+const resign = () => {
+  signature = variantIdentifiers.length ? `${idsOf(identifiers)}#v:${idsOf(variantIdentifiers)}` : idsOf(identifiers);
+};
+
+export function setProductMetafields(list: MetafieldIdentifier[] | undefined | null): void {
+  identifiers = checkedList(list, 'product');
+  resign();
+}
+
+/** Variant metafields (0.23.0): as `productMetafields`, read on every product read's variants. */
+export function setVariantMetafields(list: MetafieldIdentifier[] | undefined | null): void {
+  variantIdentifiers = checkedList(list, 'variant');
+  resign();
+}
+
+export function getVariantMetafields(): MetafieldIdentifier[] {
+  return variantIdentifiers;
 }
 
 export function getProductMetafields(): MetafieldIdentifier[] {
@@ -66,6 +85,13 @@ export function productMetafieldsSignature(): string {
 export function metafieldSelection(): string {
   if (!identifiers.length) return '';
   const list = identifiers.map(i => `{namespace:"${i.namespace}",key:"${i.key}"}`).join(',');
+  return `metafields(identifiers: [${list}]) { namespace key value type }`;
+}
+
+/** The selection to splice into a product's variants, or '' when nothing is configured. */
+export function variantMetafieldSelection(): string {
+  if (!variantIdentifiers.length) return '';
+  const list = variantIdentifiers.map(i => `{namespace:"${i.namespace}",key:"${i.key}"}`).join(',');
   return `metafields(identifiers: [${list}]) { namespace key value type }`;
 }
 

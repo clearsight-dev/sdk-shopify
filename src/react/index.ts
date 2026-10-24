@@ -63,7 +63,7 @@ export {
   type WaitlistPageItem,
   type UseWaitlistPageOptions,
 } from "./useWaitlistPage";
-export { useFavoritesPage, type FavoritesPage } from "./useFavoritesPage";
+export { useFavoritesPage, type FavoritesPage, type UseFavoritesPageOptions } from "./useFavoritesPage";
 export {
   useSignIn,
   useSignInPage,
@@ -91,6 +91,7 @@ export {
 } from "./useCollectionProducts";
 export {
   useSearch,
+  searchQueryFrom,
   SEARCH_PAGE_SIZE,
   SEARCH_DEBOUNCE_MS,
   type SearchSort,
@@ -176,3 +177,8 @@ export {
   type PastOrderProducts,
   type PastOrderItem,
 } from "./usePastOrderProducts";
+export {
+  useCustomerTags,
+  type UseCustomerTagsOptions,
+  type CustomerTags,
+} from "./useCustomerTags";

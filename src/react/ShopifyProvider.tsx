@@ -209,7 +209,8 @@ interface WishlistState {
   /** Alias for `has`. */
   isWishlisted: (productId: string) => boolean;
   add:          (product: Product | string) => Promise<void>;
-  remove:       (productId: string) => Promise<void>;
+  /** `silent` (0.23.0): no `wishlist:remove` event, so no toast (e.g. what an order just bought). */
+  remove:       (productId: string, options?: { silent?: boolean }) => Promise<void>;
   toggle:       (product: Product | string) => Promise<boolean>;
   clear:        () => Promise<void>;
   refresh:      () => Promise<void>;
@@ -620,6 +621,13 @@ export interface ShopifyProviderProps {
   wishlistStorageKey?: string;
   /** See `WishlistInitOptions.migrateFrom`: keys an earlier app kept its wishlist under. */
   wishlistMigrateFrom?: string[];
+  /**
+   * See `WishlistInitOptions.hydrateOnInit` (0.23.0). False: saved products aren't re-read at launch, only
+   * when a page asks (`useFavoritesPage` does when it opens). For a long wishlist read only where it shows.
+   */
+  wishlistHydrateOnInit?: boolean;
+  /** See `WishlistInitOptions.batchSize` (0.23.0): products per re-read request. */
+  wishlistBatchSize?: number;
   /** See `WaitlistInitOptions.storageKey`: an app moving from Apptile's engine passes its old key. */
   waitlistStorageKey?: string;
   /** See `WaitlistInitOptions.migrateFrom`: keys an earlier app kept its waitlist under. */
@@ -721,6 +729,8 @@ export function ShopifyProvider({
   wishlistKeepDeleted,
   wishlistStorageKey,
   wishlistMigrateFrom,
+  wishlistHydrateOnInit,
+  wishlistBatchSize,
   waitlistStorageKey,
   waitlistMigrateFrom,
   recentlyViewed,
@@ -1085,6 +1095,8 @@ export function ShopifyProvider({
             storageKey: wishlistStorageKey,
             migrateFrom: wishlistMigrateFrom,
             keepDeleted: wishlistKeepDeleted,
+            hydrateOnInit: wishlistHydrateOnInit,
+            batchSize: wishlistBatchSize,
           });
           if (mounted) setWlItems(initialItems);
           wlUnsubRef.current = shopify.wishlist.onChange((items) => {
@@ -1815,9 +1827,9 @@ export function ShopifyProvider({
   }, [emit]);
   // `remove` emits too. It used not to, so "Removed From Wishlist" only ever
   // fired via `toggle` — a dedicated remove button showed nothing.
-  const wlRemove  = useCallback(async (id: string)          => {
+  const wlRemove  = useCallback(async (id: string, options?: { silent?: boolean }) => {
     const removed = await shopify.wishlist.remove(id);
-    if (removed) emit("wishlist:remove", { productId: id });
+    if (removed && !options?.silent) emit("wishlist:remove", { productId: id });
   }, [emit]);
   const wlToggle  = useCallback(async (p: Product | string) => {
     const nowSaved = await (shopify.wishlist.toggle as any)(p);

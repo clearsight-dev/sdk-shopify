@@ -198,6 +198,13 @@ check('wishlist remove emits — the hole this fixes', () => {
 check('wishlist.ids drops a removed product', () => { assert.deepEqual(api.wishlist.ids, []); });
 await runAct(async () => { await api.wishlist.remove('gid://product/nope'); });
 check('removing something absent emits nothing', () => { assert.equal(take().length, 0); });
+await runAct(async () => { await api.wishlist.add('gid://product/2'); });
+take();
+await runAct(async () => { await api.wishlist.remove('gid://product/2', { silent: true }); });
+check('a silent remove takes it off and emits nothing', () => {
+  assert.equal(take().length, 0);
+  assert.deepEqual(api.wishlist.ids, []);
+});
 
 console.log('login alerts');
 await runAct(async () => { result = await api.customer.login('a@b.c', 'pw'); });

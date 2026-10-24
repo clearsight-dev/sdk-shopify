@@ -1,5 +1,26 @@
 # Changelog
 
+## 0.23.0 (unreleased)
+
+- **`useCustomerTags({ active?, everyMs? })`**: the signed-in customer's tags (`tags`, `known`, `hasTag`,
+  `refresh`), for rules a store keys on them. `tags` is null until read; a failed re-read keeps the last known.
+  One shared read, re-read on sign-in, account change, focus (`active`), foreground and `everyMs`, at most once
+  per 30 s unless forced. Customer Account API for a Shopify sign-in, Storefront for a password session.
+- **`ShopifyConfig.variantMetafields`**: like `productMetafields`, read on every product read's variants as
+  `variant.metafields`.
+- **`DescriptionSpan.href`**: a description link's address (http(s), mailto and tel only).
+- **`useWishlist().remove(productId, { silent: true })`**: removes without the `wishlist:remove` event (and its
+  toast), for removals the shopper didn't ask for, such as what an order just bought.
+- **`queryTemplate`** on `useSearch` and `useSearchPage`: what is sent for the term, `{query}` standing for it
+  (`{query}* -tag:hidden` for prefix matches without a store's hidden products); `searchQueryFrom(term, template)`
+  is the rule. The page's `query` stays what was typed. Unset, the term is sent as it is.
+- **`ShopifyProvider` `wishlistHydrateOnInit` and `wishlistBatchSize`**: the wishlist's `hydrateOnInit` and
+  `batchSize`, which only `shopify.wishlist.init` took. False skips the launch re-read of every saved product;
+  `useFavoritesPage` re-reads when it opens.
+- **`useFavoritesPage({ showGone: true })`**: a saved product the store no longer has stays as a card from what
+  the device saved (title, photo, price; not for sale), listed in `goneIds`. Needs `wishlistKeepDeleted`. Unset,
+  nothing changes.
+
 ## 0.22.0 (2026-10-22)
 
 - **What a card's Add to Cart does, app-wide: `ShopifyProvider`'s `quickAddStraightToCart`** (default

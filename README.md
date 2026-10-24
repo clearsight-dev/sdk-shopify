@@ -264,6 +264,11 @@ useArticle(blogHandle, articleHandle, { imageTransform: BLOG_IMAGE }); // { maxW
 - `cardImageUrl` and `cardPhotoUrl` return `string | null`: null for no URL. `cardPhotoUrl` is what to
   prefetch so a card finds its photo in the image cache.
 
+### Variant metafields (0.23.0)
+
+`variantMetafields` works like `productMetafields`, for each variant: `productMetafield(variant, 'ns.key')`.
+A description's links arrive as `DescriptionSpan.href`.
+
 ### Star ratings on products (0.20.0)
 
 Every product the SDK returns carries `rating`, read from **Shopify's standard review metafields**,
@@ -799,7 +804,7 @@ an `on…` option. Each page's `viewed()` keeps one identity, for `useFocusEffec
 | Product page's buy bar | `useProductPage(handle, { onSignInNeeded, onJoinedWaitlist }).purchase` | sign-in; the waitlist |
 | A product card's Add to Cart | `useQuickAdd({ credit, onChooseVariant, onAdded, addStraightToCart })`: one variant for sale goes straight into the cart unless `addStraightToCart`, or else the provider's `quickAddStraightToCart`, is false | the variant page |
 | Collection | `useCollectionPage({ handle, initialSortId, onView })` → the feed, `sortId`, `setSortId`, `removeFilter` | |
-| Search | `useSearchPage({ query, recommendedCollection, onSearched })` | |
+| Search | `useSearchPage({ query, recommendedCollection, queryTemplate, onSearched })` | |
 | Waitlist | `useWaitlistPage({ isBlocked })` → `items`, filters, counts, `addToCart`, `justAdded`, `remove`, `viewed` | |
 | Favourites | `useFavoritesPage()` → `status`, `products`, `retry`, `viewed` | |
 | Sign in, from anywhere | `useSignIn({ onOpenSignInPage })` → `start`, `signingIn`, `failed` | the sign-in page |
@@ -1179,6 +1184,15 @@ refuses the same keys. Without `secureStorage`, both go to `storage` (the web pr
 
 **Changed from 0.8:** `loggedIn` means a session exists (it was "a profile loaded"), and the
 session is restored even when the shop fails to load.
+
+### The customer's tags: `useCustomerTags` (0.23.0)
+
+```tsx
+const tags = useCustomerTags({ active: useIsFocused() }); // re-read when the screen comes back
+if (!tags.known) …               // unread: don't treat as untagged
+tags.hasTag("VIP");              // trimmed, case-insensitive; what a tag means is the app's
+await tags.refresh({ force: true });
+```
 
 ### Store credit
 

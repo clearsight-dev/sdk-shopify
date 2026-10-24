@@ -258,7 +258,8 @@ export function sizedImageUrl(url: string | null | undefined, pixels: number): s
 // Description
 // ---------------------------------------------------------------------------
 
-export type DescriptionSpan = { text: string; bold: boolean };
+/** A run of a description's text; `href` (0.23.0) when it is a link to an http(s), mailto or tel address. */
+export type DescriptionSpan = { text: string; bold: boolean; href?: string };
 /** A paragraph or a bullet. */
 export type DescriptionBlock = { spans: DescriptionSpan[]; bullet: boolean };
 
@@ -282,24 +283,36 @@ const BLOCK_TAGS = new Set(['p', 'div', 'li', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6'
 /** Merchants type `**bold**` / `***bold***` into the rich-text editor: a paired run is bold, markers dropped. */
 const ASTERISK_EMPHASIS = /\*{2,3}([^*]+?)\*{2,3}/g;
 
+const withHref = (span: DescriptionSpan, href: string | undefined): DescriptionSpan => (href ? { ...span, href } : span);
+
 function splitAsterisks(span: DescriptionSpan): DescriptionSpan[] {
   const out: DescriptionSpan[] = [];
   let cursor = 0;
   for (const match of span.text.matchAll(ASTERISK_EMPHASIS)) {
     const at = match.index ?? 0;
-    if (at > cursor) out.push({ text: span.text.slice(cursor, at), bold: span.bold });
-    out.push({ text: match[1], bold: true });
+    if (at > cursor) out.push(withHref({ text: span.text.slice(cursor, at), bold: span.bold }, span.href));
+    out.push(withHref({ text: match[1], bold: true }, span.href));
     cursor = at + match[0].length;
   }
   if (cursor === 0) return [span];
-  if (cursor < span.text.length) out.push({ text: span.text.slice(cursor), bold: span.bold });
+  if (cursor < span.text.length) out.push(withHref({ text: span.text.slice(cursor), bold: span.bold }, span.href));
   return out;
+}
+
+/** A link a page may open: http(s), mailto or tel. Anything else (javascript:, relative paths) is no link. */
+const OPENABLE_LINK = /^(https?:\/\/|mailto:|tel:)/i;
+
+function hrefOf(tag: string): string | undefined {
+  const match = /\bhref\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>]+))/i.exec(tag);
+  const raw = match ? (match[1] ?? match[2] ?? match[3] ?? '') : '';
+  const href = decodeEntities(raw).trim();
+  return OPENABLE_LINK.test(href) ? href : undefined;
 }
 
 function finishBlock(spans: DescriptionSpan[], bullet: boolean): DescriptionBlock | null {
   const merged = spans.flatMap(splitAsterisks).reduce<DescriptionSpan[]>((acc, span) => {
     const prev = acc[acc.length - 1];
-    if (prev && prev.bold === span.bold) prev.text += span.text;
+    if (prev && prev.bold === span.bold && prev.href === span.href) prev.text += span.text;
     else acc.push({ ...span });
     return acc;
   }, []);
@@ -321,6 +334,7 @@ export function parseDescriptionHtml(html: string | null | undefined): Descripti
   let spans: DescriptionSpan[] = [];
   let bullet = false;
   let boldDepth = 0;
+  let href: string | undefined;
   const flush = (nextBullet = false) => {
     const block = finishBlock(spans, bullet);
     if (block) blocks.push(block);
@@ -331,7 +345,7 @@ export function parseDescriptionHtml(html: string | null | undefined): Descripti
     if (!token) continue;
     if (index % 2 === 0) {
       const text = decodeEntities(token).replace(/\s+/g, ' ');
-      if (text) spans.push({ text, bold: boldDepth > 0 });
+      if (text) spans.push(withHref({ text, bold: boldDepth > 0 }, href));
       continue;
     }
     const tag = /^<\s*(\/?)\s*([a-z0-9]+)/i.exec(token);
@@ -339,6 +353,7 @@ export function parseDescriptionHtml(html: string | null | undefined): Descripti
     const closing = tag[1] === '/';
     const name = tag[2].toLowerCase();
     if (name === 'br') flush(bullet);
+    else if (name === 'a') href = closing ? undefined : hrefOf(token);
     else if (BOLD_TAGS.has(name)) boldDepth = closing ? Math.max(0, boldDepth - 1) : boldDepth + 1;
     else if (BLOCK_TAGS.has(name)) flush(!closing && name === 'li');
   }
