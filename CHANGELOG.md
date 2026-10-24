@@ -13,28 +13,9 @@
   `variant.metafields`.
 - **The store-data standard's metafields, read with every product** (`STANDARD_PRODUCT_METAFIELDS`,
   `STANDARD_VARIANT_METAFIELDS`): `auction.winners` on the product and its variants and `auction.allowedQty` on
-  its variants (the per-size auction gates), and VIP early access's `custom.early_access_start`, `_end` and
-  `allowed_segments`. Every product query now carries them; the configured ones follow.
-- **VIP early access**: `earlyAccessOf(product, customerTags, nowMs)` and `useEarlyAccess(product)` (`locked`,
-  `unlocksAtMs`, `isVip`, `gated`, `known`). Before the start nobody buys; from it a customer with one of
-  `allowed_segments`; from the end everyone. The hook draws again when the lock lifts.
+  its variants (the per-size auction gates). Every product query now carries them; the configured ones follow.
 - **Lots are kept out of every search**: `products.search` (and so `useSearch`, `useSearchPage`) adds
   `-tag:SEARCH-BLOCKED` (`AUCTION_TAG`) to the term; `withoutLots(query)` is the rule.
-- **Product customisation**: questions a product asks before checkout, as JSON in a product or variant
-  metafield (`ShopifyConfig.customisation`). `useProductCustomisation({ productHandle, variantId, cartLineId })`
-  (questions, prefilled answers, `save()` onto the line and this device) and `useCartCustomisation()` (the lines
-  that still need answers, for holding checkout) and `useSavedCustomisations()` (what this device saved per
-  variant, answers and line attributes) with `useItemsCustomisation(items)` (the same gate for items paid on a
-  cart made later, such as an auction's wins); the rules are pure exports (`visibleQuestions`,
-  `customisationComplete`, `customisationAttributes`, `answersFromAttributes`, `lineNeedsCustomisation`).
-- **Customisations on the customer's account** (`customisation.accountMetafield`, a `namespace.key` JSON
-  customer metafield): with a Shopify sign-in, `useProductCustomisation` prefills from the account (the
-  variant's saved answers, then the shopper's last answers anywhere) and `save()` writes them back; the new
-  `useOptionPreferences()` gives the option choices the account remembers (`preferredValue('Size', values)`)
-  and `remember(choices)` to save them. One JSON object holds both (`AccountCustomisations`: a variant's
-  answers under its id, the last choices at the top level, as labels), so a store's website can share it.
-  Writes go one at a time, each a fresh read of the whole value, and a value that can't be read is never
-  overwritten. Signed out or with a password session, answers stay on the device.
 - **`DescriptionSpan.href`**: a description link's address (http(s), mailto and tel only).
 - **`useWishlist().remove(productId, { silent: true })`**: removes without the `wishlist:remove` event (and its
   toast), for removals the shopper didn't ask for, such as what an order just bought.

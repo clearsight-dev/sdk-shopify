@@ -83,7 +83,6 @@ export {
 export { CARD_IMAGE_WIDTH, CARD_IMAGE, PRODUCT_PAGE_IMAGE, BLOG_IMAGE, cardImageUrl, cardPhotoUrl } from './images';
 export { longDate } from './dates';
 export { AUCTION_TAG, isAuctioned } from './auction';
-export { EARLY_ACCESS_METAFIELDS, earlyAccessOf, type EarlyAccess } from './earlyAccess';
 export { withoutLots } from './products';
 export {
   CUSTOMER_TAGS_MIN_GAP_MS,
@@ -96,31 +95,6 @@ export {
   type CustomerTagsState,
   type CustomerTagsStore,
 } from './customerTags';
-export {
-  parseCustomisation,
-  customisationQuestions,
-  isQuestionVisible,
-  visibleQuestions,
-  isAnswered,
-  customisationComplete,
-  customisationAttributes,
-  answersFromAttributes,
-  lineNeedsCustomisation,
-  parseAccountCustomisations,
-  accountVariantKey,
-  accountAnswersFor,
-  accountPreferences,
-  customisationLabels,
-  withSavedCustomisation,
-  withPreferences,
-  type AccountCustomisations,
-  type SavedLabels,
-  type CustomisationOption,
-  type CustomisationQuestion,
-  type CustomisationAnswer,
-  type CustomisationAnswers,
-  type CustomisationConfig,
-} from './customisation';
 export { isStoreWebLink } from './storeLinks';
 export { openWebPage } from './openWebPage';
 export {
@@ -288,23 +262,8 @@ export {
   useMetaobject,
   clearMetaobjects,
   useCustomerTags,
-  useEarlyAccess,
-  type UseEarlyAccess,
   type UseCustomerTagsOptions,
   type CustomerTags,
-  useProductCustomisation,
-  useCartCustomisation,
-  useSavedCustomisations,
-  useItemsCustomisation,
-  useOptionPreferences,
-  CUSTOMISATION_STORAGE_KEY,
-  ACCOUNT_CUSTOMISATIONS_QUERY,
-  ACCOUNT_CUSTOMISATIONS_SET,
-  type OptionPreferences,
-  type ProductCustomisation,
-  type CartCustomisation,
-  type SavedCustomisations,
-  type ItemsCustomisation,
   type UseMetaobjectOptions,
   type MetaobjectState,
   useBlogArticles,

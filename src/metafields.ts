@@ -12,15 +12,13 @@
  *
  * The store-data standard's metafields (0.23.0) are read on every product whatever is configured:
  * `auction.winners` on the product and its variants, `auction.allowedQty` on its variants, for the
- * per-size auction gates, and the product's VIP early access (`custom.early_access_start`, `_end`,
- * `allowed_segments`; `earlyAccess.ts`) (`STANDARD_PRODUCT_METAFIELDS`, `STANDARD_VARIANT_METAFIELDS`). A
- * store that doesn't use them gets them back absent.
+ * per-size auction gates (`STANDARD_PRODUCT_METAFIELDS`, `STANDARD_VARIANT_METAFIELDS`). A store that
+ * doesn't use them gets them back absent.
  *
  * Storefront only returns a metafield whose definition grants storefront read access. An undefined
  * or private one comes back null and is simply absent from the record.
  */
 
-import { EARLY_ACCESS_METAFIELDS } from './earlyAccess';
 import type { MetafieldIdentifier } from './types';
 
 /** `$` is allowed for Shopify's reserved app-owned namespaces (`$app:foo`). */
@@ -29,10 +27,9 @@ const SAFE_IDENT = /^[A-Za-z0-9_.:$-]+$/;
 /** Shopify caps a single `metafields(identifiers:)` selection at 250. */
 const MAX_IDENTIFIERS = 250;
 
-/** Read on every product (0.23.0): who won the product in an auction, and its VIP early access (`earlyAccess.ts`). */
+/** Read on every product (0.23.0): who won the product in an auction. */
 export const STANDARD_PRODUCT_METAFIELDS: readonly MetafieldIdentifier[] = Object.freeze([
   { namespace: 'auction', key: 'winners' },
-  ...EARLY_ACCESS_METAFIELDS,
 ]);
 /** Read on every product's variants (0.23.0): who won the size, and how many of it may still be bought. */
 export const STANDARD_VARIANT_METAFIELDS: readonly MetafieldIdentifier[] = Object.freeze([

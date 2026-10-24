@@ -182,19 +182,3 @@ export {
   type UseCustomerTagsOptions,
   type CustomerTags,
 } from "./useCustomerTags";
-export { useEarlyAccess, type UseEarlyAccess } from "./useEarlyAccess";
-export {
-  useProductCustomisation,
-  useCartCustomisation,
-  useSavedCustomisations,
-  useItemsCustomisation,
-  useOptionPreferences,
-  CUSTOMISATION_STORAGE_KEY,
-  ACCOUNT_CUSTOMISATIONS_QUERY,
-  ACCOUNT_CUSTOMISATIONS_SET,
-  type OptionPreferences,
-  type ProductCustomisation,
-  type CartCustomisation,
-  type SavedCustomisations,
-  type ItemsCustomisation,
-} from "./useCustomisation";
