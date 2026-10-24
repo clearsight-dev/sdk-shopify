@@ -1,7 +1,6 @@
-import { AUCTION_TAG } from './auction';
 import { request } from './client';
 import { rememberProducts } from './productStore';
-import { getVariantMetafields, normalizeMetafields } from './metafields';
+import { metafieldIds, normalizeMetafields, productMetafieldsAskedFor, type ExtraMetafields } from './metafields';
 import { productRatingFrom } from './ratings';
 import { ShopifyError, ImageOptions } from './types';
 import {
@@ -111,15 +110,6 @@ function toMedia(nodes: any[]): ProductMedia[] {
 // `list` takes. Anything else throws rather than silently returning relevance order.
 const SEARCH_SORT_KEYS = new Set(['RELEVANCE', 'PRICE']);
 
-/**
- * What a search sends for `query` (0.23.0): the store-data standard keeps lots out of every search, so a
- * product carrying `AUCTION_TAG` is never a result. No term: nothing added.
- */
-export function withoutLots(query: string): string {
-  const exclusion = `-tag:${AUCTION_TAG}`;
-  return !query.trim() || query.includes(exclusion) ? query : `${query} ${exclusion}`;
-}
-
 function toSearchSortKey(sortKey: string | undefined): string | undefined {
   if (sortKey === undefined) return undefined;
   const key = sortKey.toUpperCase();
@@ -171,15 +161,51 @@ async function byIds(
  * A product's variant as the SDK returns it: Shopify's fields, with the first selling-plan allocation
  * as `sellingPlan` (`{ id, name }`, or null when the store enrolled it in none).
  */
-function normalizeProductVariant(node: any): ProductVariant {
+function normalizeProductVariant(node: any, withMetafields: boolean): ProductVariant {
   const { sellingPlanAllocations, metafields, ...variant } = node ?? {};
   const plan = sellingPlanAllocations?.nodes?.[0]?.sellingPlan ?? null;
   const out: ProductVariant = { ...variant, sellingPlan: plan ? { id: plan.id, name: plan.name } : null };
-  if (getVariantMetafields().length) out.metafields = normalizeMetafields(metafields);
+  if (withMetafields) out.metafields = normalizeMetafields(metafields);
   return out;
 }
 
+/**
+ * The copy of a read kept in the product store, which other screens and the device share: without the
+ * page's own metafields (0.23.0), so those stay with the page that asked (a store's auction winners never
+ * land on a card or the phone's storage) and the page reads them again each time it opens.
+ */
+function sharedCopy(product: Product, extra?: ExtraMetafields): Product {
+  if (!extra?.metafields?.length && !extra?.variantMetafields?.length) return product;
+  const configured = productMetafieldsAskedFor();
+  const keep = (record: Record<string, string> | undefined, ids: string[]) =>
+    record && Object.fromEntries(Object.entries(record).filter(([id]) => ids.includes(id)));
+  const productIds = metafieldIds(configured.product);
+  const variantIds = metafieldIds(configured.variant);
+  const { metafieldsRead: _read, variantMetafieldsRead: _variantRead, ...rest } = product;
+  return {
+    ...rest,
+    metafields: keep(product.metafields, productIds) ?? {},
+    ...(productIds.length ? { metafieldsRead: productIds } : {}),
+    ...(variantIds.length ? { variantMetafieldsRead: variantIds } : {}),
+    variants: product.variants.map((variant) => {
+      if (!variant.metafields) return variant;
+      if (!variantIds.length) {
+        const { metafields: _dropped, ...plain } = variant;
+        return plain;
+      }
+      return { ...variant, metafields: keep(variant.metafields, variantIds) };
+    }),
+  };
+}
+
+/** A product as the SDK returns it, from a read of the configured metafields. */
 export function normalizeProduct(p: any): Product {
+  return productFrom(p);
+}
+
+/** A product as the SDK returns it; `extra`: the page's own metafields its read asked for (0.23.0). */
+function productFrom(p: any, extra?: ExtraMetafields): Product {
+  const asked = productMetafieldsAskedFor(extra);
   const mediaTypes: string[] = (p.media?.nodes ?? [])
     .map((node: { mediaContentType?: string }) => node?.mediaContentType)
     .filter((type: unknown): type is string => typeof type === 'string');
@@ -206,7 +232,7 @@ export function normalizeProduct(p: any): Product {
         }
       : null,
     options: p.options ?? [],
-    variants: (p.variants?.nodes ?? []).map(normalizeProductVariant),
+    variants: (p.variants?.nodes ?? []).map((node: any) => normalizeProductVariant(node, asked.variant.length > 0)),
     images: p.images?.nodes ?? [],
     featuredImage: p.featuredImage ?? null,
     onlineStoreUrl: p.onlineStoreUrl ?? null,
@@ -214,6 +240,8 @@ export function normalizeProduct(p: any): Product {
     hasVideo: mediaTypes.some((type: string) => VIDEO_CONTENT_TYPES.has(type)),
     media: toMedia(p.media?.nodes ?? []),
     metafields: normalizeMetafields(p.metafields),
+    ...(asked.product.length ? { metafieldsRead: metafieldIds(asked.product) } : {}),
+    ...(asked.variant.length ? { variantMetafieldsRead: metafieldIds(asked.variant) } : {}),
     rating: productRatingFrom(p.ratingMetafields),
     updatedAt: p.updatedAt,
     createdAt: p.createdAt,
@@ -234,17 +262,17 @@ export const products: ShopifyProductsAPI = {
     return { nodes, pageInfo: data.products.pageInfo };
   },
 
-  async byHandle(handle: string, opts?: { fresh?: boolean } & ImageOptions): Promise<Product | null> {
-    const data = await request<ProductRaw>(productByHandleQuery(), { handle }, { fresh: opts?.fresh, imageTransform: opts?.imageTransform });
-    const product = data.product ? normalizeProduct(data.product) : null;
-    rememberProducts([product], 'full');
+  async byHandle(handle: string, opts?: { fresh?: boolean } & ImageOptions & ExtraMetafields): Promise<Product | null> {
+    const data = await request<ProductRaw>(productByHandleQuery(opts), { handle }, { fresh: opts?.fresh, imageTransform: opts?.imageTransform });
+    const product = data.product ? productFrom(data.product, opts) : null;
+    rememberProducts([product && sharedCopy(product, opts)], 'full');
     return product;
   },
 
-  async byId(id: string, opts?: { fresh?: boolean } & ImageOptions): Promise<Product | null> {
-    const data = await request<ProductRaw>(productByIdQuery(), { id }, { fresh: opts?.fresh, imageTransform: opts?.imageTransform });
-    const product = data.product ? normalizeProduct(data.product) : null;
-    rememberProducts([product], 'full');
+  async byId(id: string, opts?: { fresh?: boolean } & ImageOptions & ExtraMetafields): Promise<Product | null> {
+    const data = await request<ProductRaw>(productByIdQuery(opts), { id }, { fresh: opts?.fresh, imageTransform: opts?.imageTransform });
+    const product = data.product ? productFrom(data.product, opts) : null;
+    rememberProducts([product && sharedCopy(product, opts)], 'full');
     return product;
   },
 
@@ -252,7 +280,7 @@ export const products: ShopifyProductsAPI = {
 
   async search(query: string, opts?: Omit<ListOptions, 'query'>): Promise<Connection<Product>> {
     const data = await request<SearchRaw>(searchProductsQuery(), {
-      query: withoutLots(query),
+      query,
       first: opts?.first ?? 20,
       after: opts?.after,
       productFilters: opts?.filters,

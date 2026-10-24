@@ -11,14 +11,20 @@
  * meanwhile rather than a spinner. A full product read under `REVALIDATE_AFTER_MS` ago is not read
  * again. Render `preview` straight away; render what needs variants (the picker, add to cart) once
  * `product` is set.
+ *
+ * `metafields` / `variantMetafields` (0.23.0): metafields only this page needs, read on its own read on
+ * top of the configured ones. They stay with this page (never in the product store or on the device), so
+ * `product` is set only by a read that asked for them, each time the page opens (a repeat inside the
+ * request cache's short window gets the same answer from memory); `preview` still paints at once.
  */
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { isConfigured } from '../client';
+import { extraMetafieldsKey, metafieldIds } from '../metafields';
 import { peekProduct, toProductBase, type CachedProduct, type ProductBase } from '../productStore';
 import { shopify } from '../shopify';
 import { useShopify } from './ShopifyProvider';
 import { REVALIDATE_AFTER_MS } from './useProductFeed';
-import type { ImageTransform, Product } from '../types';
+import type { ImageTransform, MetafieldIdentifier, Product } from '../types';
 
 export interface UseProductOptions {
   /**
@@ -28,6 +34,19 @@ export interface UseProductOptions {
    */
   imageTransform?: ImageTransform;
   onError?: (error: unknown, context: { at: string; handle: string }) => void;
+  /** Product metafields only this page needs (0.23.0), on top of `ShopifyConfig.productMetafields`. */
+  metafields?: readonly MetafieldIdentifier[];
+  /** Variant metafields only this page needs (0.23.0), on top of `ShopifyConfig.variantMetafields`. */
+  variantMetafields?: readonly MetafieldIdentifier[];
+}
+
+/** Whether `product` was read with every one of the page's own metafields. */
+function readWith(product: Product | null, own: { metafields: string[]; variantMetafields: string[] }): boolean {
+  if (!product) return false;
+  return (
+    own.metafields.every((id) => product.metafieldsRead?.includes(id)) &&
+    own.variantMetafields.every((id) => product.variantMetafieldsRead?.includes(id))
+  );
 }
 
 export interface UseProductState {
@@ -62,9 +81,10 @@ const EMPTY: UseProductState = {
   notFound: false,
 };
 
-function fromCache(entry: CachedProduct | null, reading: boolean): UseProductState {
+function fromCache(entry: CachedProduct | null, reading: boolean, own: { metafields: string[]; variantMetafields: string[] }): UseProductState {
   if (!entry) return { ...EMPTY, loading: reading };
-  const full = entry.full;
+  // A copy read without the page's own metafields is only a preview here.
+  const full = readWith(entry.full, own) ? entry.full : null;
   return {
     product: full,
     preview: entry.base,
@@ -84,10 +104,14 @@ export function useProduct(handle: string | null | undefined, options: UseProduc
   const transformKey = options.imageTransform ? JSON.stringify(options.imageTransform) : '';
   const transformRef = useRef(options.imageTransform);
   transformRef.current = options.imageTransform;
+  const ownKey = extraMetafieldsKey(options);
+  const ownRef = useRef({ metafields: options.metafields, variantMetafields: options.variantMetafields });
+  ownRef.current = { metafields: options.metafields, variantMetafields: options.variantMetafields };
+  const ownIds = () => ({ metafields: metafieldIds(ownRef.current.metafields ?? []), variantMetafields: metafieldIds(ownRef.current.variantMetafields ?? []) });
 
   // First render: whatever the store knows, so the page paints on frame one.
   const [state, setState] = useState<UseProductState>(() =>
-    fromCache(configured && handle ? peekProduct(handle) : null, !!handle),
+    fromCache(configured && handle ? peekProduct(handle) : null, !!handle, ownIds()),
   );
   const [attempt, setAttempt] = useState(0);
   const requestId = useRef(0);
@@ -103,20 +127,21 @@ export function useProduct(handle: string | null | undefined, options: UseProduc
     const fresh = freshNext.current;
     freshNext.current = false;
     const cached = peekProduct(handle);
+    const own = ownIds();
 
-    if (cached?.full && !fresh && Date.now() - cached.fullAt < REVALIDATE_AFTER_MS) {
-      setState(fromCache(cached, false));
+    if (cached?.full && readWith(cached.full, own) && !fresh && Date.now() - cached.fullAt < REVALIDATE_AFTER_MS) {
+      setState(fromCache(cached, false, own));
       return;
     }
     setState((current) => {
-      if (cached) return fromCache(cached, true);
+      if (cached) return fromCache(cached, true, own);
       // A refresh keeps what is on screen until the fresh product lands.
       if (fresh && current.preview) return { ...current, refreshing: true, error: false };
       return { ...EMPTY, loading: true };
     });
 
     shopify.products
-      .byHandle(handle, { fresh, imageTransform: transformRef.current })
+      .byHandle(handle, { fresh, imageTransform: transformRef.current, ...ownRef.current })
       .then((product) => {
         if (requestId.current !== id) return;
         if (!product) {
@@ -141,7 +166,7 @@ export function useProduct(handle: string | null | undefined, options: UseProduc
       });
     // Keyed on the transform's serialisation; the object changes identity every render.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [configured, handle, attempt, transformKey]);
+  }, [configured, handle, attempt, transformKey, ownKey]);
 
   const refresh = useCallback(() => {
     freshNext.current = true;

@@ -40,7 +40,7 @@ import {
 import type { AttributionSource } from '../attribution';
 import { cartLineFacts, isVariantHeldOut } from '../cartPage';
 import { preorderPlanFor, purchaseModeFor, type PurchaseMode } from '../purchaseRules';
-import type { CartLine, CartLineAttribute, CartWriteResult, Customer, ImageTransform, Product, ProductMedia, ProductOption, ProductVariant } from '../types';
+import type { CartLine, CartLineAttribute, CartWriteResult, Customer, ImageTransform, MetafieldIdentifier, Product, ProductMedia, ProductOption, ProductVariant } from '../types';
 import { useCart, useCustomer, useShopify, useWaitlist, useWishlist } from './ShopifyProvider';
 import { useProduct, type UseProductResult } from './useProduct';
 import {
@@ -376,6 +376,9 @@ export interface UseProductPageOptions extends Omit<UseVariantSelectionOptions, 
   /** For every image of the product read (e.g. `{ maxWidth: 1080 }` for a full-width gallery). */
   imageTransform?: ImageTransform;
   onError?: (error: unknown, context: { at: string; handle: string }) => void;
+  /** Metafields only this page needs (0.23.0; `useProduct`): read each time it opens, kept to this page. */
+  metafields?: readonly MetafieldIdentifier[];
+  variantMetafields?: readonly MetafieldIdentifier[];
   /** Open the gallery on the first video. */
   playVideo?: boolean;
   /**
@@ -442,7 +445,12 @@ export interface ProductPage extends Omit<UseProductResult, 'product' | 'preview
 }
 
 export function useProductPage(handle: string | null | undefined, options: UseProductPageOptions = {}): ProductPage {
-  const result = useProduct(handle, { imageTransform: options.imageTransform, onError: options.onError });
+  const result = useProduct(handle, {
+    imageTransform: options.imageTransform,
+    onError: options.onError,
+    metafields: options.metafields,
+    variantMetafields: options.variantMetafields,
+  });
   const { product, preview } = result;
   const shown: ProductLike | null = product ?? preview ?? null;
 

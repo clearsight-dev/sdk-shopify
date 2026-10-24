@@ -2,7 +2,8 @@
 // have a floor, and a read for the previous customer never lands on the next.
 import assert from 'node:assert/strict';
 
-const { createCustomerTagsStore, hasCustomerTag, CUSTOMER_TAGS_MIN_GAP_MS, customerRestrictionsOf, BID_BLOCKED_TAG, APP_BLOCKED_TAG } = await import('../dist/index.js');
+const { createCustomerTagsStore, hasCustomerTag, CUSTOMER_TAGS_MIN_GAP_MS } = await import('../dist/index.js');
+const sdk = await import('../dist/index.js');
 const tick = () => new Promise((resolve) => setTimeout(resolve, 0));
 
 function harness() {
@@ -16,14 +17,8 @@ function harness() {
 assert.equal(hasCustomerTag(['Platinum VIP'], ' platinum vip'), true);
 assert.equal(hasCustomerTag(null, 'vip'), false);
 
-// The store-data standard: BIDBLOCKED stops bidding, APPBLOCKED stops bidding and mutes comments; unread is unknown.
-assert.equal(BID_BLOCKED_TAG, 'BIDBLOCKED');
-assert.equal(APP_BLOCKED_TAG, 'APPBLOCKED');
-assert.deepEqual(customerRestrictionsOf({ tags: ['vip'], known: true }), { bidding: 'allowed', commentsMuted: false });
-assert.deepEqual(customerRestrictionsOf({ tags: [' bidblocked '], known: true }), { bidding: 'blocked', commentsMuted: false });
-assert.deepEqual(customerRestrictionsOf({ tags: ['AppBlocked'], known: true }), { bidding: 'blocked', commentsMuted: true });
-assert.deepEqual(customerRestrictionsOf({ tags: null, known: false }), { bidding: 'unknown', commentsMuted: false });
-assert.deepEqual(customerRestrictionsOf({ tags: [], known: true }), { bidding: 'allowed', commentsMuted: false }, 'signed out');
+// What a tag means is the app's (or the feature SDK's, such as live selling's blocked bidders): the SDK names none.
+for (const name of ['BID_BLOCKED_TAG', 'APP_BLOCKED_TAG', 'customerRestrictionsOf']) assert.equal(name in sdk, false, name);
 
 { // signed out: known, nothing read
   const h = harness();

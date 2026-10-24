@@ -7,21 +7,19 @@
   One shared read, re-read on sign-in, account change, focus (`active`), foreground and `everyMs`, at most once
   per 30 s unless forced. Customer Account API for a Shopify sign-in, Storefront for a password session (needs
   the storefront token's `unauthenticated_read_customer_tags` scope). Not `known` while a stored session
-  restores or before the signed-in profile has loaded, so `bidding` is `unknown` then, never `allowed`.
-- **The store-data standard's customer tags** (decided 2026-10-22): `BIDBLOCKED` stops bidding, `APPBLOCKED`
-  stops bidding and mutes the customer's comments. `useCustomerTags` adds `bidding` (`allowed`, `blocked`, or
-  `unknown` while unread) and `commentsMuted`; `customerRestrictionsOf(state)` is the rule.
-- **`ShopifyConfig.variantMetafields`**: like `productMetafields`, read on every product read's variants as
-  `variant.metafields`.
-- **The store-data standard's metafields, read with every product** (`STANDARD_PRODUCT_METAFIELDS`,
-  `STANDARD_VARIANT_METAFIELDS`): `auction.winners` on the product and its variants and `auction.allowedQty` on
-  its variants (the per-size auction gates), and VIP early access's `custom.early_access_start`, `_end` and
-  `allowed_segments`. Every product query now carries them; the configured ones follow.
-- **VIP early access**: `earlyAccessOf(product, customerTags, nowMs)` and `useEarlyAccess(product)` (`locked`,
-  `unlocksAtMs`, `isVip`, `gated`, `known`). Before the start nobody buys; from it a customer with one of
-  `allowed_segments`; from the end everyone. The hook draws again when the lock lifts.
-- **Lots are kept out of every search**: `products.search` (and so `useSearch`, `useSearchPage`) adds
-  `-tag:SEARCH-BLOCKED` (`AUCTION_TAG`) to the term; `withoutLots(query)` is the rule.
+  restores or before the signed-in profile has loaded. What a tag means is the app's (or the feature SDK's: live
+  selling's blocked bidders); this names none.
+- **What is not here, by design (decided 2026-10-24):** sdk-shopify names no store's data. The auction
+  standard (`BIDBLOCKED`/`APPBLOCKED` and their rules, `auction.winners`/`allowedQty`, the lots' search tag) is
+  live selling's, passed in by the app; VIP early access is the base app's; leaving tagged products out of
+  search is the app's `queryTemplate` (`{query}* -tag:…`), off unless an app sets it.
+- **Metafields the app asks for; the SDK names none of its own.** `ShopifyConfig.variantMetafields`,
+  `cartMetafields` and `customerMetafields` (with the existing `productMetafields`) are read on every read of
+  that object, as `variant.metafields`, `cart.metafields` and `customer.metafields` (both sign-ins). A product
+  page's own: `useProduct` / `useProductPage(handle, { metafields, variantMetafields })` and
+  `products.byHandle`/`byId(…, { metafields, variantMetafields })`, read on that page's read only and never kept
+  in the product store or on the device; `product.metafieldsRead` / `variantMetafieldsRead` say what a copy's
+  read asked for, so a rule can tell "not read" from "none". Unconfigured, every query is the text it was.
 - **Product customisation**: questions a product asks before checkout, as JSON in a product or variant
   metafield (`ShopifyConfig.customisation`). `useProductCustomisation({ productHandle, variantId, cartLineId })`
   (questions, prefilled answers, `save()` onto the line and this device; false for a line the cart doesn't

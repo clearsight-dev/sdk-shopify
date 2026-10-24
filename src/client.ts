@@ -1,5 +1,5 @@
 import { ImageTransform, ShopifyConfig, ShopifyError, UserError } from './types';
-import { setProductMetafields, setVariantMetafields } from './metafields';
+import { setCartMetafields, setCustomerMetafields, setProductMetafields, setVariantMetafields } from './metafields';
 import { configureRequestCache, readThrough } from './requestCache';
 import { setStoreWebDomains } from './storeLinks';
 
@@ -35,6 +35,8 @@ export function setConfig(config: ShopifyConfig): void {
   state.config = config;
   setProductMetafields(config.productMetafields);
   setVariantMetafields(config.variantMetafields);
+  setCartMetafields(config.cartMetafields);
+  setCustomerMetafields(config.customerMetafields);
   // For `openWebPage` and `isStoreWebLink`. Changes no request, so it isn't in the signature below.
   setStoreWebDomains(config.webDomains);
   // Only a real change resets the request cache: `ShopifyProvider` sets the config on its first
@@ -52,6 +54,8 @@ function signature(c: ShopifyConfig): string {
     c.language ?? null,
     c.productMetafields ?? null,
     c.variantMetafields ?? null,
+    c.cartMetafields ?? null,
+    c.customerMetafields ?? null,
     c.cache ?? null,
   ]);
 }

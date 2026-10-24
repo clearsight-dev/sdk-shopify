@@ -182,7 +182,6 @@ export {
   type UseCustomerTagsOptions,
   type CustomerTags,
 } from "./useCustomerTags";
-export { useEarlyAccess, type UseEarlyAccess } from "./useEarlyAccess";
 export {
   useProductCustomisation,
   useCartCustomisation,

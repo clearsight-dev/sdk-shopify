@@ -1,4 +1,5 @@
 import { request, assertNoUserErrors, getConfig } from './client';
+import { getCartMetafields, normalizeMetafields } from './metafields';
 import {
   CART_ATTRIBUTES_UPDATE_MUTATION,
   CART_BUYER_IDENTITY_UPDATE_MUTATION,
@@ -12,6 +13,7 @@ import {
   CART_LINES_REMOVE_MUTATION,
   CART_LINES_UPDATE_MUTATION,
   CART_NOTE_UPDATE_MUTATION,
+  withCartMetafields,
 } from './queries';
 import type {
   AppliedGiftCard,
@@ -114,6 +116,7 @@ function normalize(c: any): Cart {
     appliedGiftCards: c.appliedGiftCards ?? [],
     createdAt: c.createdAt,
     updatedAt: c.updatedAt,
+    ...(getCartMetafields().length ? { metafields: normalizeMetafields(c.metafields) } : {}),
   };
 }
 
@@ -180,36 +183,36 @@ export const cart: ShopifyCartAPI = {
       attributes: input?.attributes,
       buyerIdentity: input?.buyerIdentity,
     };
-    const data = await request<CartCreatePayload>(CART_CREATE_MUTATION, { input: payload }, cartImages(opts));
+    const data = await request<CartCreatePayload>(withCartMetafields(CART_CREATE_MUTATION), { input: payload }, cartImages(opts));
     assertNoUserErrors('cartCreate', data.cartCreate.userErrors);
     return normalize(data.cartCreate.cart);
   },
 
   async get(cartId: string, opts?: ImageOptions): Promise<Cart | null> {
-    const data = await request<CartGetPayload>(CART_GET_QUERY, { id: cartId }, cartImages(opts));
+    const data = await request<CartGetPayload>(withCartMetafields(CART_GET_QUERY), { id: cartId }, cartImages(opts));
     return data.cart ? normalize(data.cart) : null;
   },
 
   async addLines(cartId: string, lines: CartLineInput[], opts?: ImageOptions): Promise<Cart> {
-    const data = await request<CartAddPayload>(CART_LINES_ADD_MUTATION, { cartId, lines: toShopifyLines(lines) }, cartImages(opts));
+    const data = await request<CartAddPayload>(withCartMetafields(CART_LINES_ADD_MUTATION), { cartId, lines: toShopifyLines(lines) }, cartImages(opts));
     assertNoUserErrors('cartLinesAdd', data.cartLinesAdd.userErrors);
     return normalize(data.cartLinesAdd.cart);
   },
 
   async updateLines(cartId: string, lines: CartLineUpdateInput[], opts?: ImageOptions): Promise<Cart> {
-    const data = await request<CartUpdPayload>(CART_LINES_UPDATE_MUTATION, { cartId, lines }, cartImages(opts));
+    const data = await request<CartUpdPayload>(withCartMetafields(CART_LINES_UPDATE_MUTATION), { cartId, lines }, cartImages(opts));
     assertNoUserErrors('cartLinesUpdate', data.cartLinesUpdate.userErrors);
     return normalize(data.cartLinesUpdate.cart);
   },
 
   async removeLines(cartId: string, lineIds: string[], opts?: ImageOptions): Promise<Cart> {
-    const data = await request<CartRmPayload>(CART_LINES_REMOVE_MUTATION, { cartId, lineIds }, cartImages(opts));
+    const data = await request<CartRmPayload>(withCartMetafields(CART_LINES_REMOVE_MUTATION), { cartId, lineIds }, cartImages(opts));
     assertNoUserErrors('cartLinesRemove', data.cartLinesRemove.userErrors);
     return normalize(data.cartLinesRemove.cart);
   },
 
   async applyDiscountCodes(cartId: string, codes: string[], opts?: ImageOptions): Promise<Cart> {
-    const data = await request<CartDiscPayload>(CART_DISCOUNT_CODES_UPDATE_MUTATION, {
+    const data = await request<CartDiscPayload>(withCartMetafields(CART_DISCOUNT_CODES_UPDATE_MUTATION), {
       cartId,
       discountCodes: codes,
     }, cartImages(opts));
@@ -218,7 +221,7 @@ export const cart: ShopifyCartAPI = {
   },
 
   async setBuyerIdentity(cartId, identity, opts?: ImageOptions): Promise<Cart> {
-    const data = await request<CartBuyPayload>(CART_BUYER_IDENTITY_UPDATE_MUTATION, {
+    const data = await request<CartBuyPayload>(withCartMetafields(CART_BUYER_IDENTITY_UPDATE_MUTATION), {
       cartId,
       buyerIdentity: {
         email: identity.email,
@@ -232,7 +235,7 @@ export const cart: ShopifyCartAPI = {
 
   /** REPLACES the cart's gift cards: a card not in `codes` comes off. Adding one is `addGiftCardCodes`. */
   async applyGiftCardCodes(cartId: string, codes: string[], opts?: ImageOptions): Promise<Cart> {
-    const data = await request<CartGcSetPayload>(CART_GIFT_CARD_CODES_UPDATE_MUTATION, {
+    const data = await request<CartGcSetPayload>(withCartMetafields(CART_GIFT_CARD_CODES_UPDATE_MUTATION), {
       cartId,
       giftCardCodes: codes,
     }, cartImages(opts));
@@ -242,7 +245,7 @@ export const cart: ShopifyCartAPI = {
 
   /** Adds codes and keeps the cards already on the cart. Shopify can skip a code without an error. */
   async addGiftCardCodes(cartId: string, codes: string[], opts?: ImageOptions): Promise<Cart> {
-    const data = await request<CartGcAddPayload>(CART_GIFT_CARD_CODES_ADD_MUTATION, {
+    const data = await request<CartGcAddPayload>(withCartMetafields(CART_GIFT_CARD_CODES_ADD_MUTATION), {
       cartId,
       giftCardCodes: codes,
     }, cartImages(opts));
@@ -259,7 +262,7 @@ export const cart: ShopifyCartAPI = {
   async updateNote(cartId: string, note: string | null, opts?: ImageOptions): Promise<Cart> {
     // `?? ''` is load-bearing: the argument is `String!`, so a null variable fails the whole
     // mutation rather than clearing the note.
-    const data = await request<CartNotePayload>(CART_NOTE_UPDATE_MUTATION, { cartId, note: note ?? '' }, cartImages(opts));
+    const data = await request<CartNotePayload>(withCartMetafields(CART_NOTE_UPDATE_MUTATION), { cartId, note: note ?? '' }, cartImages(opts));
     assertNoUserErrors('cartNoteUpdate', data.cartNoteUpdate.userErrors);
     return normalize(data.cartNoteUpdate.cart);
   },
@@ -267,13 +270,13 @@ export const cart: ShopifyCartAPI = {
   async updateAttributes(cartId: string, attributes, opts?: ImageOptions): Promise<Cart> {
     // Shopify replaces the set wholesale, so this is a write of the final list, not a merge into
     // the existing one. Callers holding a cart should send its current attributes plus theirs.
-    const data = await request<CartAttrPayload>(CART_ATTRIBUTES_UPDATE_MUTATION, { cartId, attributes }, cartImages(opts));
+    const data = await request<CartAttrPayload>(withCartMetafields(CART_ATTRIBUTES_UPDATE_MUTATION), { cartId, attributes }, cartImages(opts));
     assertNoUserErrors('cartAttributesUpdate', data.cartAttributesUpdate.userErrors);
     return normalize(data.cartAttributesUpdate.cart);
   },
 
   async removeGiftCardCodes(cartId: string, appliedGiftCardIds: string[], opts?: ImageOptions): Promise<Cart> {
-    const data = await request<CartGcRmPayload>(CART_GIFT_CARD_CODES_REMOVE_MUTATION, {
+    const data = await request<CartGcRmPayload>(withCartMetafields(CART_GIFT_CARD_CODES_REMOVE_MUTATION), {
       cartId,
       appliedGiftCardIds,
     }, cartImages(opts));

@@ -17,6 +17,7 @@
  */
 import { shopify } from '../shopify';
 import { assertNoUserErrors } from '../client';
+import { customerMetafieldSelection, getCustomerMetafields, normalizeMetafields } from '../metafields';
 import { classifyAuthFailure } from '../errors';
 import { ShopifyError } from '../types';
 import type {
@@ -182,9 +183,11 @@ function jwtClaims(jwt: string): Record<string, unknown> | null {
 
 const describe = (error: unknown) => (error instanceof Error ? error.message : String(error));
 
-const PROFILE_QUERY = /* GraphQL */ `
+/** The profile, with `customerMetafields` (0.23.0) when the app configures any. */
+const profileQuery = () => /* GraphQL */ `
   query CustomerProfile {
     customer {
+      ${customerMetafieldSelection()}
       id
       firstName
       lastName
@@ -197,6 +200,7 @@ const PROFILE_QUERY = /* GraphQL */ `
 
 interface RawAccountCustomer {
   id: string;
+  metafields?: unknown;
   firstName: string | null;
   lastName: string | null;
   emailAddress: { emailAddress: string | null; marketingState: string | null } | null;
@@ -293,6 +297,7 @@ export function toCustomer(raw: RawAccountCustomer): Customer {
     defaultAddress: address,
     // Only SUBSCRIBED is consent; every other marketing state reads as opted out.
     acceptsMarketing: raw.emailAddress?.marketingState === 'SUBSCRIBED',
+    ...(getCustomerMetafields().length ? { metafields: normalizeMetafields(raw.metafields) } : {}),
   };
 }
 
@@ -580,7 +585,7 @@ export function createCustomerSession(deps: CustomerSessionDeps) {
 
   async function loadShopifyProfile(): Promise<Customer | null> {
     const started = generation;
-    const data = await customerAccountRequest<{ customer: RawAccountCustomer | null }>(PROFILE_QUERY);
+    const data = await customerAccountRequest<{ customer: RawAccountCustomer | null }>(profileQuery());
     if (started !== generation) return null;
     const customer = data.customer ? toCustomer(data.customer) : null;
     set({ customer });

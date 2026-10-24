@@ -1,27 +1,29 @@
 /**
- * Opt-in product metafields.
+ * Metafields the app asks for (nothing is read unless configured).
  *
- * Configure once at startup and every product the SDK returns carries them:
+ * Configure once at startup and every read of that object carries them:
  *
  *   setConfig({ ...credentials, productMetafields: [{ namespace: 'custom', key: 'badge_text' }] })
  *   product.metafields['custom.badge_text']   // → 'Going Fast'
  *
- * The identifiers are inlined into the product fragment rather than passed as a GraphQL variable,
- * because a variable has to be declared by every operation that spreads the fragment — miss one and
- * it fails at runtime.
+ * - `productMetafields`: every product read; `variantMetafields` (0.23.0): every product read's variants;
+ * - `cartMetafields` (0.23.0): every cart read, as `cart.metafields`;
+ * - `customerMetafields` (0.23.0): every profile read, as `customer.metafields`;
+ * - one product page's own names (0.23.0): `useProduct` / `useProductPage(handle, { metafields,
+ *   variantMetafields })`, read on that page's read only, on top of the configured ones.
  *
- * The store-data standard's metafields (0.23.0) are read on every product whatever is configured:
- * `auction.winners` on the product and its variants, `auction.allowedQty` on its variants, for the
- * per-size auction gates, and the product's VIP early access (`custom.early_access_start`, `_end`,
- * `allowed_segments`; `earlyAccess.ts`) (`STANDARD_PRODUCT_METAFIELDS`, `STANDARD_VARIANT_METAFIELDS`). A
- * store that doesn't use them gets them back absent.
+ * The SDK names no metafield of its own: which ones a store keeps where is the app's to say (or the SDK
+ * that owns the feature, such as live selling's auction metafields, which the app passes in).
+ *
+ * The identifiers are inlined into the fragment rather than passed as a GraphQL variable, because a
+ * variable has to be declared by every operation that spreads the fragment — miss one and it fails at
+ * runtime. Inlining also means an unconfigured SDK sends the exact query it always sent.
  *
  * Storefront only returns a metafield whose definition grants storefront read access. An undefined
  * or private one comes back null and is simply absent from the record.
  */
 
-import { EARLY_ACCESS_METAFIELDS } from './earlyAccess';
-import type { MetafieldIdentifier } from './types';
+import type { MetafieldIdentifier, ProductReadMetafields } from './types';
 
 /** `$` is allowed for Shopify's reserved app-owned namespaces (`$app:foo`). */
 const SAFE_IDENT = /^[A-Za-z0-9_.:$-]+$/;
@@ -29,24 +31,13 @@ const SAFE_IDENT = /^[A-Za-z0-9_.:$-]+$/;
 /** Shopify caps a single `metafields(identifiers:)` selection at 250. */
 const MAX_IDENTIFIERS = 250;
 
-/** Read on every product (0.23.0): who won the product in an auction, and its VIP early access (`earlyAccess.ts`). */
-export const STANDARD_PRODUCT_METAFIELDS: readonly MetafieldIdentifier[] = Object.freeze([
-  { namespace: 'auction', key: 'winners' },
-  ...EARLY_ACCESS_METAFIELDS,
-]);
-/** Read on every product's variants (0.23.0): who won the size, and how many of it may still be bought. */
-export const STANDARD_VARIANT_METAFIELDS: readonly MetafieldIdentifier[] = Object.freeze([
-  { namespace: 'auction', key: 'winners' },
-  { namespace: 'auction', key: 'allowedQty' },
-]);
-
 function assertSafe(part: string, what: string): void {
   if (!part || !SAFE_IDENT.test(part)) {
     throw new Error(`sdk-shopify: invalid metafield ${what} ${JSON.stringify(part)}`);
   }
 }
 
-function checkedList(list: MetafieldIdentifier[] | undefined | null, what: string): MetafieldIdentifier[] {
+function checkedList(list: readonly MetafieldIdentifier[] | undefined | null, what: string): MetafieldIdentifier[] {
   const seen = new Set<string>();
   const next: MetafieldIdentifier[] = [];
 
@@ -65,33 +56,60 @@ function checkedList(list: MetafieldIdentifier[] | undefined | null, what: strin
   return next;
 }
 
-const idsOf = (list: MetafieldIdentifier[]) => list.map(i => `${i.namespace}.${i.key}`).join('|');
+/** `namespace.key` for each, the way `metafields` records are keyed. */
+export const metafieldIds = (list: readonly MetafieldIdentifier[]): string[] => list.map((i) => `${i.namespace}.${i.key}`);
 
-let identifiers: MetafieldIdentifier[] = checkedList([...STANDARD_PRODUCT_METAFIELDS], 'product');
-let variantIdentifiers: MetafieldIdentifier[] = checkedList([...STANDARD_VARIANT_METAFIELDS], 'variant');
+let identifiers: MetafieldIdentifier[] = [];
+let variantIdentifiers: MetafieldIdentifier[] = [];
+let cartIdentifiers: MetafieldIdentifier[] = [];
+let customerIdentifiers: MetafieldIdentifier[] = [];
 let signature = '';
 const updateSignature = () => {
-  signature = variantIdentifiers.length ? `${idsOf(identifiers)}#v:${idsOf(variantIdentifiers)}` : idsOf(identifiers);
+  // Unchanged for an app that configures only product metafields, so its built queries stay the same.
+  const parts = [metafieldIds(identifiers).join('|')];
+  if (variantIdentifiers.length) parts.push(`v:${metafieldIds(variantIdentifiers).join('|')}`);
+  if (cartIdentifiers.length) parts.push(`c:${metafieldIds(cartIdentifiers).join('|')}`);
+  if (customerIdentifiers.length) parts.push(`u:${metafieldIds(customerIdentifiers).join('|')}`);
+  signature = parts.join('#');
 };
 
-/** The configured product metafields, after the standard ones. */
 export function setProductMetafields(list: MetafieldIdentifier[] | undefined | null): void {
-  identifiers = checkedList([...STANDARD_PRODUCT_METAFIELDS, ...(list ?? [])], 'product');
+  identifiers = checkedList(list, 'product');
   updateSignature();
 }
 
 /** Variant metafields (0.23.0): as `productMetafields`, read on every product read's variants. */
 export function setVariantMetafields(list: MetafieldIdentifier[] | undefined | null): void {
-  variantIdentifiers = checkedList([...STANDARD_VARIANT_METAFIELDS, ...(list ?? [])], 'variant');
+  variantIdentifiers = checkedList(list, 'variant');
   updateSignature();
+}
+
+/** Cart metafields (0.23.0): read on every cart read, as `cart.metafields`. */
+export function setCartMetafields(list: MetafieldIdentifier[] | undefined | null): void {
+  cartIdentifiers = checkedList(list, 'cart');
+  updateSignature();
+}
+
+/** Customer metafields (0.23.0): read on every profile read, as `customer.metafields`. */
+export function setCustomerMetafields(list: MetafieldIdentifier[] | undefined | null): void {
+  customerIdentifiers = checkedList(list, 'customer');
+  updateSignature();
+}
+
+export function getProductMetafields(): MetafieldIdentifier[] {
+  return identifiers;
 }
 
 export function getVariantMetafields(): MetafieldIdentifier[] {
   return variantIdentifiers;
 }
 
-export function getProductMetafields(): MetafieldIdentifier[] {
-  return identifiers;
+export function getCartMetafields(): MetafieldIdentifier[] {
+  return cartIdentifiers;
+}
+
+export function getCustomerMetafields(): MetafieldIdentifier[] {
+  return customerIdentifiers;
 }
 
 /** Cache key for built query strings — changes only when the configured set changes. */
@@ -99,18 +117,50 @@ export function productMetafieldsSignature(): string {
   return signature;
 }
 
-/** The selection to splice into a product fragment (the standard metafields, then the configured ones). */
-export function metafieldSelection(): string {
-  if (!identifiers.length) return '';
-  const list = identifiers.map(i => `{namespace:"${i.namespace}",key:"${i.key}"}`).join(',');
-  return `metafields(identifiers: [${list}]) { namespace key value type }`;
+/** A product page's own names (0.23.0), on top of the configured ones. */
+export type ExtraMetafields = ProductReadMetafields;
+
+/** The configured list with a read's own names after it, checked and without repeats. */
+function withExtra(configured: MetafieldIdentifier[], extra: readonly MetafieldIdentifier[] | undefined, what: string): MetafieldIdentifier[] {
+  return extra?.length ? checkedList([...configured, ...extra], what) : configured;
 }
 
-/** The selection to splice into a product's variants (the standard metafields, then the configured ones). */
-export function variantMetafieldSelection(): string {
-  if (!variantIdentifiers.length) return '';
-  const list = variantIdentifiers.map(i => `{namespace:"${i.namespace}",key:"${i.key}"}`).join(',');
-  return `metafields(identifiers: [${list}]) { namespace key value type }`;
+/** What a product read with these extras asks for: the product's and the variants' names. */
+export function productMetafieldsAskedFor(extra?: ExtraMetafields): { product: MetafieldIdentifier[]; variant: MetafieldIdentifier[] } {
+  return { product: withExtra(identifiers, extra?.metafields, 'product'), variant: withExtra(variantIdentifiers, extra?.variantMetafields, 'variant') };
+}
+
+/** A read's own names as one key: '' for none. */
+export function extraMetafieldsKey(extra?: ExtraMetafields): string {
+  const product = checkedList(extra?.metafields, 'product');
+  const variant = checkedList(extra?.variantMetafields, 'variant');
+  return product.length || variant.length ? `${metafieldIds(product).join('|')}#v:${metafieldIds(variant).join('|')}` : '';
+}
+
+function selectionOf(list: MetafieldIdentifier[]): string {
+  if (!list.length) return '';
+  const ids = list.map((i) => `{namespace:"${i.namespace}",key:"${i.key}"}`).join(',');
+  return `metafields(identifiers: [${ids}]) { namespace key value type }`;
+}
+
+/** The selection to splice into a product fragment, or '' when nothing is configured or asked for. */
+export function metafieldSelection(extra?: ExtraMetafields): string {
+  return selectionOf(productMetafieldsAskedFor(extra).product);
+}
+
+/** The selection to splice into a product's variants, or '' when nothing is configured or asked for. */
+export function variantMetafieldSelection(extra?: ExtraMetafields): string {
+  return selectionOf(productMetafieldsAskedFor(extra).variant);
+}
+
+/** The selection to splice into the cart fragment, or '' when nothing is configured. */
+export function cartMetafieldSelection(): string {
+  return selectionOf(cartIdentifiers);
+}
+
+/** The selection to splice into a customer's profile, or '' when nothing is configured. */
+export function customerMetafieldSelection(): string {
+  return selectionOf(customerIdentifiers);
 }
 
 type RawMetafield = { namespace?: string; key?: string; value?: string | null } | null;
@@ -157,4 +207,3 @@ export function memoizeQuery(build: () => string): () => string {
   };
 }
 
-updateSignature();

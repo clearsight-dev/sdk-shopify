@@ -45,12 +45,12 @@ await check('a template without {query} goes after the term; none, or no term, s
   assert.equal(searchQueryFrom('  ', '{query}*'), '');
 });
 
-await check('every search keeps lots (SEARCH-BLOCKED) out, once; no term adds nothing', async () => {
+await check('a search sends the term as given: the SDK leaves out no tag of its own (an app passes a template)', async () => {
   const { shopify } = await import('../dist/index.js');
   await shopify.init({ storeDomain: 'shop.myshopify.com', storefrontAccessToken: 't' });
   await shopify.products.search('ring');
   await shopify.products.search('band -tag:SEARCH-BLOCKED');
-  assert.deepEqual(searched.splice(0), ['ring -tag:SEARCH-BLOCKED', 'band -tag:SEARCH-BLOCKED']);
+  assert.deepEqual(searched.splice(0), ['ring', 'band -tag:SEARCH-BLOCKED']);
 });
 
 let result = null;
@@ -66,14 +66,14 @@ const render = (template) => runAct(async () => root.render(React.createElement(
 await render('{query}* -tag:hidden');
 await settle();
 await check('useSearch sends the template, and still reports the term typed', () => {
-  assert.deepEqual(searched, ['ring* -tag:hidden -tag:SEARCH-BLOCKED'], 'lots are kept out of every search');
+  assert.deepEqual(searched, ['ring* -tag:hidden']);
   assert.equal(result.query, 'ring');
 });
 
 await render(undefined);
 await settle();
 await check('without one, the term as typed (its own cache entry)', () => {
-  assert.deepEqual(searched, ['ring* -tag:hidden -tag:SEARCH-BLOCKED', 'ring -tag:SEARCH-BLOCKED']);
+  assert.deepEqual(searched, ['ring* -tag:hidden', 'ring']);
 });
 
 await runAct(async () => root.unmount());

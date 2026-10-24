@@ -26,13 +26,21 @@ export interface ShopifyConfig {
   /** Cart rules the SDK enforces before it writes. */
   cart?: CartPolicy;
   /**
-   * Product metafields to fetch alongside every product, read back as `product.metafields`, after the
-   * standard ones (`STANDARD_PRODUCT_METAFIELDS`, 0.23.0). Each needs a Shopify metafield definition with
-   * storefront read access, or it comes back empty.
+   * Product metafields to fetch on every product read, read back as `product.metafields`. Each needs a
+   * Shopify metafield definition with storefront read access, or it comes back empty. A metafield only
+   * one page needs goes on that page's read instead (`useProduct(handle, { metafields })`).
    */
   productMetafields?: MetafieldIdentifier[];
-  /** Variant metafields to fetch on every product read's variants, read back as `variant.metafields`, after the standard ones (`STANDARD_VARIANT_METAFIELDS`) (0.23.0). */
+  /** Variant metafields to fetch on every product read's variants, read back as `variant.metafields` (0.23.0). */
   variantMetafields?: MetafieldIdentifier[];
+  /** Cart metafields to fetch on every cart read, read back as `cart.metafields` (0.23.0). */
+  cartMetafields?: MetafieldIdentifier[];
+  /**
+   * Customer metafields to fetch on every profile read, read back as `customer.metafields` (0.23.0): the
+   * Storefront API for a password session, the Customer Account API for a Shopify sign-in (each needs the
+   * definition's access for that API).
+   */
+  customerMetafields?: MetafieldIdentifier[];
   /**
    * Where products keep their customisation questions (0.23.0, `customisation.ts`): `namespace.key` metafield ids,
    * also listed in `productMetafields` / `variantMetafields`. Unset: no product is customisable.
@@ -235,7 +243,7 @@ export interface ProductVariant {
    * absent on a cart line's `merchandise` (the line has `sellingPlanId`), hence optional.
    */
   sellingPlan?: Pick<SellingPlan, 'id' | 'name'> | null;
-  /** The standard variant metafields and `ShopifyConfig.variantMetafields`, keyed `namespace.key` (0.23.0); absent on a cart line. */
+  /** `ShopifyConfig.variantMetafields` and the page's own read's, keyed `namespace.key` (0.23.0); absent on a cart line. */
   metafields?: Record<string, string>;
 }
 
@@ -301,11 +309,19 @@ export interface Product {
    */
   media: ProductMedia[];
   /**
-   * The standard metafields (`auction.winners`, 0.23.0) and those named by `ShopifyConfig.productMetafields`,
-   * keyed `namespace.key` — e.g. `product.metafields['custom.badge_text']`. A metafield the product doesn't
-   * carry (or whose definition denies storefront access) is simply absent.
+   * Those named by `ShopifyConfig.productMetafields`, and by the page's own read (`useProduct(handle,
+   * { metafields })`, 0.23.0), keyed `namespace.key` — e.g. `product.metafields['custom.badge_text']`. A
+   * metafield the product doesn't carry (or whose definition denies storefront access) is simply absent.
    */
   metafields: Record<string, string>;
+  /**
+   * The metafields the read that made this copy asked for, `namespace.key` (0.23.0); absent when it asked
+   * for none. One listed here but missing from `metafields` is a product without it; one not listed
+   * wasn't read, so a rule that depends on it can't tell yet (a card's copy, read without the page's own).
+   */
+  metafieldsRead?: string[];
+  /** The same for the variants' metafields (`variant.metafields`, 0.23.0). */
+  variantMetafieldsRead?: string[];
   /**
    * The product's star rating (0.20.0), from Shopify's standard review metafields that a review app
    * writes (`reviews.rating`, `reviews.rating_count`). Null when the product has none, when the store
@@ -438,6 +454,8 @@ export interface AppliedGiftCard {
 
 export interface Cart {
   id: string;            // cart GID
+  /** `ShopifyConfig.cartMetafields`, keyed `namespace.key` (0.23.0); absent when none are configured. */
+  metafields?: Record<string, string>;
   /** Shopify-hosted checkout URL — open in a webview to complete purchase. */
   checkoutUrl: string;
   totalQuantity: number;
@@ -649,6 +667,12 @@ export interface Address {
   phone?: string;
 }
 
+/** Metafields one product read asks for on top of the configured ones (0.23.0): a product page's own. */
+export interface ProductReadMetafields {
+  metafields?: readonly MetafieldIdentifier[];
+  variantMetafields?: readonly MetafieldIdentifier[];
+}
+
 export interface Customer {
   id: string;
   email: string;
@@ -657,6 +681,8 @@ export interface Customer {
   phone: string | null;
   defaultAddress: Address | null;
   acceptsMarketing: boolean;
+  /** `ShopifyConfig.customerMetafields`, keyed `namespace.key` (0.23.0); absent when none are configured. */
+  metafields?: Record<string, string>;
 }
 
 export interface CustomerAccessToken {
@@ -1240,8 +1266,9 @@ export class ShopifyError extends Error {
 export interface ShopifyProductsAPI {
   list(opts?: ListOptions): Promise<Connection<Product>>;
   /** `fresh` skips a recent cached answer (the product page's background read). */
-  byHandle(handle: string, opts?: { fresh?: boolean } & ImageOptions): Promise<Product | null>;
-  byId(id: string, opts?: { fresh?: boolean } & ImageOptions): Promise<Product | null>;
+  /** `metafields` / `variantMetafields` (0.23.0): this read's own, on top of the configured ones (a product page's). */
+  byHandle(handle: string, opts?: { fresh?: boolean } & ImageOptions & ProductReadMetafields): Promise<Product | null>;
+  byId(id: string, opts?: { fresh?: boolean } & ImageOptions & ProductReadMetafields): Promise<Product | null>;
   /**
    * Resolves product GIDs in the order given, batched to stay under Shopify's query cost cap.
    * Anything that does not resolve is dropped rather than returned as a hole.

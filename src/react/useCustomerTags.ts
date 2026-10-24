@@ -5,23 +5,21 @@
  *
  * ```tsx
  * const tags = useCustomerTags({ active: useIsFocused() });
- * const early = tags.hasTag("VIP");
- * if (tags.bidding !== "allowed") … // BIDBLOCKED / APPBLOCKED, or not read yet
+ * const vip = tags.known && tags.hasTag("VIP");
+ * if (!tags.known) … // not read yet: a rule that protects something waits
  * ```
  *
  * A Shopify sign-in reads the Customer Account API, a password session the Storefront API (which needs
  * the storefront token's `unauthenticated_read_customer_tags` scope: without it every read fails and the
  * tags stay unknown). Signed out: no tags, `known`, nothing sent. While a stored session restores, or
- * signed in before the profile has loaded (offline at launch): not `known`, so `bidding` is `unknown`.
+ * signed in before the profile has loaded (offline at launch): not `known`.
  */
 import { useCallback, useEffect, useMemo, useSyncExternalStore } from 'react';
 import { request as storefrontRequest } from '../client';
 import {
   createCustomerTagsStore,
   CUSTOMER_ACCOUNT_TAGS_QUERY,
-  customerRestrictionsOf,
   hasCustomerTag,
-  type CustomerRestrictions,
   STOREFRONT_CUSTOMER_TAGS_QUERY,
   type CustomerTagsState,
   type CustomerTagsStore,
@@ -36,7 +34,7 @@ export interface UseCustomerTagsOptions {
   everyMs?: number;
 }
 
-export interface CustomerTags extends CustomerTagsState, CustomerRestrictions {
+export interface CustomerTags extends CustomerTagsState {
   /** Trimmed, case-insensitive. False while unread. */
   hasTag: (tag: string) => boolean;
   refresh: (options?: { force?: boolean }) => Promise<CustomerTagsState>;
@@ -110,6 +108,6 @@ export function useCustomerTags({ active = true, everyMs }: UseCustomerTagsOptio
       : state.customerId === customerId
         ? state
         : { customerId, tags: customerId ? null : [], known: !customerId };
-    return { ...shown, ...customerRestrictionsOf(shown), hasTag: (tag: string) => hasCustomerTag(shown.tags, tag), refresh };
+    return { ...shown, hasTag: (tag: string) => hasCustomerTag(shown.tags, tag), refresh };
   }, [state, customerId, whoUnknown, refresh]);
 }

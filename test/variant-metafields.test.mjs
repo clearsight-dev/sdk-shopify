@@ -46,12 +46,12 @@ console.log('variant metafields');
 
 await shopify.init({ storeDomain: 'shop.myshopify.com', storefrontAccessToken: 't' });
 variantsAnswer = [variant(1)];
-await check('unset: the variants ask for the standard ones only (0.23.0: auction.winners, auction.allowedQty)', async () => {
+await check('unset: the variants ask for no metafields and carry no record (the SDK names none of its own)', async () => {
   const product = await shopify.products.byHandle('p-1');
-  const selection = variantsSelection(lastQuery('ProductByHandle'));
-  assert.match(selection, /metafields\(identifiers: \[\{namespace:"auction",key:"winners"\},\{namespace:"auction",key:"allowedQty"\}\]\)/);
-  assert.deepEqual(getVariantMetafields(), [{ namespace: 'auction', key: 'winners' }, { namespace: 'auction', key: 'allowedQty' }]);
-  assert.deepEqual(product.variants[0].metafields ?? {}, {});
+  assert.doesNotMatch(variantsSelection(lastQuery('ProductByHandle')), /metafields/);
+  assert.deepEqual(getVariantMetafields(), []);
+  assert.equal('metafields' in product.variants[0], false);
+  assert.equal('variantMetafieldsRead' in product, false);
 });
 
 await shopify.init({
@@ -59,7 +59,7 @@ await shopify.init({
   variantMetafields: [{ namespace: 'auction', key: 'winners' }, { namespace: 'auction', key: 'allowedQty' }, { namespace: 'auction', key: 'winners' }],
 });
 clearRequestCache();
-await check('configured: after the standard ones, each listed once, inside each variant of every product read', () => {
+await check('configured: each listed once, inside each variant of every product read', () => {
   assert.deepEqual(getVariantMetafields(), [{ namespace: 'auction', key: 'winners' }, { namespace: 'auction', key: 'allowedQty' }]);
 });
 
@@ -76,6 +76,7 @@ await check('each variant reads its own back, keyed namespace.key; a size with n
   assert.deepEqual(product.variants[1].metafields, {});
   assert.equal(productMetafield(product.variants[1], 'auction.winners'), null);
   assert.equal('sellingPlanAllocations' in product.variants[0], false, 'the variant keeps its usual shape');
+  assert.deepEqual(product.variantMetafieldsRead, ['auction.winners', 'auction.allowedQty'], 'what the read asked for');
 });
 
 await check('a cart line’s merchandise is untouched (VariantFields is shared with the cart)', async () => {

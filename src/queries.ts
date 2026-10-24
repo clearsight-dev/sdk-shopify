@@ -1,4 +1,12 @@
-import { memoizeQuery, metafieldSelection, variantMetafieldSelection } from './metafields';
+import {
+  cartMetafieldSelection,
+  customerMetafieldSelection,
+  extraMetafieldsKey,
+  memoizeQuery,
+  metafieldSelection,
+  variantMetafieldSelection,
+  type ExtraMetafields,
+} from './metafields';
 import { RATING_METAFIELDS_SELECTION } from './ratings';
 
 export const MONEY_FRAGMENT = /* GraphQL */ `
@@ -47,10 +55,10 @@ export const VARIANT_FRAGMENT = /* GraphQL */ `
  * Each product also carries its star rating's two review metafields (`ratingMetafields`, 0.20.0): a
  * card shows the stars, so every product read asks for them (`ratings.ts`).
  */
-const productCoreFragment = () => /* GraphQL */ `
+const productCoreFragment = (extra?: ExtraMetafields) => /* GraphQL */ `
   ${VARIANT_FRAGMENT}
   fragment ProductCoreFields on Product {
-    ${metafieldSelection()}
+    ${metafieldSelection(extra)}
     ${RATING_METAFIELDS_SELECTION}
     id
     handle
@@ -75,7 +83,7 @@ const productCoreFragment = () => /* GraphQL */ `
       nodes {
         ...VariantFields
         sellingPlanAllocations(first: 1) { nodes { sellingPlan { id name } } }
-        ${variantMetafieldSelection()}
+        ${variantMetafieldSelection(extra)}
       }
     }
     images(first: 20) { nodes { ...ImageFields } }
@@ -99,8 +107,9 @@ export const productCardFragment = () => /* GraphQL */ `
   }
 `;
 
-export const productFragment = () => /* GraphQL */ `
-  ${productCoreFragment()}
+/** The whole product (a product page); `extra`: that page's own metafields, on top of the configured ones. */
+export const productFragment = (extra?: ExtraMetafields) => /* GraphQL */ `
+  ${productCoreFragment(extra)}
   fragment ProductFields on Product {
     ...ProductCoreFields
     # Videos are appended after images, so a small window misses them entirely.
@@ -202,6 +211,15 @@ export const CART_FRAGMENT = /* GraphQL */ `
   }
 `;
 
+/**
+ * `query` with the configured cart metafields (0.23.0, `cartMetafields`) in its `CartFields`, read back as
+ * `cart.metafields`. The same text when none are configured.
+ */
+export function withCartMetafields(query: string): string {
+  const selection = cartMetafieldSelection();
+  return selection ? query.replace('fragment CartFields on Cart {', `fragment CartFields on Cart {\n    ${selection}`) : query;
+}
+
 export const ADDRESS_FRAGMENT = /* GraphQL */ `
   fragment AddressFields on MailingAddress {
     id
@@ -230,6 +248,15 @@ export const CUSTOMER_FRAGMENT = /* GraphQL */ `
   }
 `;
 
+/**
+ * `query` with the configured customer metafields (0.23.0, `customerMetafields`) in its `CustomerFields`,
+ * read back as `customer.metafields`. The same text when none are configured.
+ */
+export function withCustomerMetafields(query: string): string {
+  const selection = customerMetafieldSelection();
+  return selection ? query.replace('fragment CustomerFields on Customer {', `fragment CustomerFields on Customer {\n    ${selection}`) : query;
+}
+
 // Operations
 
 export const productsListQuery = memoizeQuery(() => /* GraphQL */ `
@@ -242,19 +269,28 @@ export const productsListQuery = memoizeQuery(() => /* GraphQL */ `
   }
 `);
 
-export const productByHandleQuery = memoizeQuery(() => /* GraphQL */ `
-  ${productFragment()}
+const productByHandleText = (extra?: ExtraMetafields) => /* GraphQL */ `
+  ${productFragment(extra)}
   query ProductByHandle($handle: String!) {
     product(handle: $handle) { ...ProductFields }
   }
-`);
-
-export const productByIdQuery = memoizeQuery(() => /* GraphQL */ `
-  ${productFragment()}
+`;
+const productByIdText = (extra?: ExtraMetafields) => /* GraphQL */ `
+  ${productFragment(extra)}
   query ProductById($id: ID!) {
     product(id: $id) { ...ProductFields }
   }
-`);
+`;
+const productByHandleConfigured = memoizeQuery(() => productByHandleText());
+const productByIdConfigured = memoizeQuery(() => productByIdText());
+
+/** A whole product by handle; with a page's own metafields (0.23.0) when `extra` names any. */
+export const productByHandleQuery = (extra?: ExtraMetafields): string =>
+  extraMetafieldsKey(extra) ? productByHandleText(extra) : productByHandleConfigured();
+
+/** A whole product by id; with a page's own metafields (0.23.0) when `extra` names any. */
+export const productByIdQuery = (extra?: ExtraMetafields): string =>
+  extraMetafieldsKey(extra) ? productByIdText(extra) : productByIdConfigured();
 
 export const productRecommendationsQuery = memoizeQuery(() => /* GraphQL */ `
   ${productCardFragment()}

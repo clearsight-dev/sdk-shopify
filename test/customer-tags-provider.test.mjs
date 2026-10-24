@@ -102,11 +102,10 @@ async function render({ bActive = false } = {}) {
 }
 
 await render();
-await t.check('signed out: nothing restricted, known, nothing read', () => {
+await t.check('signed out: no tags, known, nothing read', () => {
   assert.equal(screenA.customerId, null);
   assert.equal(screenA.known, true);
   assert.deepEqual(screenA.tags, []);
-  assert.equal(screenA.bidding, 'allowed');
   assert.equal(tagReads.length, 0);
 });
 
@@ -139,10 +138,9 @@ await t.check('a forced re-read picks up a new tag, on every caller', () => {
 accountTags = ['vip', 'APPBLOCKED'];
 await runAct(async () => { await screenB.refresh({ force: true }); });
 await settle();
-await t.check('the standard tags: APPBLOCKED blocks bidding and mutes comments, on every caller', () => {
-  assert.equal(screenA.bidding, 'blocked');
-  assert.equal(screenA.commentsMuted, true);
-  assert.equal(screenB.bidding, 'blocked');
+await t.check('a tag added on the account reaches every caller', () => {
+  assert.equal(screenA.hasTag('appblocked'), true);
+  assert.equal(screenB.hasTag('APPBLOCKED'), true);
 });
 accountTags = ['vip', 'no-bidding'];
 await runAct(async () => { await screenB.refresh({ force: true }); });
@@ -170,12 +168,11 @@ tagsAnswerNoCustomer = false;
 let releaseProfile = null;
 holdProfile = new Promise((r) => { releaseProfile = r; });
 await runAct(async () => { void api.customer.signIn(); await new Promise((r) => setTimeout(r, 30)); });
-await t.check('signed in with the profile still loading: not known and bidding unknown, never "no tags"', () => {
+await t.check('signed in with the profile still loading: not known, never "no tags"', () => {
   assert.equal(api.customer.loggedIn, true);
   assert.equal(api.customer.customer, null);
   assert.equal(screenA.known, false);
   assert.equal(screenA.tags, null);
-  assert.equal(screenA.bidding, 'unknown');
   assert.equal(screenA.hasTag('vip'), false);
 });
 holdProfile = null;
@@ -205,12 +202,11 @@ async function renderPassword() {
 await renderPassword();
 await runAct(async () => { await api.customer.login('pw@example.com', 'secret'); });
 await settle();
-await t.check('a password session reads the tags from the Storefront API with its token: BIDBLOCKED blocks bidding', () => {
+await t.check('a password session reads the tags from the Storefront API with its token', () => {
   assert.equal(api.customer.sessionKind, 'password');
   assert.deepEqual(storefrontTagReads.at(-1), { customerAccessToken: 'tok_pw' });
   assert.deepEqual(screenA.tags, ['BIDBLOCKED']);
-  assert.equal(screenA.bidding, 'blocked');
-  assert.equal(screenA.commentsMuted, false);
+  assert.equal(screenA.known, true);
 });
 await runAct(async () => { await api.customer.logout(); });
 await settle();
@@ -218,9 +214,9 @@ await settle();
 storefrontTags = null;
 await runAct(async () => { await api.customer.login('pw@example.com', 'secret'); });
 await settle();
-await t.check('without the tags scope every read fails: the tags stay unknown, so bidding waits', () => {
+await t.check('without the tags scope every read fails: the tags stay unknown', () => {
   assert.equal(screenA.known, false);
-  assert.equal(screenA.bidding, 'unknown');
+  assert.equal(screenA.tags, null);
 });
 await runAct(async () => root2.unmount());
 t.done();

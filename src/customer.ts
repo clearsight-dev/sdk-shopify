@@ -1,4 +1,5 @@
 import { request, assertNoUserErrors } from './client';
+import { getCustomerMetafields, normalizeMetafields } from './metafields';
 import {
   CUSTOMER_ACCESS_TOKEN_CREATE_MUTATION,
   CUSTOMER_ACCESS_TOKEN_DELETE_MUTATION,
@@ -8,6 +9,7 @@ import {
   CUSTOMER_QUERY,
   CUSTOMER_RECOVER_MUTATION,
   CUSTOMER_UPDATE_MUTATION,
+  withCustomerMetafields,
 } from './queries';
 import type {
   Connection,
@@ -73,9 +75,15 @@ function normalizeOrder(o: any): Order {
   };
 }
 
+/** A Storefront customer with its configured metafields (0.23.0) as a `namespace.key` record. */
+function withMetafields<C extends Customer | null | undefined>(raw: C): C {
+  if (!raw || !getCustomerMetafields().length) return raw;
+  return { ...raw, metafields: normalizeMetafields((raw as { metafields?: unknown }).metafields) };
+}
+
 export const customer: ShopifyCustomerAPI = {
   async signup(input): Promise<{ customer: Customer; accessToken: CustomerAccessToken }> {
-    const created = await request<CreatePayload>(CUSTOMER_CREATE_MUTATION, {
+    const created = await request<CreatePayload>(withCustomerMetafields(CUSTOMER_CREATE_MUTATION), {
       input: {
         email: input.email,
         password: input.password,
@@ -91,7 +99,7 @@ export const customer: ShopifyCustomerAPI = {
 
     // Signup does not auto-login, so mint a token.
     const accessToken = await this.login({ email: input.email, password: input.password });
-    return { customer: created.customerCreate.customer, accessToken };
+    return { customer: withMetafields(created.customerCreate.customer), accessToken };
   },
 
   async login(input): Promise<CustomerAccessToken> {
@@ -126,8 +134,8 @@ export const customer: ShopifyCustomerAPI = {
   },
 
   async profile(accessToken: string): Promise<Customer | null> {
-    const data = await request<CustomerPayload>(CUSTOMER_QUERY, { accessToken });
-    return data.customer;
+    const data = await request<CustomerPayload>(withCustomerMetafields(CUSTOMER_QUERY), { accessToken });
+    return withMetafields(data.customer);
   },
 
   async recoverPassword(email: string): Promise<void> {
@@ -136,7 +144,7 @@ export const customer: ShopifyCustomerAPI = {
   },
 
   async updateProfile(accessToken, patch): Promise<Customer> {
-    const data = await request<UpdatePayload>(CUSTOMER_UPDATE_MUTATION, {
+    const data = await request<UpdatePayload>(withCustomerMetafields(CUSTOMER_UPDATE_MUTATION), {
       accessToken,
       customer: {
         firstName: patch.firstName,
@@ -149,7 +157,7 @@ export const customer: ShopifyCustomerAPI = {
     if (!data.customerUpdate.customer) {
       throw new Error('customerUpdate returned no customer');
     }
-    return data.customerUpdate.customer;
+    return withMetafields(data.customerUpdate.customer);
   },
 
   async orders(accessToken: string, opts?: ListOptions): Promise<Connection<Order>> {

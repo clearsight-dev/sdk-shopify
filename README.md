@@ -330,9 +330,33 @@ await prefs.remember({ Size: chosenSize });                   // on add to cart 
 - **Privacy:** what shoppers type (an engraving) is stored on their Shopify customer record. An app that turns
   this on lists it in its App Privacy answers (data linked to the user).
 
-### Variant metafields (0.23.0)
+### Metafields the app asks for (0.23.0)
 
-`variantMetafields` works like `productMetafields`, for each variant: `productMetafield(variant, 'ns.key')`.
+The SDK names no metafield of its own: which ones a store keeps where is the app's to say, or the SDK that owns
+the feature (live selling's auction metafields), which the app passes in. Nothing is read unless asked for, and
+an app that asks for none sends the same queries as before.
+
+```ts
+shopify.init({ ...credentials,
+  productMetafields:  [{ namespace: 'custom', key: 'badge_text' }], // every product read → product.metafields
+  variantMetafields:  [...],                                        // every product's variants → variant.metafields
+  cartMetafields:     [...],                                        // every cart read → cart.metafields
+  customerMetafields: [...],                                        // every profile read (both sign-ins) → customer.metafields
+});
+
+// Metafields only one product page needs: read on that page's read only.
+const page = useProductPage(handle, { metafields: AUCTION_METAFIELDS.product, variantMetafields: AUCTION_METAFIELDS.variant });
+page.product?.metafieldsRead;   // what this copy's read asked for: listed but absent = the product has none
+```
+
+- **A page's own metafields stay with the page.** The copy kept in the product store (other screens, the device)
+  leaves them out, so a card or the phone's storage never carries them, and `product` is set only by a read that
+  asked for them, each time the page opens (`preview` still paints at once). A rule that depends on one checks
+  `metafieldsRead` / `variantMetafieldsRead`: not listed means not read, so the rule can't tell yet.
+- Each needs a metafield definition with access for the API that reads it (Storefront; the Customer Account API
+  for a Shopify sign-in's customer metafields), or it comes back absent.
+- `productMetafield(productOrVariant, 'ns.key')` reads one, trimmed.
+
 A description's links arrive as `DescriptionSpan.href`.
 
 ### Star ratings on products (0.20.0)
@@ -1256,34 +1280,18 @@ session is restored even when the shop fails to load.
 ```tsx
 const tags = useCustomerTags({ active: useIsFocused() }); // re-read when the screen comes back
 if (!tags.known) …               // unread: don't treat as untagged
-tags.bidding;                    // "allowed" | "blocked" (BIDBLOCKED or APPBLOCKED) | "unknown"
-tags.commentsMuted;              // APPBLOCKED
-tags.hasTag("VIP");              // any other tag: trimmed, case-insensitive
+tags.hasTag("VIP");              // trimmed, case-insensitive
 await tags.refresh({ force: true });
 ```
 
-`BIDBLOCKED` and `APPBLOCKED` are the store-data standard (`BID_BLOCKED_TAG`, `APP_BLOCKED_TAG`,
-`customerRestrictionsOf`).
+What a tag means is the app's, or the SDK that owns the feature's: live selling's blocked bidders
+(`BIDBLOCKED`, `APPBLOCKED`) are its rules, fed from these tags.
 
 - A Shopify sign-in reads the Customer Account API. A **password session** reads the Storefront API's
   `customer(customerAccessToken) { tags }`, which needs the storefront token's
-  **`unauthenticated_read_customer_tags`** scope: without it every read fails, the tags stay unknown and
-  `bidding` stays `unknown`.
+  **`unauthenticated_read_customer_tags`** scope: without it every read fails and the tags stay unknown.
 - While a stored session restores, or signed in before the profile has loaded (offline at launch), nothing is
   `known`: whose tags they are isn't known yet.
-
-### VIP early access: `useEarlyAccess` (0.23.0)
-
-A product with `custom.allowed_segments` (a JSON list of customer tags) and `custom.early_access_end` is locked
-until the end for everyone but those tags, who may buy from `custom.early_access_start`. The metafields are
-read with every product.
-
-```tsx
-const access = useEarlyAccess(productPage.product, { active: isFocused });
-access.locked;      // not yet buyable by this customer: "Unlocks in" until access.unlocksAtMs
-access.isVip;       // has one of the product's tags
-access.gated;       // an early-access product until access.gatedUntilMs (the badge)
-```
 
 ### Store credit
 
