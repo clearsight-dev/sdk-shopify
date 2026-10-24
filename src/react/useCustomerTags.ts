@@ -9,8 +9,10 @@
  * if (tags.bidding !== "allowed") … // BIDBLOCKED / APPBLOCKED, or not read yet
  * ```
  *
- * A Shopify sign-in reads the Customer Account API, a password session the Storefront API. Signed out:
- * no tags, `known`, nothing sent.
+ * A Shopify sign-in reads the Customer Account API, a password session the Storefront API (which needs
+ * the storefront token's `unauthenticated_read_customer_tags` scope: without it every read fails and the
+ * tags stay unknown). Signed out: no tags, `known`, nothing sent. While a stored session restores, or
+ * signed in before the profile has loaded (offline at launch): not `known`, so `bidding` is `unknown`.
  */
 import { useCallback, useEffect, useMemo, useSyncExternalStore } from 'react';
 import { request as storefrontRequest } from '../client';
@@ -98,10 +100,16 @@ export function useCustomerTags({ active = true, everyMs }: UseCustomerTagsOptio
 
   const state = useSyncExternalStore(store.subscribe, store.getState, store.getState);
   const refresh = useCallback((options?: { force?: boolean }) => store.refresh(options), [store]);
+  // Signed in with the profile not loaded yet (offline at launch), or a stored session still restoring:
+  // whose tags isn't known, so neither are the tags. Never "no tags", which would let a blocked customer act.
+  const whoUnknown = customer.loggedIn ? !customerId : customer.restoring;
   return useMemo(() => {
     // Never another customer's tags, while the account changes hands.
-    const shown: CustomerTagsState =
-      state.customerId === customerId ? state : { customerId, tags: customerId ? null : [], known: !customerId };
+    const shown: CustomerTagsState = whoUnknown
+      ? { customerId: null, tags: null, known: false }
+      : state.customerId === customerId
+        ? state
+        : { customerId, tags: customerId ? null : [], known: !customerId };
     return { ...shown, ...customerRestrictionsOf(shown), hasTag: (tag: string) => hasCustomerTag(shown.tags, tag), refresh };
-  }, [state, customerId, refresh]);
+  }, [state, customerId, whoUnknown, refresh]);
 }

@@ -20,6 +20,10 @@ let authorize = null;
 let accountTags = ['vip'];
 let tagsAnswerNoCustomer = false;
 const tagReads = [];
+let holdProfile = null;
+// The password session's Storefront read; null is the token missing `unauthenticated_read_customer_tags`.
+let storefrontTags = ['BIDBLOCKED'];
+const storefrontTagReads = [];
 global.fetch = async (url, init = {}) => {
   url = String(url);
   if (url.endsWith('/oauth/token')) {
@@ -32,6 +36,7 @@ global.fetch = async (url, init = {}) => {
       tagReads.push(init.headers.Authorization);
       return response(200, { data: { customer: tagsAnswerNoCustomer ? null : { tags: accountTags } } });
     }
+    if (holdProfile) await holdProfile;
     return response(200, { data: { customer: { id: 'gid://shopify/Customer/7', firstName: 'Amber', lastName: 'Marie',
       emailAddress: { emailAddress: 'amber@example.com', marketingState: 'NOT_SUBSCRIBED' }, phoneNumber: null, defaultAddress: null } } });
   }
@@ -43,6 +48,17 @@ global.fetch = async (url, init = {}) => {
   }
   if (name === 'CartCreate') return response(200, { data: { cartCreate: { cart, userErrors: [] } } });
   if (name === 'CartGet' || query.includes('cart(id:')) return response(200, { data: { cart } });
+  if (name === 'CustomerAccessTokenCreate') {
+    return response(200, { data: { customerAccessTokenCreate: { customerAccessToken: { accessToken: 'tok_pw', expiresAt: '2030-01-01T00:00:00Z' }, customerUserErrors: [] } } });
+  }
+  if (name === 'Customer') {
+    return response(200, { data: { customer: { id: 'gid://shopify/Customer/9', email: 'pw@example.com', firstName: 'Pass', lastName: 'Word', phone: null, defaultAddress: null, acceptsMarketing: false } } });
+  }
+  if (name === 'CustomerTagsStorefront') {
+    storefrontTagReads.push(JSON.parse(init.body).variables);
+    if (!storefrontTags) return response(200, { errors: [{ message: 'Access denied for tags field. Required access: `unauthenticated_read_customer_tags` access scope.' }] });
+    return response(200, { data: { customer: { tags: storefrontTags } } });
+  }
   return response(200, { data: {} });
 };
 
@@ -149,5 +165,62 @@ await t.check('sign-out clears the tags', () => {
   assert.equal(screenA.known, true);
 });
 
+// Signed in before the profile has loaded (offline at launch): whose tags these are isn't known yet.
+tagsAnswerNoCustomer = false;
+let releaseProfile = null;
+holdProfile = new Promise((r) => { releaseProfile = r; });
+await runAct(async () => { void api.customer.signIn(); await new Promise((r) => setTimeout(r, 30)); });
+await t.check('signed in with the profile still loading: not known and bidding unknown, never "no tags"', () => {
+  assert.equal(api.customer.loggedIn, true);
+  assert.equal(api.customer.customer, null);
+  assert.equal(screenA.known, false);
+  assert.equal(screenA.tags, null);
+  assert.equal(screenA.bidding, 'unknown');
+  assert.equal(screenA.hasTag('vip'), false);
+});
+holdProfile = null;
+releaseProfile();
+await settle();
+await t.check('the profile lands: the tags are read and known', () => {
+  assert.equal(screenA.customerId, 'gid://shopify/Customer/7');
+  assert.equal(screenA.known, true);
+  assert.equal(screenA.hasTag('vip'), true);
+});
+await runAct(async () => { await api.customer.logout(); });
+await settle();
 await runAct(async () => root.unmount());
+
+// A password session reads the Storefront API with the customer's token.
+const root2 = createRoot(document.getElementById('root'));
+async function renderPassword() {
+  await runAct(async () => {
+    root2.render(React.createElement(
+      ShopifyProvider,
+      { config: { storeDomain: 'shop.myshopify.com', storefrontAccessToken: 't', apiVersion: '2026-07' }, auth: { method: 'password', secureStorage: keychain() } },
+      React.createElement(ScreenA),
+    ));
+  });
+  await settle();
+}
+await renderPassword();
+await runAct(async () => { await api.customer.login('pw@example.com', 'secret'); });
+await settle();
+await t.check('a password session reads the tags from the Storefront API with its token: BIDBLOCKED blocks bidding', () => {
+  assert.equal(api.customer.sessionKind, 'password');
+  assert.deepEqual(storefrontTagReads.at(-1), { customerAccessToken: 'tok_pw' });
+  assert.deepEqual(screenA.tags, ['BIDBLOCKED']);
+  assert.equal(screenA.bidding, 'blocked');
+  assert.equal(screenA.commentsMuted, false);
+});
+await runAct(async () => { await api.customer.logout(); });
+await settle();
+
+storefrontTags = null;
+await runAct(async () => { await api.customer.login('pw@example.com', 'secret'); });
+await settle();
+await t.check('without the tags scope every read fails: the tags stay unknown, so bidding waits', () => {
+  assert.equal(screenA.known, false);
+  assert.equal(screenA.bidding, 'unknown');
+});
+await runAct(async () => root2.unmount());
 t.done();

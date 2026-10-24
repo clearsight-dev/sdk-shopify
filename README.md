@@ -110,6 +110,16 @@ await shopify.wishlist.toggle(product);
 shopify.wishlist.onChange(items => …);  // subscribe
 ```
 
+**A long wishlist: read it only where it shows (0.23.0).** `hydrateOnInit: false` (provider:
+`wishlistHydrateOnInit={false}`) skips the launch's re-read: the stored products show, and
+`useFavoritesPage().viewed()` reads them all on the page's first view of each launch
+(`shopify.wishlist.needsFirstRead()`). `batchSize` (provider: `wishlistBatchSize`, default 100) is the products
+per re-read request.
+
+**Removing without a toast (0.23.0).** `useWishlist().remove(id, { silent: true })`, for a removal the shopper
+didn't ask for (a product an order just bought): the `wishlist:remove` event still reaches `onEvent` for
+analytics, with no `message`, so `useAlertSettings` shows nothing.
+
 ### Waitlist — sizes a shopper waits on, offline like the wishlist
 
 Keyed by **variant** (you wait on a size or colour; pre-order is per variant), newest first, stored with the same rules as the wishlist (one shared module, `storedList`): each entry carries the variant as last fetched (`variants.byIds`: stock, price, pre-order plan, and its product's title, handle, image and `hasVideo`), so the list draws offline, and a refresh that fails keeps it. A variant the store no longer has is kept as `variant: null` for the screen to leave out, in case it comes back. Joining a variant already on the list moves it to the front, dated now.
@@ -272,9 +282,28 @@ Questions as JSON in a metafield (the format is in `src/customisation.ts`), name
 shopify.init({ ...credentials, customisation: { product: 'custom.customisations_config', variant: 'custom.customisations_config_variant' },
   productMetafields: [{ namespace: 'custom', key: 'customisations_config' }],
   variantMetafields: [{ namespace: 'custom', key: 'customisations_config_variant' }] });
-const form = useProductCustomisation({ productHandle, variantId, cartLineId }); // questions, answers, setAnswer, complete, save()
-const { lineIds, known } = useCartCustomisation();                              // hold checkout while lineIds isn't empty
+const form = useProductCustomisation({ productHandle, variantId, cartLineId }); // questions, answers, setAnswer, complete, loading, save()
+const { unansweredLineIds, known } = useCartCustomisation();                    // hold checkout until known and unansweredLineIds is empty
 ```
+
+- **Checkout gates.** A line needs answers while it has none at all, or a question that always shows has no
+  attribute on it (attributes starting with `_` are the app's own, never answers). `known` is false until every
+  line's product has been read: after a failed read, and for a line just added, checkout waits.
+- **Items paid on a cart made later** (an auction's wins): `save()` with no `cartLineId` keeps the answers on
+  this device; `useSavedCustomisations()` reads them back and `useItemsCustomisation(items)` gives
+  `customisableIds`, `unansweredIds` (every question showing must be answered), `attributesById` for the cart,
+  and `known`. Pass each item's `product` as `undefined` while it is being read (nothing is `known` until it
+  is) and `null` when the store has no such product (skipped).
+- **`save()`** returns false when `cartLineId` names a line the cart doesn't have (nothing is written), when the
+  line can't be updated, or, with no line, when this device can't be written. Only the questions showing are
+  saved.
+- **On this device:** under `customisation.storageKey` (default `tile:shopify:customisation:v1`; an app moving
+  from an earlier app passes that app's key). The device keeps **one shopper's answers at a time**, marked with
+  whose they are: another shopper's are never shown, put on a cart or saved to an account, and the first read
+  for someone else clears them. While a stored session restores, or signed in before the profile loads, the
+  device's copy is neither read nor written.
+- **Prefill order:** the cart line's answers, then the account's for the variant, then this device's, then the
+  account's last choices. Whatever the shopper typed is kept when a read lands later.
 
 Kept on the customer's account too, with a Shopify sign-in: name a JSON customer metafield as
 `customisation.accountMetafield` (`'apptile.customizations'`, say). The page prefills from it and `save()` writes
@@ -282,9 +311,24 @@ to it; a product page opens on the shopper's remembered options:
 
 ```ts
 const prefs = useOptionPreferences();
+if (!prefs.loaded) …                                          // a Shopify sign-in's profile or account still loading
 const size = prefs.preferredValue('Size', sizeOption.values); // the remembered size, if this product offers it
 await prefs.remember({ Size: chosenSize });                   // on add to cart or bid, not on every browse
 ```
+
+- **Shopify setup:** the metafield is a JSON customer metafield that the Customer Account API can read and
+  write (in its definition, Customer accounts access: Read and write). The website shares it: a variant's
+  answers sit under its id, the last choices at the top.
+- **Only choices become last choices.** Free text (an engraving) stays under its variant and never prefills
+  another product. What the website keeps under a variant is kept on save; a hidden question's old answer is
+  dropped.
+- **Writes** go one at a time, each from a fresh read; a value that can't be read is never overwritten, and a
+  write never lands in another customer's account. A failed account write is logged, not returned: `save()`
+  reports the line and the device.
+- `loaded` is true after a failed read too (nothing remembered), and the read is tried again when the app
+  returns to the foreground.
+- **Privacy:** what shoppers type (an engraving) is stored on their Shopify customer record. An app that turns
+  this on lists it in its App Privacy answers (data linked to the user).
 
 ### Variant metafields (0.23.0)
 
@@ -828,7 +872,7 @@ an `on…` option. Each page's `viewed()` keeps one identity, for `useFocusEffec
 | Collection | `useCollectionPage({ handle, initialSortId, onView })` → the feed, `sortId`, `setSortId`, `removeFilter` | |
 | Search | `useSearchPage({ query, recommendedCollection, queryTemplate, onSearched })` | |
 | Waitlist | `useWaitlistPage({ isBlocked })` → `items`, filters, counts, `addToCart`, `justAdded`, `remove`, `viewed` | |
-| Favourites | `useFavoritesPage()` → `status`, `products`, `retry`, `viewed` | |
+| Favourites | `useFavoritesPage({ showGone })` → `status`, `products`, `goneIds`, `retry`, `viewed` (with `showGone` and the provider's `wishlistKeepDeleted`, products the store no longer has stay as cards from what was saved, in `goneIds`) | |
 | Sign in, from anywhere | `useSignIn({ onOpenSignInPage })` → `start`, `signingIn`, `failed` | the sign-in page |
 | Sign-in page | `useSignInPage({ method, onDone })` → `password`, `shopify` | close the page |
 | Products per row | `useGridColumns(fallback)` → `columns`, `setColumns` | |
@@ -1220,6 +1264,13 @@ await tags.refresh({ force: true });
 
 `BIDBLOCKED` and `APPBLOCKED` are the store-data standard (`BID_BLOCKED_TAG`, `APP_BLOCKED_TAG`,
 `customerRestrictionsOf`).
+
+- A Shopify sign-in reads the Customer Account API. A **password session** reads the Storefront API's
+  `customer(customerAccessToken) { tags }`, which needs the storefront token's
+  **`unauthenticated_read_customer_tags`** scope: without it every read fails, the tags stay unknown and
+  `bidding` stays `unknown`.
+- While a stored session restores, or signed in before the profile has loaded (offline at launch), nothing is
+  `known`: whose tags they are isn't known yet.
 
 ### VIP early access: `useEarlyAccess` (0.23.0)
 

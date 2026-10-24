@@ -70,20 +70,20 @@ const idsOf = (list: MetafieldIdentifier[]) => list.map(i => `${i.namespace}.${i
 let identifiers: MetafieldIdentifier[] = checkedList([...STANDARD_PRODUCT_METAFIELDS], 'product');
 let variantIdentifiers: MetafieldIdentifier[] = checkedList([...STANDARD_VARIANT_METAFIELDS], 'variant');
 let signature = '';
-const resign = () => {
+const updateSignature = () => {
   signature = variantIdentifiers.length ? `${idsOf(identifiers)}#v:${idsOf(variantIdentifiers)}` : idsOf(identifiers);
 };
 
 /** The configured product metafields, after the standard ones. */
 export function setProductMetafields(list: MetafieldIdentifier[] | undefined | null): void {
   identifiers = checkedList([...STANDARD_PRODUCT_METAFIELDS, ...(list ?? [])], 'product');
-  resign();
+  updateSignature();
 }
 
 /** Variant metafields (0.23.0): as `productMetafields`, read on every product read's variants. */
 export function setVariantMetafields(list: MetafieldIdentifier[] | undefined | null): void {
   variantIdentifiers = checkedList([...STANDARD_VARIANT_METAFIELDS, ...(list ?? [])], 'variant');
-  resign();
+  updateSignature();
 }
 
 export function getVariantMetafields(): MetafieldIdentifier[] {
@@ -157,4 +157,4 @@ export function memoizeQuery(build: () => string): () => string {
   };
 }
 
-resign();
+updateSignature();

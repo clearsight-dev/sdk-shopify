@@ -197,6 +197,7 @@ The hooks' `refresh()` and `retry()` already read fresh.
 
 - Anything older than 7 days is dropped. Keys carry a schema version plus store, market, API version and metafields, so a mismatched entry is never shown.
 - Catalogue data only: never cart, customer, orders or wallet.
+- The one exception is what a shopper types for customisation (0.23.0, its own key, `customisation.storageKey`): it is marked with whose it is, and another shopper's is never shown, put on a cart or saved to an account (README, "Product customisation"). Anything else a shopper owns that a later change keeps on the device follows the same rule, and is neither read nor written while whose it is isn't known (a session restoring, a profile not loaded yet).
 - **Storage:** MMKV 3 on iOS/Android (synchronous, microseconds, readable inside a render, which is what makes the first-frame product page possible). `localStorage` on web and in the editor preview. Memory if MMKV isn't in the binary.
 - Nothing is loaded in bulk at launch; entries are read only when a screen asks.
 - `forgetProduct(id)` drops one (e.g. on `cart:outOfStock`). `clearProductStore()` drops all.

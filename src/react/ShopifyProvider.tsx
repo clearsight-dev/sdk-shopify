@@ -209,7 +209,10 @@ interface WishlistState {
   /** Alias for `has`. */
   isWishlisted: (productId: string) => boolean;
   add:          (product: Product | string) => Promise<void>;
-  /** `silent` (0.23.0): no `wishlist:remove` event, so no toast (e.g. what an order just bought). */
+  /**
+   * `silent` (0.23.0): no toast (e.g. what an order just bought). The `wishlist:remove` event still goes
+   * out, for analytics, with no `message`.
+   */
   remove:       (productId: string, options?: { silent?: boolean }) => Promise<void>;
   toggle:       (product: Product | string) => Promise<boolean>;
   clear:        () => Promise<void>;
@@ -522,6 +525,8 @@ interface EventDetails {
   source?: string;
   /** Values for the message's `{name}` placeholders (`fillMessage`). */
   fill?: Readonly<Record<string, string>>;
+  /** Sent without its message, so nothing shows a toast; `onEvent` still hears it (0.23.0). */
+  silent?: boolean;
 }
 
 /**
@@ -789,7 +794,7 @@ export function ShopifyProvider({
   const emit = useCallback((type: ShopifyEventType, details?: EventDetails) => {
     const listener = onEventRef.current;
     if (!listener && eventListeners.current.size === 0) return;
-    const key = EVENT_MESSAGE[type];
+    const key = details?.silent ? undefined : EVENT_MESSAGE[type];
     // The session has already taken the new customer when it announces the sign-in.
     const signedIn = type === "auth:loginSuccess" ? sessionRef.current?.getState() : undefined;
     const max = maxLineItems();
@@ -1829,7 +1834,7 @@ export function ShopifyProvider({
   // fired via `toggle` — a dedicated remove button showed nothing.
   const wlRemove  = useCallback(async (id: string, options?: { silent?: boolean }) => {
     const removed = await shopify.wishlist.remove(id);
-    if (removed && !options?.silent) emit("wishlist:remove", { productId: id });
+    if (removed) emit("wishlist:remove", { productId: id, silent: options?.silent });
   }, [emit]);
   const wlToggle  = useCallback(async (p: Product | string) => {
     const nowSaved = await (shopify.wishlist.toggle as any)(p);

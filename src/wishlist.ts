@@ -32,6 +32,8 @@ interface WishlistState {
   items: WishlistItem[];
   index: Map<string, number>;    // productId → items[] index
   batchSize: number;
+  /** Lazy (`hydrateOnInit: false`): the saved products haven't been read from the store since `init`. */
+  unreadSinceInit: boolean;
   listeners: Set<WishlistChangeListener>;
 }
 
@@ -40,6 +42,7 @@ const state: WishlistState = {
   items: [],
   index: new Map(),
   batchSize: DEFAULT_BATCH_SIZE,
+  unreadSinceInit: false,
   listeners: new Set(),
 };
 
@@ -169,6 +172,7 @@ async function init(opts?: WishlistInitOptions): Promise<WishlistItem[]> {
     'base',
   );
   state.ready = true;
+  state.unreadSinceInit = opts?.hydrateOnInit === false && state.items.length > 0;
 
   if (opts?.hydrateOnInit !== false && state.items.length > 0) {
     // Fire-and-forget: cached items already render, and a caller that needs the
@@ -267,10 +271,15 @@ async function refresh(opts?: WishlistRefreshOptions): Promise<WishlistItem[]> {
     nextItems.push({ ...item, basic: nextBasic, product });
   }
   state.items = nextItems;
+  state.unreadSinceInit = false;
   rebuildIndex();
   await saveToStorage();
   notify();
   return state.items.slice();
+}
+
+function needsFirstRead(): boolean {
+  return state.unreadSinceInit;
 }
 
 function onChange(listener: WishlistChangeListener): () => void {
@@ -289,6 +298,7 @@ export const wishlist: ShopifyWishlistAPI = {
   count,
   clear,
   refresh,
+  needsFirstRead,
   onChange,
 };
 

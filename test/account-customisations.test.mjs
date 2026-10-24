@@ -37,6 +37,9 @@ const cart = { id: 'gid://shopify/Cart/1', checkoutUrl: 'https://shop/checkout',
 // What the customer's metafield holds: another variant's answers, and the last choices (a size, a charm).
 let accountValue = JSON.stringify({ 'gid://shopify/ProductVariant/55': { 'Wrist size': 'Small' }, Size: '6"', 'Wrist size': 'Medium', Charms: ['Star'] });
 let accountReadFails = false;
+let accountOwner = 'gid://shopify/Customer/7';
+let holdRead = null;
+let holdProfile = null;
 const accountReads = [];
 const accountWrites = [];
 let holdWrite = null;
@@ -51,8 +54,9 @@ global.fetch = async (url, init = {}) => {
     const name = /(?:query|mutation) (\w+)/.exec(query)?.[1];
     if (name === 'CustomerCustomisations') {
       accountReads.push(variables);
-      if (accountReadFails) return response(200, { data: { customer: { id: 'gid://shopify/Customer/7', metafield: { value: 'not json' } } } });
-      return response(200, { data: { customer: { id: 'gid://shopify/Customer/7', metafield: { value: accountValue } } } });
+      if (holdRead) await holdRead;
+      if (accountReadFails) return response(200, { data: { customer: { id: accountOwner, metafield: { value: 'not json' } } } });
+      return response(200, { data: { customer: { id: accountOwner, metafield: { value: accountValue } } } });
     }
     if (name === 'SetCustomerCustomisations') {
       if (holdWrite) await holdWrite;
@@ -62,6 +66,7 @@ global.fetch = async (url, init = {}) => {
       return response(200, { data: { metafieldsSet: { userErrors: [] } } });
     }
     if (name === 'CustomerTags') return response(200, { data: { customer: { tags: [] } } });
+    if (holdProfile) await holdProfile;
     return response(200, { data: { customer: { id: 'gid://shopify/Customer/7', firstName: 'Amber', lastName: 'Marie',
       emailAddress: { emailAddress: 'amber@example.com', marketingState: 'NOT_SUBSCRIBED' }, phoneNumber: null, defaultAddress: null } } });
   }
@@ -81,7 +86,7 @@ const React = (await import('react')).default;
 const { createRoot } = await import('react-dom/client');
 const TestUtils = await import('react-dom/test-utils');
 const runAct = React.act ?? TestUtils.act ?? TestUtils.default.act;
-const { ShopifyProvider, useShopify, useProductCustomisation, useOptionPreferences } = await import('../dist/index.js');
+const { ShopifyProvider, useShopify, useProductCustomisation, useOptionPreferences, CUSTOMISATION_STORAGE_KEY } = await import('../dist/index.js');
 
 const t = harness('customisations on the account: useProductCustomisation and useOptionPreferences in ShopifyProvider');
 let api = null;
@@ -109,11 +114,11 @@ const config = {
   customisation: { product: 'custom.customisations_config', accountMetafield: 'apptile.customizations' },
 };
 const auth = { method: 'shopify', secureStorage: keychain(), openAuthSession, random: counterRandom(), customerAccount: { shopId: SHOP_ID, clientId: 'client-1' } };
-const root = createRoot(document.getElementById('root'));
+let root = createRoot(document.getElementById('root'));
 const settle = () => runAct(async () => { await new Promise((r) => setTimeout(r, 30)); });
-async function render(withPage) {
+async function render(withPage, on = storage) {
   await runAct(async () => {
-    root.render(React.createElement(ShopifyProvider, { config, auth, storage }, React.createElement(Account), withPage ? React.createElement(Page) : null));
+    root.render(React.createElement(ShopifyProvider, { config, auth, storage: on }, React.createElement(Account), withPage ? React.createElement(Page) : null));
   });
   await settle();
 }
@@ -160,8 +165,9 @@ await t.check('Save writes the whole value back: the variant’s answers under i
   assert.deepEqual(JSON.parse(write.value), {
     'gid://shopify/ProductVariant/55': { 'Wrist size': 'Small' },
     'gid://shopify/ProductVariant/77': { 'Wrist size': 'Small', Engraving: 'AM', Charms: ['Heart', 'Star'] },
-    Size: '6"', 'Wrist size': 'Small', Engraving: 'AM', Charms: ['Heart', 'Star'],
+    Size: '6"', 'Wrist size': 'Small', Charms: ['Heart', 'Star'],
   });
+  assert.equal('Engraving' in JSON.parse(write.value), false, 'free text stays with its variant, never a last choice');
   assert.deepEqual(options.preferences.Charms, ['Heart', 'Star'], 'every reader hears the save');
 });
 
@@ -198,6 +204,81 @@ await t.check('a value that can’t be read is left alone: the write is dropped,
   assert.equal(accountWrites.length, writesBefore);
 });
 accountReadFails = false;
+
+accountOwner = 'gid://shopify/Customer/8';
+const writesBeforeSwap = accountWrites.length;
+let wrongOwner = null;
+await runAct(async () => { wrongOwner = await options.remember({ Size: '9"' }); });
+await t.check('a write whose read answers for another customer than the one it was for is dropped', () => {
+  assert.equal(wrongOwner, false);
+  assert.equal(accountWrites.length, writesBeforeSwap);
+});
+accountOwner = 'gid://shopify/Customer/7';
+await runAct(async () => root.unmount());
+
+// ── Whose answers: Alice (customer 99) used this phone before; customer 7's session restores ──
+const phone = {
+  [CUSTOMISATION_STORAGE_KEY]: JSON.stringify({ _customer: '99', 77: { answers: { q2: 'FOR ALICE' }, attributes: [{ key: 'Engraving', value: 'FOR ALICE' }] } }),
+};
+const phoneStorage = { getItem: async (k) => phone[k] ?? null, setItem: async (k, v) => { phone[k] = String(v); }, removeItem: async (k) => { delete phone[k]; } };
+let releaseRead = null;
+holdRead = new Promise((r) => { releaseRead = r; });
+root = createRoot(document.getElementById('root'));
+await render(true, phoneStorage);
+await t.check('another customer’s answers on the phone are never shown, and are cleared once read', () => {
+  assert.equal(api.customer.customer?.id, 'gid://shopify/Customer/7');
+  assert.equal(page.answers.q2, undefined);
+  assert.equal(page.loading, true, 'the account’s answers are still on their way');
+  assert.equal(phone[CUSTOMISATION_STORAGE_KEY].includes('FOR ALICE'), false);
+  assert.equal(JSON.parse(phone[CUSTOMISATION_STORAGE_KEY])._customer, '7');
+});
+await runAct(async () => { page.setAnswer('q2', 'FOR BOB'); });
+holdRead = null;
+releaseRead();
+await settle();
+await t.check('the account’s answers land under what the shopper typed meanwhile: typing is never lost', () => {
+  assert.deepEqual(page.answers, { q1: 's', q2: 'FOR BOB', q3: ['h', 't'] });
+  assert.equal(page.loading, false);
+});
+await runAct(async () => { ok = await page.save(); });
+await settle();
+await t.check('Save: this customer’s answers on the account and the phone, nothing of the other customer’s', () => {
+  assert.equal(ok, true);
+  assert.equal(accountValue.includes('FOR ALICE'), false);
+  assert.equal(JSON.parse(accountValue)['gid://shopify/ProductVariant/77'].Engraving, 'FOR BOB');
+  const onPhone = JSON.parse(phone[CUSTOMISATION_STORAGE_KEY]);
+  assert.equal(onPhone._customer, '7');
+  assert.equal(onPhone['77'].answers.q2, 'FOR BOB');
+});
+
+// ── A sign-in whose profile is still loading, then a read that fails ──
+await runAct(async () => { await api.customer.logout(); });
+await settle();
+let releaseProfile = null;
+holdProfile = new Promise((r) => { releaseProfile = r; });
+accountReadFails = true;
+await runAct(async () => { void api.customer.signIn(); await new Promise((r) => setTimeout(r, 30)); });
+await t.check('signed in, profile still loading: the preferences aren’t loaded yet (never "loaded, nothing saved")', () => {
+  assert.equal(api.customer.loggedIn, true);
+  assert.equal(api.customer.customer, null);
+  assert.equal(options.loaded, false);
+});
+holdProfile = null;
+releaseProfile();
+await settle();
+await t.check('the account’s read fails: loaded, with nothing remembered, so a page doesn’t wait for ever', () => {
+  assert.equal(options.loaded, true);
+  assert.deepEqual(options.preferences, {});
+});
+accountReadFails = false;
+const readsBefore = accountReads.length;
+Object.defineProperty(document, 'visibilityState', { value: 'visible', configurable: true });
+await runAct(async () => { document.dispatchEvent(new dom.window.Event('visibilitychange')); });
+await settle();
+await t.check('back in the foreground, a failed read is tried again', () => {
+  assert.equal(accountReads.length, readsBefore + 1);
+  assert.equal(options.preferences['Wrist size'], 'Small');
+});
 
 await runAct(async () => root.unmount());
 t.done();

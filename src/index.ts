@@ -112,6 +112,7 @@ export {
   accountPreferences,
   customisationLabels,
   withSavedCustomisation,
+  lastChoicesAsAnswers,
   withPreferences,
   type AccountCustomisations,
   type SavedLabels,

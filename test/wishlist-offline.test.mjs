@@ -289,4 +289,42 @@ await check('showGone: it stays as a card from what was saved, not for sale, in 
 });
 await runAct(async () => favRoot.unmount());
 
+console.log('favourites page, lazy: the next launch');
+// The same phone opened again (a new launch: nothing cached): every saved entry already carries its stored product.
+clearRequestCache();
+net.wishlistReads = [];
+const relaunch = createRoot(document.getElementById('root'));
+await runAct(async () => {
+  relaunch.render(React.createElement(sdk.ShopifyProvider, { config: CONFIG, storage: withGone, wishlistStorageKey: APPTILE_KEY, wishlistKeepDeleted: true, wishlistHydrateOnInit: false },
+    React.createElement(Favourites)));
+});
+await runAct(async () => { await settle(); await settle(); });
+await check('lazy: the launch reads nothing; the stored products show at once', () => {
+  assert.deepEqual(net.wishlistReads, []);
+  assert.equal(page.status, 'ready');
+});
+await runAct(async () => { page.viewed(); await settle(); await settle(); });
+await check('the first view of the launch re-reads the stored products (prices, stock, gone), once', () => {
+  assert.deepEqual(net.wishlistReads, [2]);
+});
+await runAct(async () => { page.viewed(); await settle(); });
+await check('later views of the same launch read nothing more', () => {
+  assert.deepEqual(net.wishlistReads, [2]);
+});
+await runAct(async () => relaunch.unmount());
+
+clearRequestCache();
+net.wishlistReads = [];
+const eager = createRoot(document.getElementById('root'));
+await runAct(async () => {
+  eager.render(React.createElement(sdk.ShopifyProvider, { config: CONFIG, storage: withGone, wishlistStorageKey: APPTILE_KEY, wishlistKeepDeleted: true },
+    React.createElement(Favourites)));
+});
+await runAct(async () => { await settle(); await settle(); });
+await runAct(async () => { page.viewed(); await settle(); });
+await check('default (read at launch): a view adds no read of its own, as before', () => {
+  assert.deepEqual(net.wishlistReads, [2]);
+});
+await runAct(async () => eager.unmount());
+
 console.log(`\n${pass} checks passed`);

@@ -1,4 +1,5 @@
 import { useCallback, useMemo, useRef, useState } from "react";
+import { shopify } from "../shopify";
 import type { Product, WishlistItem } from "../types";
 import { useShopify, useWishlist } from "./ShopifyProvider";
 
@@ -20,8 +21,9 @@ export interface FavoritesPage {
   retry: () => void;
   /**
    * Call each time the page comes into view: fills in any saved product still missing (offline at
-   * launch, or saved by id). Never on every change, so a failure waits for the next visit or a retry
-   * rather than looping. Keeps one identity.
+   * launch, or saved by id), and with the provider's `wishlistHydrateOnInit: false` reads every saved
+   * product on the first view of each launch (prices, stock, products gone). Never on every change, so a
+   * failure waits for the next visit or a retry rather than looping. Keeps one identity.
    */
   viewed: () => void;
 }
@@ -88,7 +90,7 @@ export function useFavoritesPage(options: UseFavoritesPageOptions = {}): Favorit
   latest.current = { ready, missing, filling };
   const viewed = useCallback(() => {
     const now = latest.current;
-    if (now.ready && now.missing && !now.filling) retry();
+    if (now.ready && !now.filling && (now.missing || shopify.wishlist.needsFirstRead())) retry();
   }, [retry]);
 
   let status: FavoritesPage["status"];

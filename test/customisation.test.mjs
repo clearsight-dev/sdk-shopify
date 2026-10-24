@@ -6,6 +6,7 @@ const {
   parseCustomisation, customisationQuestions, visibleQuestions, customisationComplete,
   customisationAttributes, answersFromAttributes, lineNeedsCustomisation,
   parseAccountCustomisations, accountAnswersFor, accountPreferences, customisationLabels, withSavedCustomisation, withPreferences,
+  lastChoicesAsAnswers,
 } = await import('../dist/index.js');
 
 const config = JSON.stringify({ questions: [
@@ -36,6 +37,15 @@ check('the variant’s questions win over the product’s; config ids name the m
   assert.deepEqual(customisationQuestions(product, '2', null), []);
 });
 
+check('a variant’s explicit empty list asks nothing; a variant with no list (or a typo) falls back to the product’s', () => {
+  const ids = { product: 'custom.config', variant: 'custom.vconfig' };
+  const product = (vconfig) => ({ metafields: { 'custom.config': config }, variants: [{ id: '1', metafields: vconfig === undefined ? {} : { 'custom.vconfig': vconfig } }] });
+  assert.deepEqual(customisationQuestions(product(JSON.stringify({ questions: [] })), '1', ids), []);
+  assert.equal(customisationQuestions(product(undefined), '1', ids).length, 5);
+  assert.equal(customisationQuestions(product('{typo'), '1', ids).length, 5);
+  assert.equal(customisationQuestions(product(JSON.stringify({ other: 1 })), '1', ids).length, 5);
+});
+
 check('a conditional question shows only while its condition holds; complete means every one showing is answered', () => {
   assert.deepEqual(visibleQuestions(questions, {}).map((q) => q.id), ['q1', 'q2', 'q4', 'q5']);
   assert.deepEqual(visibleQuestions(questions, { q2: 'y' }).map((q) => q.id), ['q1', 'q2', 'q3', 'q4', 'q5']);
@@ -63,6 +73,17 @@ check('a cart line needs answers while a question that always shows has no attri
   assert.equal(lineNeedsCustomisation(questions, [{ key: '_wrist_size', value: '6' }]), true);
   assert.equal(lineNeedsCustomisation(questions, [{ key: 'wrist_size', value: '6' }, { key: 'engraving', value: 'No' }, { key: 'charms', value: 'Heart' }]), false);
   assert.equal(lineNeedsCustomisation([], []), false);
+});
+
+check('no answers at all is never done, even when every question is conditional; keyless questions need nothing', () => {
+  const conditionalOnly = [
+    { id: 'a', key: 'engraving', type: 'choice', condition: [{ question_id: 'b', answer: ['y'] }], options: [{ id: 'y', label: 'Yes' }] },
+    { id: 'b', type: 'choice', options: [{ id: 'y', label: 'Yes' }] },
+  ];
+  assert.equal(lineNeedsCustomisation(conditionalOnly, []), true);
+  assert.equal(lineNeedsCustomisation(conditionalOnly, [{ key: '_lotNumber', value: '12' }]), true, 'an app’s own attribute isn’t an answer');
+  assert.equal(lineNeedsCustomisation(conditionalOnly, [{ key: 'engraving', value: 'Yes' }]), false);
+  assert.equal(lineNeedsCustomisation([{ id: 'n', type: 'text_input' }], []), false, 'nothing is ever saved for a question with no key');
 });
 
 // The customer's account copy (0.23.0): one JSON object, a variant's answers under its id, the last choices at the top.
@@ -100,13 +121,25 @@ check('answers as the account keeps them: labels by key, a list for multi_select
   });
 });
 
-check('a save: the variant’s answers under its id and as the last choices; the rest kept', () => {
-  const next = withSavedCustomisation(blob, '88', { wrist_size: '7', charms: [] });
-  assert.deepEqual(next['gid://shopify/ProductVariant/88'], { wrist_size: '7', charms: [] });
-  assert.equal(next.wrist_size, '7');
+check('a save: the variant’s answers under its id, its choices as the last choices; free text stays with the variant; the rest kept', () => {
+  const next = withSavedCustomisation(blob, '88', questions, { q1: '7', q2: 'y', q3: 'AM', q4: [] });
+  assert.deepEqual(next['gid://shopify/ProductVariant/88'], { wrist_size: '7', engraving: 'Yes', engraving_text: 'AM' });
+  assert.equal(next.engraving, 'Yes');
+  assert.equal('wrist_size' in next, false, 'free text (a size typed in) isn’t a last choice');
+  assert.equal('engraving_text' in next, false, 'an engraving never prefills another product');
   assert.deepEqual(next.charms, ['Star'], 'an empty answer doesn’t clear the last choice');
   assert.deepEqual(next['gid://shopify/ProductVariant/77'], blob['gid://shopify/ProductVariant/77']);
   assert.deepEqual(withPreferences(blob, { Size: '7"', Color: '' }), { ...blob, Size: '7"' });
+});
+
+check('a save keeps what the website keeps under the variant, and drops a hidden question’s old answer', () => {
+  const before = { 'gid://shopify/ProductVariant/77': { engraving_text: 'OLD', gift_note: 'Happy birthday', wrapped: true } };
+  const next = withSavedCustomisation(before, '77', questions, { q1: '7', q2: 'n', q3: 'stale' });
+  assert.deepEqual(next['gid://shopify/ProductVariant/77'], { gift_note: 'Happy birthday', wrapped: true, wrist_size: '7', engraving: 'No' });
+});
+
+check('the last choices prefill choice questions only, never free text', () => {
+  assert.deepEqual(lastChoicesAsAnswers(questions, { wrist_size: '6.5', engraving: 'No', charms: ['Star'] }), { q2: 'n', q4: ['s'] });
 });
 
 console.log(`\n${pass} checks passed`);

@@ -53,22 +53,35 @@ export interface CustomisationConfig {
    * `AccountCustomisations`). Unset: answers stay on the device.
    */
   accountMetafield?: string;
+  /**
+   * Where this device keeps the answers (default `CUSTOMISATION_STORAGE_KEY`): an app moving from an
+   * earlier app passes the key that app used, so answers saved there still read.
+   */
+  storageKey?: string;
+}
+
+/** The question list in a metafield's JSON, entries with an id only; null when it has no list (unset, or a typo). */
+function questionList(json: string | null | undefined): CustomisationQuestion[] | null {
+  if (!json) return null;
+  try {
+    const raw = (JSON.parse(json) as { questions?: unknown } | null)?.questions;
+    return Array.isArray(raw) ? raw.filter((q): q is CustomisationQuestion => !!q && typeof q.id === 'string' && !!q.id) : null;
+  } catch {
+    return null;
+  }
 }
 
 /** The questions in a metafield's JSON; a typo or anything else reads as none. Only entries with an id. */
 export function parseCustomisation(json: string | null | undefined): CustomisationQuestion[] {
-  if (!json) return [];
-  try {
-    const raw = (JSON.parse(json) as { questions?: unknown } | null)?.questions;
-    return Array.isArray(raw) ? raw.filter((q): q is CustomisationQuestion => !!q && typeof q.id === 'string' && !!q.id) : [];
-  } catch {
-    return [];
-  }
+  return questionList(json) ?? [];
 }
 
 type WithMetafields = { metafields?: Record<string, string> | null };
 
-/** A product's questions for a variant: the variant's own when it has any, else the product's. */
+/**
+ * A product's questions for a variant: the variant's own list when it has one (`{"questions":[]}` is a
+ * variant that asks nothing), else the product's.
+ */
 export function customisationQuestions(
   product: (WithMetafields & { variants?: ReadonlyArray<WithMetafields & { id: string }> | null }) | null | undefined,
   variantId: string | null | undefined,
@@ -77,8 +90,8 @@ export function customisationQuestions(
   if (!product || !config) return [];
   const tail = (id: string) => id.split('/').pop();
   const variant = variantId ? product.variants?.find((v) => tail(v.id) === tail(variantId)) : undefined;
-  const own = config.variant ? parseCustomisation(variant?.metafields?.[config.variant]) : [];
-  return own.length ? own : config.product ? parseCustomisation(product.metafields?.[config.product]) : [];
+  const own = config.variant ? questionList(variant?.metafields?.[config.variant]) : null;
+  return own ?? (config.product ? parseCustomisation(product.metafields?.[config.product]) : []);
 }
 
 const isFreeText = (q: CustomisationQuestion) => q.type === 'text_input' || q.type === 'number_input';
@@ -142,10 +155,16 @@ export function answersFromAttributes(
   return out;
 }
 
-/** A cart line still needs answers: a question that always shows has no attribute on the line. */
+/**
+ * A cart line still needs answers: it has none at all (a product whose every question is conditional
+ * would otherwise pass unanswered), or a question that always shows has no attribute on the line.
+ * Attributes starting with `_` are the app's own (`_lotNumber`), never answers. Questions with no `key`
+ * are never saved, so a product asking only those needs nothing on the line.
+ */
 export function lineNeedsCustomisation(questions: readonly CustomisationQuestion[], attributes: ReadonlyArray<{ key: string; value: string | null }>): boolean {
+  if (!questions.some((q) => !!q.key)) return false;
   const saved = new Set(attributes.filter((a) => a.value && !a.key.startsWith('_')).map((a) => a.key));
-  return questions.some((q) => !q.condition?.length && !!q.key && !saved.has(q.key));
+  return saved.size === 0 || questions.some((q) => !q.condition?.length && !!q.key && !saved.has(q.key));
 }
 
 // ─── On the customer's account (0.23.0) ──────────────────────────────────────────────────────────────
@@ -156,8 +175,9 @@ export function lineNeedsCustomisation(questions: readonly CustomisationQuestion
  *
  * - under a variant's id (`gid://shopify/ProductVariant/…`), an object: the answers the shopper saved for
  *   that variant, by question key, as labels (several as a list);
- * - under any other name, a label or a list of labels: what the shopper chose last anywhere, a question's
- *   answer (by its key) or a product option (`Size: '6"'`), so the next product opens on it.
+ * - under any other name, a label or a list of labels: what the shopper chose last anywhere, a choice
+ *   question's answer (by its key) or a product option (`Size: '6"'`), so the next product opens on it.
+ *   Free text (an engraving) belongs to one item: it stays under its variant and never prefills another.
  */
 export type AccountCustomisations = Record<string, unknown>;
 /** Labels by question key or option name; a list for several. */
@@ -209,9 +229,31 @@ export function customisationLabels(questions: readonly CustomisationQuestion[],
 const chosen = (labels: SavedLabels): SavedLabels =>
   Object.fromEntries(Object.entries(labels).filter(([, v]) => (Array.isArray(v) ? v.length > 0 : !!v)));
 
-/** The record with a variant's answers saved: under the variant, and as the shopper's last answers. */
-export function withSavedCustomisation(record: AccountCustomisations, variantId: string, labels: SavedLabels): AccountCustomisations {
-  return { ...record, [accountVariantKey(variantId)]: labels, ...chosen(labels) };
+/** The last choices anywhere as answers to these questions: choice questions only, never free text. */
+export function lastChoicesAsAnswers(questions: readonly CustomisationQuestion[], record: AccountCustomisations): CustomisationAnswers {
+  return answersFromAttributes(questions.filter((q) => !isFreeText(q)), accountPreferences(record));
+}
+
+/**
+ * The record with a variant's answers saved: the questions showing, under the variant (what else the
+ * website keeps there is kept, a hidden question's old answer is dropped), and the choices among them as
+ * the shopper's last choices (free text stays with its variant).
+ */
+export function withSavedCustomisation(
+  record: AccountCustomisations,
+  variantId: string,
+  questions: readonly CustomisationQuestion[],
+  answers: CustomisationAnswers,
+): AccountCustomisations {
+  const labels = customisationLabels(questions, answers);
+  const questionKeys = new Set(questions.map((q) => q.key).filter(Boolean));
+  const freeTextKeys = new Set(questions.filter(isFreeText).map((q) => q.key).filter(Boolean));
+  const before = record[accountVariantKey(variantId)];
+  const others = Object.fromEntries(
+    Object.entries(before && typeof before === 'object' && !Array.isArray(before) ? before : {}).filter(([key]) => !questionKeys.has(key)),
+  );
+  const choices = Object.fromEntries(Object.entries(labels).filter(([key]) => !freeTextKeys.has(key)));
+  return { ...record, [accountVariantKey(variantId)]: { ...others, ...labels }, ...chosen(choices) };
 }
 
 /** The record with the shopper's choices remembered (empty ones left out). */

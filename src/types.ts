@@ -1542,6 +1542,11 @@ export interface ShopifyWishlistAPI {
   clear(): Promise<void>;
   /** Re-fetches every product in `batchSize` chunks, so any count is fine. */
   refresh(opts?: WishlistRefreshOptions): Promise<WishlistItem[]>;
+  /**
+   * Lazy (`hydrateOnInit: false`, 0.23.0): true until the saved products have been read from the store once
+   * since `init`, so a page showing them reads them on its first view of each launch. Always false otherwise.
+   */
+  needsFirstRead(): boolean;
   /** Returns an unsubscribe function. */
   onChange(listener: WishlistChangeListener): () => void;
 }

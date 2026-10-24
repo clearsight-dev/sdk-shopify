@@ -201,8 +201,13 @@ check('removing something absent emits nothing', () => { assert.equal(take().len
 await runAct(async () => { await api.wishlist.add('gid://product/2'); });
 take();
 await runAct(async () => { await api.wishlist.remove('gid://product/2', { silent: true }); });
-check('a silent remove takes it off and emits nothing', () => {
-  assert.equal(take().length, 0);
+check('a silent remove takes it off and still tells onEvent (analytics), with no message, so no toast', () => {
+  const events = take();
+  assert.equal(events.length, 1);
+  assert.equal(events[0].type, 'wishlist:remove');
+  assert.equal(events[0].productId, 'gid://product/2');
+  assert.equal(events[0].message, undefined);
+  assert.equal(events[0].messageKey, undefined);
   assert.deepEqual(api.wishlist.ids, []);
 });
 
