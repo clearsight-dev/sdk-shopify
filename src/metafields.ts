@@ -1,5 +1,5 @@
 /**
- * Opt-in product metafields.
+ * Opt-in product (and, 0.23.0, variant) metafields.
  *
  * Configure once at startup and every product the SDK returns carries them:
  *
@@ -8,12 +8,8 @@
  *
  * The identifiers are inlined into the product fragment rather than passed as a GraphQL variable,
  * because a variable has to be declared by every operation that spreads the fragment — miss one and
- * it fails at runtime.
- *
- * The store-data standard's metafields (0.23.0) are read on every product whatever is configured:
- * `auction.winners` on the product and its variants, `auction.allowedQty` on its variants, for the
- * per-size auction gates (`STANDARD_PRODUCT_METAFIELDS`, `STANDARD_VARIANT_METAFIELDS`). A store that
- * doesn't use them gets them back absent.
+ * it fails at runtime. Inlining also means an unconfigured SDK sends the exact query it sends today,
+ * so nothing changes for apps that never ask for metafields.
  *
  * Storefront only returns a metafield whose definition grants storefront read access. An undefined
  * or private one comes back null and is simply absent from the record.
@@ -26,16 +22,6 @@ const SAFE_IDENT = /^[A-Za-z0-9_.:$-]+$/;
 
 /** Shopify caps a single `metafields(identifiers:)` selection at 250. */
 const MAX_IDENTIFIERS = 250;
-
-/** Read on every product (0.23.0): who won the product in an auction. */
-export const STANDARD_PRODUCT_METAFIELDS: readonly MetafieldIdentifier[] = Object.freeze([
-  { namespace: 'auction', key: 'winners' },
-]);
-/** Read on every product's variants (0.23.0): who won the size, and how many of it may still be bought. */
-export const STANDARD_VARIANT_METAFIELDS: readonly MetafieldIdentifier[] = Object.freeze([
-  { namespace: 'auction', key: 'winners' },
-  { namespace: 'auction', key: 'allowedQty' },
-]);
 
 function assertSafe(part: string, what: string): void {
   if (!part || !SAFE_IDENT.test(part)) {
@@ -64,22 +50,21 @@ function checkedList(list: MetafieldIdentifier[] | undefined | null, what: strin
 
 const idsOf = (list: MetafieldIdentifier[]) => list.map(i => `${i.namespace}.${i.key}`).join('|');
 
-let identifiers: MetafieldIdentifier[] = checkedList([...STANDARD_PRODUCT_METAFIELDS], 'product');
-let variantIdentifiers: MetafieldIdentifier[] = checkedList([...STANDARD_VARIANT_METAFIELDS], 'variant');
+let identifiers: MetafieldIdentifier[] = [];
+let variantIdentifiers: MetafieldIdentifier[] = [];
 let signature = '';
 const resign = () => {
   signature = variantIdentifiers.length ? `${idsOf(identifiers)}#v:${idsOf(variantIdentifiers)}` : idsOf(identifiers);
 };
 
-/** The configured product metafields, after the standard ones. */
 export function setProductMetafields(list: MetafieldIdentifier[] | undefined | null): void {
-  identifiers = checkedList([...STANDARD_PRODUCT_METAFIELDS, ...(list ?? [])], 'product');
+  identifiers = checkedList(list, 'product');
   resign();
 }
 
 /** Variant metafields (0.23.0): as `productMetafields`, read on every product read's variants. */
 export function setVariantMetafields(list: MetafieldIdentifier[] | undefined | null): void {
-  variantIdentifiers = checkedList([...STANDARD_VARIANT_METAFIELDS, ...(list ?? [])], 'variant');
+  variantIdentifiers = checkedList(list, 'variant');
   resign();
 }
 
@@ -96,14 +81,14 @@ export function productMetafieldsSignature(): string {
   return signature;
 }
 
-/** The selection to splice into a product fragment (the standard metafields, then the configured ones). */
+/** The selection to splice into a product fragment, or '' when nothing is configured. */
 export function metafieldSelection(): string {
   if (!identifiers.length) return '';
   const list = identifiers.map(i => `{namespace:"${i.namespace}",key:"${i.key}"}`).join(',');
   return `metafields(identifiers: [${list}]) { namespace key value type }`;
 }
 
-/** The selection to splice into a product's variants (the standard metafields, then the configured ones). */
+/** The selection to splice into a product's variants, or '' when nothing is configured. */
 export function variantMetafieldSelection(): string {
   if (!variantIdentifiers.length) return '';
   const list = variantIdentifiers.map(i => `{namespace:"${i.namespace}",key:"${i.key}"}`).join(',');
@@ -153,5 +138,3 @@ export function memoizeQuery(build: () => string): () => string {
     return cached;
   };
 }
-
-resign();

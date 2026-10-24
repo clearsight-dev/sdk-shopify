@@ -26,12 +26,11 @@ export interface ShopifyConfig {
   /** Cart rules the SDK enforces before it writes. */
   cart?: CartPolicy;
   /**
-   * Product metafields to fetch alongside every product, read back as `product.metafields`, after the
-   * standard ones (`STANDARD_PRODUCT_METAFIELDS`, 0.23.0). Each needs a Shopify metafield definition with
-   * storefront read access, or it comes back empty.
+   * Product metafields to fetch alongside every product, read back as `product.metafields`.
+   * Each needs a Shopify metafield definition with storefront read access, or it comes back empty.
    */
   productMetafields?: MetafieldIdentifier[];
-  /** Variant metafields to fetch on every product read's variants, read back as `variant.metafields`, after the standard ones (`STANDARD_VARIANT_METAFIELDS`) (0.23.0). */
+  /** Variant metafields to fetch on every product read's variants, read back as `variant.metafields` (0.23.0). */
   variantMetafields?: MetafieldIdentifier[];
   /**
    * Reuse of recent catalogue answers (memory only). Identical requests in flight are always shared.
@@ -230,7 +229,7 @@ export interface ProductVariant {
    * absent on a cart line's `merchandise` (the line has `sellingPlanId`), hence optional.
    */
   sellingPlan?: Pick<SellingPlan, 'id' | 'name'> | null;
-  /** The standard variant metafields and `ShopifyConfig.variantMetafields`, keyed `namespace.key` (0.23.0); absent on a cart line. */
+  /** `ShopifyConfig.variantMetafields`, keyed `namespace.key` (0.23.0); absent when none are configured and on a cart line. */
   metafields?: Record<string, string>;
 }
 
@@ -296,9 +295,9 @@ export interface Product {
    */
   media: ProductMedia[];
   /**
-   * The standard metafields (`auction.winners`, 0.23.0) and those named by `ShopifyConfig.productMetafields`,
-   * keyed `namespace.key` — e.g. `product.metafields['custom.badge_text']`. A metafield the product doesn't
-   * carry (or whose definition denies storefront access) is simply absent.
+   * The metafields named by `ShopifyConfig.productMetafields`, keyed `namespace.key` — e.g.
+   * `product.metafields['custom.badge_text']`. Empty when none are configured, and a metafield the
+   * product doesn't carry (or whose definition denies storefront access) is simply absent.
    */
   metafields: Record<string, string>;
   /**

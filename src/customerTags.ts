@@ -1,7 +1,6 @@
 /**
  * The signed-in customer's Shopify tags (0.23.0), for rules a store keys on them (who may bid, who sees an
- * early drop). Two are the store-data standard's (`customerRestrictionsOf`): `BIDBLOCKED` stops bidding,
- * `APPBLOCKED` stops bidding and mutes the customer's comments. Any other tag means what the app says.
+ * early drop). What a tag means is the app's.
  *
  * `tags` is null until read and while every read fails: a rule that protects something must treat that
  * as unknown, not as untagged (`known`). A failed re-read keeps the last known tags.
@@ -33,29 +32,6 @@ export interface CustomerTagsState {
   tags: readonly string[] | null;
   /** The tags have been read (always true signed out). */
   known: boolean;
-}
-
-/** The store-data standard (0.23.0): a customer with this tag may not bid. */
-export const BID_BLOCKED_TAG = 'BIDBLOCKED';
-/** The store-data standard (0.23.0): a customer with this tag may not bid, and only they see their comments. */
-export const APP_BLOCKED_TAG = 'APPBLOCKED';
-
-/** What the standard tags stop. */
-export interface CustomerRestrictions {
-  /** `blocked` by either tag; `unknown` while the tags aren't read (a bid must wait, not go); else `allowed`. */
-  bidding: 'allowed' | 'blocked' | 'unknown';
-  /** `APPBLOCKED`: the customer's comments reach nobody else. False while unknown. */
-  commentsMuted: boolean;
-}
-
-/** What the standard tags stop for `state` (signed out: nothing, known). */
-export function customerRestrictionsOf(state: Pick<CustomerTagsState, 'tags' | 'known'>): CustomerRestrictions {
-  if (!state.known || !state.tags) return { bidding: 'unknown', commentsMuted: false };
-  const appBlocked = hasCustomerTag(state.tags, APP_BLOCKED_TAG);
-  return {
-    bidding: appBlocked || hasCustomerTag(state.tags, BID_BLOCKED_TAG) ? 'blocked' : 'allowed',
-    commentsMuted: appBlocked,
-  };
 }
 
 /** Whether `tags` holds `tag`, trimmed and case-insensitive. */

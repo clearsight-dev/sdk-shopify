@@ -83,13 +83,8 @@ export {
 export { CARD_IMAGE_WIDTH, CARD_IMAGE, PRODUCT_PAGE_IMAGE, BLOG_IMAGE, cardImageUrl, cardPhotoUrl } from './images';
 export { longDate } from './dates';
 export { AUCTION_TAG, isAuctioned } from './auction';
-export { withoutLots } from './products';
 export {
   CUSTOMER_TAGS_MIN_GAP_MS,
-  BID_BLOCKED_TAG,
-  APP_BLOCKED_TAG,
-  customerRestrictionsOf,
-  type CustomerRestrictions,
   hasCustomerTag,
   createCustomerTagsStore,
   type CustomerTagsState,
@@ -188,8 +183,6 @@ export {
   setVariantMetafields,
   getVariantMetafields,
   productMetafield,
-  STANDARD_PRODUCT_METAFIELDS,
-  STANDARD_VARIANT_METAFIELDS,
 } from './metafields';
 export { TileCreditError } from './types';
 export {

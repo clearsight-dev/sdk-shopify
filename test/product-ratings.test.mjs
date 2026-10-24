@@ -171,7 +171,7 @@ for (const [what, operation, run] of READS) {
     const query = lastQuery(operation);
     assert.match(query, RATING_ASKED);
     // The app's own metafields still come under `metafields`, beside the ratings' own name.
-    assert.match(query, /\bmetafields\(identifiers: \[\{namespace:"auction",key:"winners"\},\{namespace:"custom",key:"badge_text"\}\]\) \{ namespace key value type \}/);
+    assert.match(query, /\bmetafields\(identifiers: \[\{namespace:"custom",key:"badge_text"\}\]\) \{ namespace key value type \}/);
     assert.deepEqual(products[0].rating, { value: 4.6, scaleMax: 5, count: 12 });
     assert.equal(products[0].metafields['custom.badge_text'], 'Going Fast');
     if (products[1]) assert.equal(products[1].rating, null, 'a product with no reviews');

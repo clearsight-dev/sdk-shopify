@@ -6,16 +6,8 @@
   `refresh`), for rules a store keys on them. `tags` is null until read; a failed re-read keeps the last known.
   One shared read, re-read on sign-in, account change, focus (`active`), foreground and `everyMs`, at most once
   per 30 s unless forced. Customer Account API for a Shopify sign-in, Storefront for a password session.
-- **The store-data standard's customer tags** (decided 2026-10-22): `BIDBLOCKED` stops bidding, `APPBLOCKED`
-  stops bidding and mutes the customer's comments. `useCustomerTags` adds `bidding` (`allowed`, `blocked`, or
-  `unknown` while unread) and `commentsMuted`; `customerRestrictionsOf(state)` is the rule.
 - **`ShopifyConfig.variantMetafields`**: like `productMetafields`, read on every product read's variants as
   `variant.metafields`.
-- **The store-data standard's metafields, read with every product** (`STANDARD_PRODUCT_METAFIELDS`,
-  `STANDARD_VARIANT_METAFIELDS`): `auction.winners` on the product and its variants and `auction.allowedQty` on
-  its variants (the per-size auction gates). Every product query now carries them; the configured ones follow.
-- **Lots are kept out of every search**: `products.search` (and so `useSearch`, `useSearchPage`) adds
-  `-tag:SEARCH-BLOCKED` (`AUCTION_TAG`) to the term; `withoutLots(query)` is the rule.
 - **`DescriptionSpan.href`**: a description link's address (http(s), mailto and tel only).
 - **`useWishlist().remove(productId, { silent: true })`**: removes without the `wishlist:remove` event (and its
   toast), for removals the shopper didn't ask for, such as what an order just bought.

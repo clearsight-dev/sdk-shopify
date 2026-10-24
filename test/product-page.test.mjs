@@ -207,13 +207,13 @@ await check('description: paragraphs, bold labels, bullets, entities, **merchant
 });
 await check('description links (0.22.0): a link keeps its address; only http(s), mailto and tel open', () => {
   const blocks = parseDescriptionHtml(
-    '<p>See our <a href="https://sparklbands.com/pages/size-guide?a=1&amp;b=2"><strong>sizing guide</strong> here</a>, '
+    '<p>See our <a href="https://shop.example.com/pages/size-guide?a=1&amp;b=2"><strong>sizing guide</strong> here</a>, '
     + "or <a href='mailto:hi@example.com'>write</a>. <a href=\"javascript:alert(1)\">no</a> <a href=\"/collections/x\">rel</a></p>",
   );
   assert.deepEqual(blocks, [{ bullet: false, spans: [
     { text: 'See our ', bold: false },
-    { text: 'sizing guide', bold: true, href: 'https://sparklbands.com/pages/size-guide?a=1&b=2' },
-    { text: ' here', bold: false, href: 'https://sparklbands.com/pages/size-guide?a=1&b=2' },
+    { text: 'sizing guide', bold: true, href: 'https://shop.example.com/pages/size-guide?a=1&b=2' },
+    { text: ' here', bold: false, href: 'https://shop.example.com/pages/size-guide?a=1&b=2' },
     { text: ', or ', bold: false },
     { text: 'write', bold: false, href: 'mailto:hi@example.com' },
     { text: '. no rel', bold: false },

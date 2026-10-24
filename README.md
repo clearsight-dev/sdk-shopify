@@ -1190,14 +1190,9 @@ session is restored even when the shop fails to load.
 ```tsx
 const tags = useCustomerTags({ active: useIsFocused() }); // re-read when the screen comes back
 if (!tags.known) …               // unread: don't treat as untagged
-tags.bidding;                    // "allowed" | "blocked" (BIDBLOCKED or APPBLOCKED) | "unknown"
-tags.commentsMuted;              // APPBLOCKED
-tags.hasTag("VIP");              // any other tag: trimmed, case-insensitive
+tags.hasTag("VIP");              // trimmed, case-insensitive; what a tag means is the app's
 await tags.refresh({ force: true });
 ```
-
-`BIDBLOCKED` and `APPBLOCKED` are the store-data standard (`BID_BLOCKED_TAG`, `APP_BLOCKED_TAG`,
-`customerRestrictionsOf`).
 
 ### Store credit
 

@@ -5,8 +5,7 @@
  *
  * ```tsx
  * const tags = useCustomerTags({ active: useIsFocused() });
- * const early = tags.hasTag("VIP");
- * if (tags.bidding !== "allowed") … // BIDBLOCKED / APPBLOCKED, or not read yet
+ * const early = tags.hasTag("VIP"); // false while unread: a rule that protects something checks `known`
  * ```
  *
  * A Shopify sign-in reads the Customer Account API, a password session the Storefront API. Signed out:
@@ -17,9 +16,7 @@ import { request as storefrontRequest } from '../client';
 import {
   createCustomerTagsStore,
   CUSTOMER_ACCOUNT_TAGS_QUERY,
-  customerRestrictionsOf,
   hasCustomerTag,
-  type CustomerRestrictions,
   STOREFRONT_CUSTOMER_TAGS_QUERY,
   type CustomerTagsState,
   type CustomerTagsStore,
@@ -34,7 +31,7 @@ export interface UseCustomerTagsOptions {
   everyMs?: number;
 }
 
-export interface CustomerTags extends CustomerTagsState, CustomerRestrictions {
+export interface CustomerTags extends CustomerTagsState {
   /** Trimmed, case-insensitive. False while unread. */
   hasTag: (tag: string) => boolean;
   refresh: (options?: { force?: boolean }) => Promise<CustomerTagsState>;
@@ -102,6 +99,6 @@ export function useCustomerTags({ active = true, everyMs }: UseCustomerTagsOptio
     // Never another customer's tags, while the account changes hands.
     const shown: CustomerTagsState =
       state.customerId === customerId ? state : { customerId, tags: customerId ? null : [], known: !customerId };
-    return { ...shown, ...customerRestrictionsOf(shown), hasTag: (tag: string) => hasCustomerTag(shown.tags, tag), refresh };
+    return { ...shown, hasTag: (tag: string) => hasCustomerTag(shown.tags, tag), refresh };
   }, [state, customerId, refresh]);
 }

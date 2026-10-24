@@ -46,12 +46,12 @@ console.log('variant metafields');
 
 await shopify.init({ storeDomain: 'shop.myshopify.com', storefrontAccessToken: 't' });
 variantsAnswer = [variant(1)];
-await check('unset: the variants ask for the standard ones only (0.23.0: auction.winners, auction.allowedQty)', async () => {
+await check('unset: the variants ask for none, and carry none', async () => {
   const product = await shopify.products.byHandle('p-1');
   const selection = variantsSelection(lastQuery('ProductByHandle'));
-  assert.match(selection, /metafields\(identifiers: \[\{namespace:"auction",key:"winners"\},\{namespace:"auction",key:"allowedQty"\}\]\)/);
-  assert.deepEqual(getVariantMetafields(), [{ namespace: 'auction', key: 'winners' }, { namespace: 'auction', key: 'allowedQty' }]);
-  assert.deepEqual(product.variants[0].metafields ?? {}, {});
+  assert.doesNotMatch(selection, /metafields\(/);
+  assert.deepEqual(getVariantMetafields(), []);
+  assert.equal('metafields' in product.variants[0], false);
 });
 
 await shopify.init({
@@ -59,7 +59,7 @@ await shopify.init({
   variantMetafields: [{ namespace: 'auction', key: 'winners' }, { namespace: 'auction', key: 'allowedQty' }, { namespace: 'auction', key: 'winners' }],
 });
 clearRequestCache();
-await check('configured: after the standard ones, each listed once, inside each variant of every product read', () => {
+await check('configured: each listed once, inside each variant of every product read', () => {
   assert.deepEqual(getVariantMetafields(), [{ namespace: 'auction', key: 'winners' }, { namespace: 'auction', key: 'allowedQty' }]);
 });
 

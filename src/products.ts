@@ -1,4 +1,3 @@
-import { AUCTION_TAG } from './auction';
 import { request } from './client';
 import { rememberProducts } from './productStore';
 import { getVariantMetafields, normalizeMetafields } from './metafields';
@@ -110,15 +109,6 @@ function toMedia(nodes: any[]): ProductMedia[] {
 // The `search` root sorts by `SearchSortKeys`, a much smaller set than the `ProductSortKeys`
 // `list` takes. Anything else throws rather than silently returning relevance order.
 const SEARCH_SORT_KEYS = new Set(['RELEVANCE', 'PRICE']);
-
-/**
- * What a search sends for `query` (0.23.0): the store-data standard keeps lots out of every search, so a
- * product carrying `AUCTION_TAG` is never a result. No term: nothing added.
- */
-export function withoutLots(query: string): string {
-  const exclusion = `-tag:${AUCTION_TAG}`;
-  return !query.trim() || query.includes(exclusion) ? query : `${query} ${exclusion}`;
-}
 
 function toSearchSortKey(sortKey: string | undefined): string | undefined {
   if (sortKey === undefined) return undefined;
@@ -252,7 +242,7 @@ export const products: ShopifyProductsAPI = {
 
   async search(query: string, opts?: Omit<ListOptions, 'query'>): Promise<Connection<Product>> {
     const data = await request<SearchRaw>(searchProductsQuery(), {
-      query: withoutLots(query),
+      query,
       first: opts?.first ?? 20,
       after: opts?.after,
       productFilters: opts?.filters,
