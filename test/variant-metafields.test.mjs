@@ -56,25 +56,25 @@ await check('unset: the variants ask for none, and carry none', async () => {
 
 await shopify.init({
   storeDomain: 'shop.myshopify.com', storefrontAccessToken: 't',
-  variantMetafields: [{ namespace: 'auction', key: 'winners' }, { namespace: 'auction', key: 'allowedQty' }, { namespace: 'auction', key: 'winners' }],
+  variantMetafields: [{ namespace: 'custom', key: 'fit' }, { namespace: 'custom', key: 'stock_note' }, { namespace: 'custom', key: 'fit' }],
 });
 clearRequestCache();
 await check('configured: each listed once, inside each variant of every product read', () => {
-  assert.deepEqual(getVariantMetafields(), [{ namespace: 'auction', key: 'winners' }, { namespace: 'auction', key: 'allowedQty' }]);
+  assert.deepEqual(getVariantMetafields(), [{ namespace: 'custom', key: 'fit' }, { namespace: 'custom', key: 'stock_note' }]);
 });
 
 variantsAnswer = [
-  variant(1, [{ namespace: 'auction', key: 'winners', value: '["a@example.com"]', type: 'json' }, { namespace: 'auction', key: 'allowedQty', value: ' 2 ', type: 'number_integer' }]),
+  variant(1, [{ namespace: 'custom', key: 'fit', value: 'Slim', type: 'single_line_text_field' }, { namespace: 'custom', key: 'stock_note', value: ' Low stock ', type: 'single_line_text_field' }]),
   variant(2, [null, null]),
 ];
 await check('each variant reads its own back, keyed namespace.key; a size with none has none', async () => {
   const product = await shopify.products.byHandle('p-1');
   const selection = variantsSelection(lastQuery('ProductByHandle'));
-  assert.match(selection, /metafields\(identifiers: \[\{namespace:"auction",key:"winners"\},\{namespace:"auction",key:"allowedQty"\}\]\)/);
-  assert.deepEqual(product.variants[0].metafields, { 'auction.winners': '["a@example.com"]', 'auction.allowedQty': ' 2 ' });
-  assert.equal(productMetafield(product.variants[0], 'auction.allowedQty'), '2');
+  assert.match(selection, /metafields\(identifiers: \[\{namespace:"custom",key:"fit"\},\{namespace:"custom",key:"stock_note"\}\]\)/);
+  assert.deepEqual(product.variants[0].metafields, { 'custom.fit': 'Slim', 'custom.stock_note': ' Low stock ' });
+  assert.equal(productMetafield(product.variants[0], 'custom.stock_note'), 'Low stock');
   assert.deepEqual(product.variants[1].metafields, {});
-  assert.equal(productMetafield(product.variants[1], 'auction.winners'), null);
+  assert.equal(productMetafield(product.variants[1], 'custom.fit'), null);
   assert.equal('sellingPlanAllocations' in product.variants[0], false, 'the variant keeps its usual shape');
 });
 

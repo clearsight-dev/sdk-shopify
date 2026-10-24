@@ -106,7 +106,7 @@ await t.check('a Shopify sign-in reads the tags once from the Customer Account A
   assert.deepEqual(screenB.tags, ['vip']);
 });
 
-accountTags = ['vip', 'no-bidding'];
+accountTags = ['vip', 'wholesale'];
 await render({ bActive: true });
 await t.check('a screen becoming active re-reads at most once per 30 s once the tags are known', () => {
   assert.equal(tagReads.length, 1);
@@ -116,8 +116,8 @@ await runAct(async () => { await screenB.refresh({ force: true }); });
 await settle();
 await t.check('a forced re-read picks up a new tag, on every caller', () => {
   assert.equal(tagReads.length, 2);
-  assert.equal(screenA.hasTag('no-bidding'), true);
-  assert.equal(screenB.hasTag('no-bidding'), true);
+  assert.equal(screenA.hasTag('wholesale'), true);
+  assert.equal(screenB.hasTag('wholesale'), true);
 });
 
 
@@ -127,7 +127,7 @@ await settle();
 await t.check('no customer in the answer is a failed read: what was known stays', () => {
   assert.equal(tagReads.length, 3);
   assert.equal(screenA.known, true);
-  assert.equal(screenA.hasTag('no-bidding'), true);
+  assert.equal(screenA.hasTag('wholesale'), true);
 });
 
 await runAct(async () => { await api.customer.logout(); });
