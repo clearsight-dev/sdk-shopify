@@ -28,6 +28,8 @@ const service = {
   reads: [],
   holdRedeem: null,
   holdWallet: null,
+  /** The store's floor, as the service checks it (its default is a cent). */
+  minCents: 0,
 };
 const cart = {
   cards: [{ id: 'gid://shopify/AppliedGiftCard/other', lastCharacters: '9999', presentmentAmountUsed: money('5.00'), balance: money('0.00'), amountUsed: money('5.00') }],
@@ -64,6 +66,9 @@ global.fetch = async (url, init = {}) => {
       const body = JSON.parse(init.body);
       service.redeems.push({ token, ...body });
       if (service.holdRedeem) await service.holdRedeem.promise;
+      if (body.amountCents < service.minCents) {
+        return response(400, { error: 'validation', message: `The minimum you can redeem is ${(service.minCents / 100).toFixed(2)} USD.`, details: { amountCents: body.amountCents, min: service.minCents } });
+      }
       if (body.amountCents > person.balanceCents) return response(402, { error: 'insufficient_balance', message: 'Insufficient balance' });
       const known = service.byKey.get(body.idempotencyKey);
       const code = known ?? `CRED0000CARD${String(++service.minted).padStart(4, '0')}`;
@@ -249,6 +254,23 @@ await t.check('the service’s refusals come back as their codes; no amount is n
   await settle();
   assert.equal(credit.error?.code, 'insufficient_balance');
   assert.equal(credit.status, 'ready');
+});
+
+await t.check('an amount under the store’s floor: the service’s own words, never the general line (ENG-980)', async () => {
+  service.minCents = 200;
+  await runAct(async () => { assert.equal(await credit.apply(100), false); });
+  await settle();
+  assert.equal(credit.error?.code, 'validation');
+  assert.equal(credit.errorMessage, 'The minimum you can redeem is 2.00 USD.');
+  // The SDK's own check (nothing to redeem) never reached the service: the general words.
+  await runAct(async () => { assert.equal(await credit.apply(0), false); });
+  assert.equal(credit.errorMessage, 'That amount cannot be redeemed. Try a different one.');
+  service.minCents = 0;
+  await runAct(async () => { assert.equal(await credit.apply(150), true); });
+  await settle();
+  assert.equal(credit.errorMessage, null);
+  await runAct(async () => { await credit.remove(); });
+  await settle();
 });
 await t.check('a new card disables the app’s earlier one, so an earlier card still on the cart comes off', async () => {
   await runAct(async () => { await credit.apply(1000); });

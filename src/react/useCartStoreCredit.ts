@@ -76,12 +76,24 @@ export interface CartStoreCreditState {
   blockedBy: 'preOrder' | null;
   /** `blockedBy` in words (`storeCredit.preOrder`), or null. */
   blockedMessage: string | null;
-  /** `error` in words, by its code (`storeCredit.<code>`), or null. */
+  /**
+   * `error` in words, or null. An amount the service refused with its reason (a store's floor or ceiling,
+   * or Shopify's own limit on a gift card: 0.23.0) shows that reason as the service sent it; anything else
+   * goes by its code (`storeCredit.<code>`).
+   */
   errorMessage: string | null;
   /** What the amount sheet opens with (see above); null when that is nothing. */
   suggestedAmount: Money | null;
   /** Call each time the cart comes into view: reads the balance again. Keeps one identity. */
   viewed: () => void;
+}
+
+/**
+ * The service's own reason for refusing an amount (an HTTP 400 with a message: a store's floor or ceiling,
+ * Shopify's limit on a gift card), shown as it was sent so a shopper learns the limit; else null.
+ */
+function refusedAmountWords(error: TileCreditError): string | null {
+  return error.code === 'validation' && typeof error.status === 'number' && error.message.trim() ? error.message.trim() : null;
 }
 
 /** Each error code's words. */
@@ -399,7 +411,7 @@ export function useCartStoreCredit(): CartStoreCreditState {
       refresh,
       blockedBy,
       blockedMessage: blockedBy ? message('storeCredit.preOrder') : null,
-      errorMessage: shownError ? message(ERROR_MESSAGE[shownError.code] ?? 'storeCredit.internal') : null,
+      errorMessage: shownError ? refusedAmountWords(shownError) ?? message(ERROR_MESSAGE[shownError.code] ?? 'storeCredit.internal') : null,
       suggestedAmount,
       viewed,
     }),

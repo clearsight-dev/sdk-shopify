@@ -44,6 +44,9 @@
   another customer's account. `useOptionPreferences().loaded` is false while the profile loads, true after a
   failed read (tried again on return to the foreground). Signed out or with a password session, answers stay
   on the device. The metafield needs Customer Account API read and write access.
+- **A store credit amount the service refuses with its reason** (a store's floor or ceiling, or Shopify's own
+  limit on a gift card) shows that reason in `useCartStoreCredit().errorMessage`, as the service sent it
+  ("The minimum you can redeem is 5.00 USD."), not the general "That amount cannot be redeemed" (ENG-980).
 - **`DescriptionSpan.href`**: a description link's address (http(s), mailto and tel only).
 - **`useWishlist().remove(productId, { silent: true })`**: removes without a toast, for removals the shopper
   didn't ask for, such as what an order just bought. The `wishlist:remove` event still reaches `onEvent` (for
