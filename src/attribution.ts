@@ -1,23 +1,37 @@
-/** Units of one variant from one source. Positive integers only; a count that reaches 0 is deleted. */
-export type AttributionCounts = { n?: number; p?: number };
-/** One show. `t` = epoch SECONDS of the last add from this show (live or replay group separately). */
+/**
+ * Units of one variant from one source, by line type: `n` normal, `p` pre-authorised, `g` a giveaway prize.
+ * Positive integers only; a count that reaches 0 is deleted.
+ */
+export type AttributionCounts = { n?: number; p?: number; g?: number };
+/** One show (or auction). `t` = epoch SECONDS of the last add from it (each group separately). */
 export type AttributionShow = { t: number; items: Record<string, AttributionCounts> };
 export type Attribution = {
   v: 1;
-  live?: Record<string, AttributionShow>;   // key = the show's streamId (live-selling `streamingId`)
-  replay?: Record<string, AttributionShow>; // key = the SAME streamId of the show the replay is of (NOT the replay feed id)
-  app?: Record<string, AttributionCounts>;  // key = variant id
+  live?: Record<string, AttributionShow>;              // key = a live shopping show's streamId (live-selling `streamingId`)
+  replay?: Record<string, AttributionShow>;            // key = the SAME streamId of the show the replay is of (NOT the replay feed id)
+  auction?: Record<string, AttributionShow>;           // key = a live auction show's streamId: added or won on it
+  'auction-replay'?: Record<string, AttributionShow>;  // key = the streamId of the auction show the replay is of
+  'silent-auction'?: Record<string, AttributionShow>;  // key = the silent auction's id: its wins
+  app?: Record<string, AttributionCounts>;             // key = variant id
 };
+/** Where units came from: a show or an auction by its id (see `Attribution`), else the app. */
 export type AttributionSource =
   | { type: 'live'; showId: string }
   | { type: 'replay'; showId: string }
+  | { type: 'auction'; showId: string }
+  | { type: 'auction-replay'; showId: string }
+  | { type: 'silent-auction'; showId: string }
   | { type: 'app' };
-export type AttributionLineType = 'n' | 'p';
+export type AttributionLineType = 'n' | 'p' | 'g';
 
 export const ATTRIBUTION_ATTRIBUTE_KEY = '_apptile_attribution';
 
-type ShowGroup = 'live' | 'replay';
-const LINE_TYPES: AttributionLineType[] = ['n', 'p'];
+type ShowGroup = 'live' | 'replay' | 'auction' | 'auction-replay' | 'silent-auction';
+/** Every group keyed by a show or an auction, in the order units come off them (`recordRemove`, after `app`). */
+const SHOW_GROUPS: ShowGroup[] = ['replay', 'auction-replay', 'silent-auction', 'live', 'auction'];
+const LINE_TYPES: AttributionLineType[] = ['n', 'p', 'g'];
+/** The keys that stamp a giveaway prize line (the live-selling service's, and an older spelling). */
+const GIVEAWAY_KEYS = ['_isGiveawayItem', '_giveawayItem'];
 
 const isRecord = (x: unknown): x is Record<string, unknown> =>
   typeof x === 'object' && x !== null && !Array.isArray(x);
@@ -33,7 +47,7 @@ function cleanCounts(raw: unknown): AttributionCounts | null {
   if (!isRecord(raw)) return null;
   const out: AttributionCounts = {};
   for (const type of LINE_TYPES) if (isCount(raw[type])) out[type] = raw[type] as number;
-  return out.n || out.p ? out : null;
+  return out.n || out.p || out.g ? out : null;
 }
 
 function cleanItems(raw: unknown): Record<string, AttributionCounts> {
@@ -59,21 +73,25 @@ function cleanShows(raw: unknown): Record<string, AttributionShow> {
 }
 
 /** Rebuilds `a` as a fresh object with zeros and empty items, shows and groups dropped. */
-function normalize(a: { live?: unknown; replay?: unknown; app?: unknown }): Attribution {
+function normalize(a: Partial<Record<ShowGroup | 'app', unknown>>): Attribution {
   const out: Attribution = { v: 1 };
-  const live = cleanShows(a.live);
-  const replay = cleanShows(a.replay);
+  for (const group of ['live', 'replay', 'auction', 'auction-replay', 'silent-auction'] as const) {
+    const shows = cleanShows(a[group]);
+    if (Object.keys(shows).length) out[group] = shows;
+  }
   const app = cleanItems(a.app);
-  if (Object.keys(live).length) out.live = live;
-  if (Object.keys(replay).length) out.replay = replay;
   if (Object.keys(app).length) out.app = app;
   return out;
 }
 
-/** Any `_preauthorized` value but `'false'` (blank included) is a pre-auth line. */
+/**
+ * A line stamped as a giveaway prize (`_isGiveawayItem` or `_giveawayItem`) is `g`, else one with
+ * `_preauthorized` is `p`, else `n`. Any value but `'false'` (blank included) counts as stamped.
+ */
 export function lineTypeOf(attributes: { key: string; value: string }[] | undefined): AttributionLineType {
-  const flag = attributes?.find((attr) => attr.key === '_preauthorized');
-  return flag && flag.value !== 'false' ? 'p' : 'n';
+  const stamped = (keys: string[]) => !!attributes?.some((attr) => keys.includes(attr.key) && attr.value !== 'false');
+  if (stamped(GIVEAWAY_KEYS)) return 'g';
+  return stamped(['_preauthorized']) ? 'p' : 'n';
 }
 
 /** `attributes` with `_apptile_attribution` set to `value`, every other pair kept in order. */
@@ -108,7 +126,8 @@ export type ShowsInCart = { live: string[]; replay: string[] };
 
 /**
  * The shows a cart holds units from, read off its `_apptile_attribution` (0.10, SDK move 7): `live`
- * and `replay` are both the shows' streaming ids (a replay is counted under the show it records).
+ * and `replay` are both the shows' streaming ids (a replay is counted under the show it records). An
+ * auction show is listed with `live` and its replay with `replay`; a silent auction isn't a show.
  * A show whose units have all left the cart isn't listed. Empty lists for a cart with no show's units
  * or no attribution. For the analytics events `streamCheckout` and `streamPurchase`
  * (`@tiledev/sdk-analytics-core`'s `streamCheckoutParams`).
@@ -119,7 +138,8 @@ export type ShowsInCart = { live: string[]; replay: string[] };
 export function showsInCart(cart: { attributes?: { key: string; value: string }[] | null } | null | undefined): ShowsInCart {
   const value = cart?.attributes?.find((attr) => attr.key === ATTRIBUTION_ATTRIBUTE_KEY)?.value;
   const attribution = parseAttribution(value);
-  return { live: Object.keys(attribution?.live ?? {}), replay: Object.keys(attribution?.replay ?? {}) };
+  const ids = (...groups: ShowGroup[]) => [...new Set(groups.flatMap((group) => Object.keys(attribution?.[group] ?? {})))];
+  return { live: ids('live', 'auction'), replay: ids('replay', 'auction-replay') };
 }
 
 export function recordAdd(
@@ -152,7 +172,10 @@ export function recordAdd(
   return next;
 }
 
-/** Takes `quantity` units off: `app` first, then replay shows oldest first, then live shows oldest first. */
+/**
+ * Takes `quantity` units off: `app` first, then each show group's shows oldest first, in `SHOW_GROUPS`'
+ * order: replays, auction replays, silent auctions, live shows, auction shows.
+ */
 export function recordRemove(
   a: Attribution,
   variantId: string,
@@ -174,8 +197,7 @@ export function recordRemove(
   take(next.app);
   const oldestFirst = (group: ShowGroup) =>
     Object.entries(next[group] ?? {}).sort(([idA, x], [idB, y]) => x.t - y.t || idA.localeCompare(idB));
-  for (const [, show] of oldestFirst('replay')) take(show.items);
-  for (const [, show] of oldestFirst('live')) take(show.items);
+  for (const group of SHOW_GROUPS) for (const [, show] of oldestFirst(group)) take(show.items);
   return normalize(next);
 }
 
@@ -213,8 +235,7 @@ export function mergeAttribution(a: Attribution, b: Attribution): Attribution {
   const x = normalize(a);
   const y = normalize(b);
   return normalize({
-    live: mergeShows(x.live, y.live),
-    replay: mergeShows(x.replay, y.replay),
+    ...Object.fromEntries(SHOW_GROUPS.map((group) => [group, mergeShows(x[group], y[group])])),
     app: sumItems(x.app, y.app),
   });
 }

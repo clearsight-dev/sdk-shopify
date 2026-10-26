@@ -117,6 +117,50 @@
       ],
       "expected": { "v": 1, "live": { "showA": { "t": 3000, "items": { "111": { "n": 3, "p": 1 } } }, "showB": { "t": 500, "items": { "444": { "n": 1 } } } }, "replay": { "showA": { "t": 2000, "items": { "111": { "n": 1 } } } }, "app": { "222": { "p": 3 } } },
       "serialized": "{\"v\":1,\"live\":{\"showA\":{\"t\":3000,\"items\":{\"111\":{\"n\":3,\"p\":1}}},\"showB\":{\"t\":500,\"items\":{\"444\":{\"n\":1}}}},\"replay\":{\"showA\":{\"t\":2000,\"items\":{\"111\":{\"n\":1}}}},\"app\":{\"222\":{\"p\":3}}}"
+    },
+    {
+      "name": "every type in its own group: live, replay, auction, auction-replay, silent-auction (by auction id), app",
+      "start": null,
+      "steps": [
+        { "op": "add", "source": { "type": "live", "showId": "s1" }, "variantId": "gid://shopify/ProductVariant/1", "lineType": "n", "quantity": 1, "now": 10 },
+        { "op": "add", "source": { "type": "replay", "showId": "s2" }, "variantId": "gid://shopify/ProductVariant/2", "lineType": "n", "quantity": 1, "now": 20 },
+        { "op": "add", "source": { "type": "auction", "showId": "s3" }, "variantId": "gid://shopify/ProductVariant/3", "lineType": "n", "quantity": 1, "now": 30 },
+        { "op": "add", "source": { "type": "auction-replay", "showId": "s4" }, "variantId": "gid://shopify/ProductVariant/4", "lineType": "n", "quantity": 1, "now": 40 },
+        { "op": "add", "source": { "type": "silent-auction", "showId": "a9" }, "variantId": "gid://shopify/ProductVariant/5", "lineType": "p", "quantity": 1, "now": 50 },
+        { "op": "add", "source": { "type": "app" }, "variantId": "gid://shopify/ProductVariant/6", "lineType": "n", "quantity": 2, "now": 60 }
+      ],
+      "expected": { "v": 1, "live": { "s1": { "t": 10, "items": { "1": { "n": 1 } } } }, "replay": { "s2": { "t": 20, "items": { "2": { "n": 1 } } } }, "auction": { "s3": { "t": 30, "items": { "3": { "n": 1 } } } }, "auction-replay": { "s4": { "t": 40, "items": { "4": { "n": 1 } } } }, "silent-auction": { "a9": { "t": 50, "items": { "5": { "p": 1 } } } }, "app": { "6": { "n": 2 } } },
+      "serialized": "{\"v\":1,\"live\":{\"s1\":{\"t\":10,\"items\":{\"1\":{\"n\":1}}}},\"replay\":{\"s2\":{\"t\":20,\"items\":{\"2\":{\"n\":1}}}},\"auction\":{\"s3\":{\"t\":30,\"items\":{\"3\":{\"n\":1}}}},\"auction-replay\":{\"s4\":{\"t\":40,\"items\":{\"4\":{\"n\":1}}}},\"silent-auction\":{\"a9\":{\"t\":50,\"items\":{\"5\":{\"p\":1}}}},\"app\":{\"6\":{\"n\":2}}}"
+    },
+    {
+      "name": "a removal takes from app, then replays, auction replays, silent auctions, live shows, and auction shows last",
+      "start": "{\"v\":1,\"live\":{\"L\":{\"t\":1,\"items\":{\"7\":{\"n\":1}}}},\"replay\":{\"R\":{\"t\":1,\"items\":{\"7\":{\"n\":1}}}},\"auction\":{\"A\":{\"t\":1,\"items\":{\"7\":{\"n\":1}}}},\"auction-replay\":{\"AR\":{\"t\":1,\"items\":{\"7\":{\"n\":1}}}},\"silent-auction\":{\"S\":{\"t\":1,\"items\":{\"7\":{\"n\":1}}}},\"app\":{\"7\":{\"n\":1}}}",
+      "steps": [
+        { "op": "remove", "variantId": "gid://shopify/ProductVariant/7", "lineType": "n", "quantity": 5 }
+      ],
+      "expected": { "v": 1, "auction": { "A": { "t": 1, "items": { "7": { "n": 1 } } } } },
+      "serialized": "{\"v\":1,\"auction\":{\"A\":{\"t\":1,\"items\":{\"7\":{\"n\":1}}}}}"
+    },
+    {
+      "name": "merging sums the auction groups too, keeping each show's latest t",
+      "start": "{\"v\":1,\"auction\":{\"A\":{\"t\":4,\"items\":{\"7\":{\"n\":1}}}}}",
+      "steps": [
+        { "op": "merge", "with": "{\"v\":1,\"auction\":{\"A\":{\"t\":9,\"items\":{\"7\":{\"n\":2}}}},\"silent-auction\":{\"S\":{\"t\":5,\"items\":{\"8\":{\"n\":1}}}}}" }
+      ],
+      "expected": { "v": 1, "auction": { "A": { "t": 9, "items": { "7": { "n": 3 } } } }, "silent-auction": { "S": { "t": 5, "items": { "8": { "n": 1 } } } } },
+      "serialized": "{\"v\":1,\"auction\":{\"A\":{\"t\":9,\"items\":{\"7\":{\"n\":3}}}},\"silent-auction\":{\"S\":{\"t\":5,\"items\":{\"8\":{\"n\":1}}}}}"
+    }
+,
+    {
+      "name": "a giveaway prize counts under g, beside n and p, and comes off g alone",
+      "start": "{\"v\":1}",
+      "steps": [
+        { "op": "add", "source": { "type": "auction", "showId": "A" }, "variantId": "gid://shopify/ProductVariant/7", "lineType": "g", "quantity": 1, "now": 10 },
+        { "op": "add", "source": { "type": "auction", "showId": "A" }, "variantId": "gid://shopify/ProductVariant/7", "lineType": "n", "quantity": 1, "now": 10 },
+        { "op": "remove", "variantId": "gid://shopify/ProductVariant/7", "lineType": "g", "quantity": 1 }
+      ],
+      "expected": { "v": 1, "auction": { "A": { "t": 10, "items": { "7": { "n": 1 } } } } },
+      "serialized": "{\"v\":1,\"auction\":{\"A\":{\"t\":10,\"items\":{\"7\":{\"n\":1}}}}}"
     }
   ],
   "parse": [
@@ -127,6 +171,7 @@
     { "name": "absent: wrong version", "input": "{\"v\":2,\"app\":{\"111\":{\"n\":1}}}", "expected": null },
     { "name": "absent: not an object", "input": "[1]", "expected": null },
     { "name": "empty value", "input": "{\"v\":1}", "expected": { "v": 1 } },
+    { "name": "a giveaway count is kept", "input": "{\"v\":1,\"app\":{\"222\":{\"g\":1}}}", "expected": { "v": 1, "app": { "222": { "g": 1 } } } },
     { "name": "zeros, bad counts and empty shows are dropped", "input": "{\"v\":1,\"live\":{\"s\":{\"t\":1,\"items\":{\"111\":{\"n\":0,\"p\":-1}}}},\"app\":{\"222\":{\"n\":1.5,\"p\":2}}}", "expected": { "v": 1, "app": { "222": { "p": 2 } } } }
   ]
 }

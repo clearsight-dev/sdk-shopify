@@ -118,6 +118,7 @@ export {
   recordRemove,
   mergeAttribution,
   showsInCart,
+  lineTypeOf,
   type ShowsInCart,
   type Attribution,
   type AttributionCounts,

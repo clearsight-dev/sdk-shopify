@@ -10,6 +10,8 @@ const {
   recordAdd,
   recordRemove,
   mergeAttribution,
+  showsInCart,
+  lineTypeOf,
 } = await import('../dist/index.js');
 
 const fixtures = JSON.parse(readFileSync(new URL('../src/attribution.fixtures.json', import.meta.url), 'utf8'));
@@ -88,6 +90,21 @@ check('t is epoch seconds, whole', () => {
 
 check('serialized output is compact', () => {
   assert.equal(serializeAttribution({ v: 1, app: { 1: { n: 1 } } }), '{"v":1,"app":{"1":{"n":1}}}');
+});
+
+check('showsInCart lists an auction show with live and its replay with replay; a silent auction is no show', () => {
+  const value = serializeAttribution({ v: 1, live: { L: { t: 1, items: { 1: { n: 1 } } } }, auction: { A: { t: 1, items: { 2: { n: 1 } } } },
+    'auction-replay': { AR: { t: 1, items: { 3: { n: 1 } } } }, 'silent-auction': { S: { t: 1, items: { 4: { n: 1 } } } } });
+  assert.deepEqual(showsInCart({ attributes: [{ key: ATTRIBUTION_ATTRIBUTE_KEY, value }] }), { live: ['L', 'A'], replay: ['AR'] });
+});
+
+check("lineTypeOf: a giveaway stamp is 'g' (either key, even pre-authorised), then '_preauthorized' 'p', else 'n'", () => {
+  assert.equal(lineTypeOf([{ key: '_isGiveawayItem', value: 'true' }]), 'g');
+  assert.equal(lineTypeOf([{ key: '_giveawayItem', value: '' }]), 'g');
+  assert.equal(lineTypeOf([{ key: '_preauthorized', value: 'true' }, { key: '_isGiveawayItem', value: 'true' }]), 'g');
+  assert.equal(lineTypeOf([{ key: '_isGiveawayItem', value: 'false' }, { key: '_preauthorized', value: 'true' }]), 'p');
+  assert.equal(lineTypeOf([{ key: '_preauthorized', value: 'false' }]), 'n');
+  assert.equal(lineTypeOf(undefined), 'n');
 });
 
 console.log(`\n${pass} checks passed`);
