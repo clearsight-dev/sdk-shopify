@@ -1,6 +1,10 @@
 # Changelog
 
-## 0.23.0 (2026-10-26)
+## 0.23.1 (2026-10-26)
+
+The 0.23.0 release, published as 0.23.1: npm refused the number 0.23.0 ("previously staged").
+
+## 0.23.0 (not published)
 
 - **Attribution types**: `AttributionSource` and `_apptile_attribution` add `auction` (a live auction show's
   adds and wins), `auction-replay` (adds on its replay) and `silent-auction` (a silent auction's wins, by its id),
