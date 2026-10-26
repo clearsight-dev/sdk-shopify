@@ -682,12 +682,6 @@ export interface ShopifyProviderProps {
    */
   cartAttributes?: CartAttribute[];
   /**
-   * Starts a fresh cart (`reset`) when a signed-in shopper becomes signed out, by signing out or by the
-   * session expiring, so the next person on the phone doesn't inherit the cart. The old cart stays on
-   * Shopify. Not on app open, and not on sign-in. Default true; read at the sign-out.
-   */
-  resetCartOnSignOut?: boolean;
-  /**
    * How shoppers sign in. Unset: email and password only, as before. `method` can change while the
    * app runs: `password` for App Store review, `shopify` for shoppers.
    */
@@ -759,7 +753,6 @@ export function ShopifyProvider({
   translate,
   cartPolicy,
   cartAttributes,
-  resetCartOnSignOut = true,
   auth,
   storeCredit,
   attribution,
@@ -1853,8 +1846,6 @@ export function ShopifyProvider({
     await persistCart(created);
   }, [persistCart]);
 
-  const resetOnSignOut = useRef(resetCartOnSignOut);
-  resetOnSignOut.current = resetCartOnSignOut;
   // Null until the first state after app open, so a launch that starts signed out never counts as a sign-out.
   const wasSignedIn = useRef<boolean | null>(null);
   const signedIn = sessionState.kind !== null;
@@ -1862,7 +1853,7 @@ export function ShopifyProvider({
     if (sessionState.restoring) return;
     const previous = wasSignedIn.current;
     wasSignedIn.current = signedIn;
-    if (previous !== true || signedIn || !resetOnSignOut.current) return;
+    if (previous !== true || signedIn) return;
     cartReset().catch((resetError) => {
       console.warn("[ShopifyProvider] cart reset after sign-out failed", resetError);
     });
