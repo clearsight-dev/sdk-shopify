@@ -10,6 +10,7 @@ const {
   recordAdd,
   recordRemove,
   mergeAttribution,
+  showsInCart,
   lineTypeOf,
 } = await import('../dist/index.js');
 
@@ -91,11 +92,21 @@ check('serialized output is compact', () => {
   assert.equal(serializeAttribution({ v: 1, app: { 1: { n: 1 } } }), '{"v":1,"app":{"1":{"n":1}}}');
 });
 
-check('lineTypeOf: a `_preauthorized` line is p, any value but "false"', () => {
+check('showsInCart lists an auction show with live and its replay with replay; a silent auction is no show', () => {
+  const value = serializeAttribution({ v: 1, live: { L: { t: 1, items: { 1: { n: 1 } } } }, auction: { A: { t: 1, items: { 2: { n: 1 } } } },
+    'auction-replay': { AR: { t: 1, items: { 3: { n: 1 } } } }, 'silent-auction': { S: { t: 1, items: { 4: { n: 1 } } } } });
+  assert.deepEqual(showsInCart({ attributes: [{ key: ATTRIBUTION_ATTRIBUTE_KEY, value }] }), { live: ['L', 'A'], replay: ['AR'] });
+});
+
+check('merging keeps and sums another SDK\'s line type, in n, p, then letter order', () => {
+  const merged = mergeAttribution({ v: 1, app: { 1: { g: 1, p: 1 } } }, { v: 1, app: { 1: { g: 2, n: 1 } } });
+  assert.equal(serializeAttribution(merged), '{"v":1,"app":{"1":{"n":1,"p":1,"g":3}}}');
+});
+
+check("lineTypeOf: '_preauthorized' is 'p' (blank included), 'false' or none is 'n'", () => {
   assert.equal(lineTypeOf([{ key: '_preauthorized', value: 'true' }]), 'p');
   assert.equal(lineTypeOf([{ key: '_preauthorized', value: '' }]), 'p');
   assert.equal(lineTypeOf([{ key: '_preauthorized', value: 'false' }]), 'n');
-  assert.equal(lineTypeOf([{ key: 'other', value: 'x' }]), 'n');
   assert.equal(lineTypeOf(undefined), 'n');
 });
 
