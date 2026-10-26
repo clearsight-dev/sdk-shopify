@@ -98,11 +98,14 @@ check('showsInCart lists an auction show with live and its replay with replay; a
   assert.deepEqual(showsInCart({ attributes: [{ key: ATTRIBUTION_ATTRIBUTE_KEY, value }] }), { live: ['L', 'A'], replay: ['AR'] });
 });
 
-check("lineTypeOf: a giveaway stamp is 'g' (either key, even pre-authorised), then '_preauthorized' 'p', else 'n'", () => {
-  assert.equal(lineTypeOf([{ key: '_isGiveawayItem', value: 'true' }]), 'g');
-  assert.equal(lineTypeOf([{ key: '_giveawayItem', value: '' }]), 'g');
-  assert.equal(lineTypeOf([{ key: '_preauthorized', value: 'true' }, { key: '_isGiveawayItem', value: 'true' }]), 'g');
-  assert.equal(lineTypeOf([{ key: '_isGiveawayItem', value: 'false' }, { key: '_preauthorized', value: 'true' }]), 'p');
+check('merging keeps and sums another SDK\'s line type, in n, p, then letter order', () => {
+  const merged = mergeAttribution({ v: 1, app: { 1: { g: 1, p: 1 } } }, { v: 1, app: { 1: { g: 2, n: 1 } } });
+  assert.equal(serializeAttribution(merged), '{"v":1,"app":{"1":{"n":1,"p":1,"g":3}}}');
+});
+
+check("lineTypeOf: '_preauthorized' is 'p' (blank included), 'false' or none is 'n'", () => {
+  assert.equal(lineTypeOf([{ key: '_preauthorized', value: 'true' }]), 'p');
+  assert.equal(lineTypeOf([{ key: '_preauthorized', value: '' }]), 'p');
   assert.equal(lineTypeOf([{ key: '_preauthorized', value: 'false' }]), 'n');
   assert.equal(lineTypeOf(undefined), 'n');
 });

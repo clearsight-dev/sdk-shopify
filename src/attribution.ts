@@ -1,8 +1,8 @@
 /**
- * Units of one variant from one source, by line type: `n` normal, `p` pre-authorised, `g` a giveaway prize.
- * Positive integers only; a count that reaches 0 is deleted.
+ * Units of one variant from one source, by line type (`AttributionLineType`). Positive integers only; a
+ * count that reaches 0 is deleted.
  */
-export type AttributionCounts = { n?: number; p?: number; g?: number };
+export type AttributionCounts = { n?: number; p?: number; [lineType: string]: number | undefined };
 /** One show (or auction). `t` = epoch SECONDS of the last add from it (each group separately). */
 export type AttributionShow = { t: number; items: Record<string, AttributionCounts> };
 export type Attribution = {
@@ -22,16 +22,23 @@ export type AttributionSource =
   | { type: 'auction-replay'; showId: string }
   | { type: 'silent-auction'; showId: string }
   | { type: 'app' };
-export type AttributionLineType = 'n' | 'p' | 'g';
+/**
+ * One lowercase letter. The provider writes `n` (normal) and `p` (pre-authorised, `lineTypeOf`); another
+ * SDK may count its own lines under a letter of its own, which parse, merge and remove keep.
+ */
+export type AttributionLineType = 'n' | 'p' | (string & {});
 
 export const ATTRIBUTION_ATTRIBUTE_KEY = '_apptile_attribution';
 
 type ShowGroup = 'live' | 'replay' | 'auction' | 'auction-replay' | 'silent-auction';
 /** Every group keyed by a show or an auction, in the order units come off them (`recordRemove`, after `app`). */
 const SHOW_GROUPS: ShowGroup[] = ['replay', 'auction-replay', 'silent-auction', 'live', 'auction'];
-const LINE_TYPES: AttributionLineType[] = ['n', 'p', 'g'];
-/** The keys that stamp a giveaway prize line (the live-selling service's, and an older spelling). */
-const GIVEAWAY_KEYS = ['_isGiveawayItem', '_giveawayItem'];
+const isLineType = (x: string): boolean => /^[a-z]$/.test(x);
+/** `n`, `p`, then any other line types alphabetically: one order, so the same counts serialize the same. */
+const byLineType = (x: string, y: string): number => {
+  const rank = (t: string) => (t === 'n' ? 0 : t === 'p' ? 1 : 2);
+  return rank(x) - rank(y) || x.localeCompare(y);
+};
 
 const isRecord = (x: unknown): x is Record<string, unknown> =>
   typeof x === 'object' && x !== null && !Array.isArray(x);
@@ -46,8 +53,8 @@ function variantKey(variantId: string): string {
 function cleanCounts(raw: unknown): AttributionCounts | null {
   if (!isRecord(raw)) return null;
   const out: AttributionCounts = {};
-  for (const type of LINE_TYPES) if (isCount(raw[type])) out[type] = raw[type] as number;
-  return out.n || out.p || out.g ? out : null;
+  for (const type of Object.keys(raw).sort(byLineType)) if (isLineType(type) && isCount(raw[type])) out[type] = raw[type] as number;
+  return Object.keys(out).length ? out : null;
 }
 
 function cleanItems(raw: unknown): Record<string, AttributionCounts> {
@@ -84,14 +91,10 @@ function normalize(a: Partial<Record<ShowGroup | 'app', unknown>>): Attribution 
   return out;
 }
 
-/**
- * A line stamped as a giveaway prize (`_isGiveawayItem` or `_giveawayItem`) is `g`, else one with
- * `_preauthorized` is `p`, else `n`. Any value but `'false'` (blank included) counts as stamped.
- */
+/** Any `_preauthorized` value but `'false'` (blank included) is a pre-auth line. */
 export function lineTypeOf(attributes: { key: string; value: string }[] | undefined): AttributionLineType {
-  const stamped = (keys: string[]) => !!attributes?.some((attr) => keys.includes(attr.key) && attr.value !== 'false');
-  if (stamped(GIVEAWAY_KEYS)) return 'g';
-  return stamped(['_preauthorized']) ? 'p' : 'n';
+  const flag = attributes?.find((attr) => attr.key === '_preauthorized');
+  return flag && flag.value !== 'false' ? 'p' : 'n';
 }
 
 /** `attributes` with `_apptile_attribution` set to `value`, every other pair kept in order. */
@@ -151,7 +154,7 @@ export function recordAdd(
   nowSeconds: number,
 ): Attribution {
   const next = normalize(a);
-  if (!isCount(quantity)) return next;
+  if (!isCount(quantity) || !isLineType(lineType)) return next;
   const variant = variantKey(variantId);
   const bump = (items: Record<string, AttributionCounts>) => {
     const counts = { ...(items[variant] ?? {}) };
@@ -183,7 +186,7 @@ export function recordRemove(
   quantity: number,
 ): Attribution {
   const next = normalize(a);
-  if (!isCount(quantity)) return next;
+  if (!isCount(quantity) || !isLineType(lineType)) return next;
   const variant = variantKey(variantId);
   let left = quantity;
   const take = (items: Record<string, AttributionCounts> | undefined) => {
@@ -208,7 +211,7 @@ function sumItems(
   const out: Record<string, AttributionCounts> = {};
   for (const variant of new Set([...Object.keys(x), ...Object.keys(y)])) {
     const counts: AttributionCounts = {};
-    for (const type of LINE_TYPES) {
+    for (const type of [...new Set([...Object.keys(x[variant] ?? {}), ...Object.keys(y[variant] ?? {})])].sort(byLineType)) {
       const total = (x[variant]?.[type] ?? 0) + (y[variant]?.[type] ?? 0);
       if (total > 0) counts[type] = total;
     }

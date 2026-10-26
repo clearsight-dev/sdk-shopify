@@ -152,7 +152,7 @@
     }
 ,
     {
-      "name": "a giveaway prize counts under g, beside n and p, and comes off g alone",
+      "name": "another SDK's line type (any lowercase letter) is counted beside n and p, and comes off alone",
       "start": "{\"v\":1}",
       "steps": [
         { "op": "add", "source": { "type": "auction", "showId": "A" }, "variantId": "gid://shopify/ProductVariant/7", "lineType": "g", "quantity": 1, "now": 10 },
@@ -171,7 +171,7 @@
     { "name": "absent: wrong version", "input": "{\"v\":2,\"app\":{\"111\":{\"n\":1}}}", "expected": null },
     { "name": "absent: not an object", "input": "[1]", "expected": null },
     { "name": "empty value", "input": "{\"v\":1}", "expected": { "v": 1 } },
-    { "name": "a giveaway count is kept", "input": "{\"v\":1,\"app\":{\"222\":{\"g\":1}}}", "expected": { "v": 1, "app": { "222": { "g": 1 } } } },
+    { "name": "another SDK's line type is kept; a key that is not one lowercase letter is dropped", "input": "{\"v\":1,\"app\":{\"222\":{\"g\":1,\"G\":1,\"gg\":1}}}", "expected": { "v": 1, "app": { "222": { "g": 1 } } } },
     { "name": "zeros, bad counts and empty shows are dropped", "input": "{\"v\":1,\"live\":{\"s\":{\"t\":1,\"items\":{\"111\":{\"n\":0,\"p\":-1}}}},\"app\":{\"222\":{\"n\":1.5,\"p\":2}}}", "expected": { "v": 1, "app": { "222": { "p": 2 } } } }
   ]
 }

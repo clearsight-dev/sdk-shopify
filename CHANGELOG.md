@@ -6,9 +6,8 @@
   adds and wins), `auction-replay` (adds on its replay) and `silent-auction` (a silent auction's wins, by its id),
   each grouped by id like `live` and `replay`, beside `app`. Still `v: 1`: a record without them reads as before.
   `showsInCart` lists an auction show with `live` and its replay with `replay`.
-- **Giveaway line type**: counts add `g`, a line stamped as a giveaway prize (`_isGiveawayItem` or
-  `_giveawayItem`, any value but `"false"`), beside `n` and `p`; a prize that is also pre-authorised is `g`.
-  `lineTypeOf` is exported, so a cart built outside the provider counts lines the same way.
+- **Other SDKs' line types**: a count's line type is any one lowercase letter, so an SDK can count its own
+  lines beside the provider's `n` and `p`; parse, merge and remove keep it. `lineTypeOf` is exported.
 - **`useCustomerTags({ active?, everyMs? })`**: the signed-in customer's tags (`tags`, `known`, `hasTag`,
   `refresh`), for rules a store keys on them. `tags` is null until read; a failed re-read keeps the last known.
   One shared read, re-read on sign-in, account change, focus (`active`), foreground and `everyMs`, at most once
