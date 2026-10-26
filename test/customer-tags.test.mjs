@@ -3,7 +3,6 @@
 import assert from 'node:assert/strict';
 
 const { createCustomerTagsStore, hasCustomerTag, CUSTOMER_TAGS_MIN_GAP_MS } = await import('../dist/index.js');
-const sdk = await import('../dist/index.js');
 const tick = () => new Promise((resolve) => setTimeout(resolve, 0));
 
 function harness() {
@@ -16,9 +15,6 @@ function harness() {
 
 assert.equal(hasCustomerTag(['Platinum VIP'], ' platinum vip'), true);
 assert.equal(hasCustomerTag(null, 'vip'), false);
-
-// What a tag means is the app's (or the feature SDK's, such as live selling's blocked bidders): the SDK names none.
-for (const name of ['BID_BLOCKED_TAG', 'APP_BLOCKED_TAG', 'customerRestrictionsOf']) assert.equal(name in sdk, false, name);
 
 { // signed out: known, nothing read
   const h = harness();
@@ -57,10 +53,10 @@ for (const name of ['BID_BLOCKED_TAG', 'APP_BLOCKED_TAG', 'customerRestrictionsO
   await h.store.refresh();
   assert.equal(h.reads.length, 1);
   h.clock.now += CUSTOMER_TAGS_MIN_GAP_MS;
-  h.answer(['blocked']);
+  h.answer(['wholesale']);
   await Promise.all([h.store.refresh(), h.store.refresh({ force: true })]);
   assert.equal(h.reads.length, 2);
-  assert.deepEqual(h.store.getState().tags, ['blocked']);
+  assert.deepEqual(h.store.getState().tags, ['wholesale']);
   await h.store.refresh({ force: true });
   assert.equal(h.reads.length, 3);
 }
@@ -71,7 +67,7 @@ for (const name of ['BID_BLOCKED_TAG', 'APP_BLOCKED_TAG', 'customerRestrictionsO
   h.store.setCustomer('a');
   h.answer(['vip']);
   h.store.setCustomer('b');
-  releaseFirst(['blocked']);
+  releaseFirst(['wholesale']);
   await tick();
   assert.deepEqual(h.store.getState(), { customerId: 'b', tags: ['vip'], known: true });
   h.store.setCustomer(null);

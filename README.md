@@ -274,67 +274,11 @@ useArticle(blogHandle, articleHandle, { imageTransform: BLOG_IMAGE }); // { maxW
 - `cardImageUrl` and `cardPhotoUrl` return `string | null`: null for no URL. `cardPhotoUrl` is what to
   prefetch so a card finds its photo in the image cache.
 
-### Product customisation (0.23.0)
-
-Questions as JSON in a metafield (the format is in `src/customisation.ts`), named in config and read with products:
-
-```ts
-shopify.init({ ...credentials, customisation: { product: 'custom.customisations_config', variant: 'custom.customisations_config_variant' },
-  productMetafields: [{ namespace: 'custom', key: 'customisations_config' }],
-  variantMetafields: [{ namespace: 'custom', key: 'customisations_config_variant' }] });
-const form = useProductCustomisation({ productHandle, variantId, cartLineId }); // questions, answers, setAnswer, complete, loading, save()
-const { unansweredLineIds, known } = useCartCustomisation();                    // hold checkout until known and unansweredLineIds is empty
-```
-
-- **Checkout gates.** A line needs answers while it has none at all, or a question that always shows has no
-  attribute on it (attributes starting with `_` are the app's own, never answers). `known` is false until every
-  line's product has been read: after a failed read, and for a line just added, checkout waits.
-- **Items paid on a cart made later** (an auction's wins): `save()` with no `cartLineId` keeps the answers on
-  this device; `useSavedCustomisations()` reads them back and `useItemsCustomisation(items)` gives
-  `customisableIds`, `unansweredIds` (every question showing must be answered), `attributesById` for the cart,
-  and `known`. Pass each item's `product` as `undefined` while it is being read (nothing is `known` until it
-  is) and `null` when the store has no such product (skipped).
-- **`save()`** returns false when `cartLineId` names a line the cart doesn't have (nothing is written), when the
-  line can't be updated, or, with no line, when this device can't be written. Only the questions showing are
-  saved.
-- **On this device:** under `customisation.storageKey` (default `tile:shopify:customisation:v1`; an app moving
-  from an earlier app passes that app's key). The device keeps **one shopper's answers at a time**, marked with
-  whose they are: another shopper's are never shown, put on a cart or saved to an account, and the first read
-  for someone else clears them. While a stored session restores, or signed in before the profile loads, the
-  device's copy is neither read nor written.
-- **Prefill order:** the cart line's answers, then the account's for the variant, then this device's, then the
-  account's last choices. Whatever the shopper typed is kept when a read lands later.
-
-Kept on the customer's account too, with a Shopify sign-in: name a JSON customer metafield as
-`customisation.accountMetafield` (`'apptile.customizations'`, say). The page prefills from it and `save()` writes
-to it; a product page opens on the shopper's remembered options:
-
-```ts
-const prefs = useOptionPreferences();
-if (!prefs.loaded) …                                          // a Shopify sign-in's profile or account still loading
-const size = prefs.preferredValue('Size', sizeOption.values); // the remembered size, if this product offers it
-await prefs.remember({ Size: chosenSize });                   // on add to cart or bid, not on every browse
-```
-
-- **Shopify setup:** the metafield is a JSON customer metafield that the Customer Account API can read and
-  write (in its definition, Customer accounts access: Read and write). The website shares it: a variant's
-  answers sit under its id, the last choices at the top.
-- **Only choices become last choices.** Free text (an engraving) stays under its variant and never prefills
-  another product. What the website keeps under a variant is kept on save; a hidden question's old answer is
-  dropped.
-- **Writes** go one at a time, each from a fresh read; a value that can't be read is never overwritten, and a
-  write never lands in another customer's account. A failed account write is logged, not returned: `save()`
-  reports the line and the device.
-- `loaded` is true after a failed read too (nothing remembered), and the read is tried again when the app
-  returns to the foreground.
-- **Privacy:** what shoppers type (an engraving) is stored on their Shopify customer record. An app that turns
-  this on lists it in its App Privacy answers (data linked to the user).
-
 ### Metafields the app asks for (0.23.0)
 
-The SDK names no metafield of its own: which ones a store keeps where is the app's to say, or the SDK that owns
-the feature (live selling's auction metafields), which the app passes in. Nothing is read unless asked for, and
-an app that asks for none sends the same queries as before.
+The SDK names no metafield of its own: which ones a store keeps where is the app's to say (or another SDK's,
+which the app passes in). Nothing is read unless asked for, and an app that asks for none sends the same
+queries as before.
 
 ```ts
 shopify.init({ ...credentials,
@@ -345,7 +289,7 @@ shopify.init({ ...credentials,
 });
 
 // Metafields only one product page needs: read on that page's read only.
-const page = useProductPage(handle, { metafields: AUCTION_METAFIELDS.product, variantMetafields: AUCTION_METAFIELDS.variant });
+const page = useProductPage(handle, { metafields: [{ namespace: 'custom', key: 'size_chart' }] });
 page.product?.metafieldsRead;   // what this copy's read asked for: listed but absent = the product has none
 ```
 
@@ -356,6 +300,8 @@ page.product?.metafieldsRead;   // what this copy's read asked for: listed but a
 - Each needs a metafield definition with access for the API that reads it (Storefront; the Customer Account API
   for a Shopify sign-in's customer metafields), or it comes back absent.
 - `productMetafield(productOrVariant, 'ns.key')` reads one, trimmed.
+- Product customisations and VIP early access are not in the SDK (0.23.0, PR #14): they are store-specific and
+  live in the app, which reads its own metafields through these lists.
 
 A description's links arrive as `DescriptionSpan.href`.
 
@@ -1280,12 +1226,9 @@ session is restored even when the shop fails to load.
 ```tsx
 const tags = useCustomerTags({ active: useIsFocused() }); // re-read when the screen comes back
 if (!tags.known) …               // unread: don't treat as untagged
-tags.hasTag("VIP");              // trimmed, case-insensitive
+tags.hasTag("VIP");              // trimmed, case-insensitive; what a tag means is the app's
 await tags.refresh({ force: true });
 ```
-
-What a tag means is the app's, or the SDK that owns the feature's: live selling's blocked bidders
-(`BIDBLOCKED`, `APPBLOCKED`) are its rules, fed from these tags.
 
 - A Shopify sign-in reads the Customer Account API. A **password session** reads the Storefront API's
   `customer(customerAccessToken) { tags }`, which needs the storefront token's

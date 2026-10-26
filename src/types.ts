@@ -42,11 +42,6 @@ export interface ShopifyConfig {
    */
   customerMetafields?: MetafieldIdentifier[];
   /**
-   * Where products keep their customisation questions (0.23.0, `customisation.ts`): `namespace.key` metafield ids,
-   * also listed in `productMetafields` / `variantMetafields`. Unset: no product is customisable.
-   */
-  customisation?: import('./customisation').CustomisationConfig;
-  /**
    * Reuse of recent catalogue answers (memory only). Identical requests in flight are always shared.
    * `false` turns reuse off; `{ ttl: { CollectionProducts: 0 } }` changes one operation's time.
    * Defaults: `DEFAULT_CACHE_TTL_MS`.

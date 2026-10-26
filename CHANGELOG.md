@@ -7,12 +7,12 @@
   One shared read, re-read on sign-in, account change, focus (`active`), foreground and `everyMs`, at most once
   per 30 s unless forced. Customer Account API for a Shopify sign-in, Storefront for a password session (needs
   the storefront token's `unauthenticated_read_customer_tags` scope). Not `known` while a stored session
-  restores or before the signed-in profile has loaded. What a tag means is the app's (or the feature SDK's: live
-  selling's blocked bidders); this names none.
-- **What is not here, by design (decided 2026-10-24):** sdk-shopify names no store's data. The auction
-  standard (`BIDBLOCKED`/`APPBLOCKED` and their rules, `auction.winners`/`allowedQty`, the lots' search tag) is
-  live selling's, passed in by the app; VIP early access is the base app's; leaving tagged products out of
-  search is the app's `queryTemplate` (`{query}* -tag:…`), off unless an app sets it.
+  restores or before the signed-in profile has loaded. The SDK only reads them; what a tag means is the app's.
+- **What is not here, by design (decided 2026-10-24 and 2026-10-26):** sdk-shopify names no store's data and
+  holds nothing store-specific. Tag rules, any feature's metafields and a search's left-out tags are the app's
+  (or another SDK's) to pass in; leaving tagged products out of search is the app's `queryTemplate`
+  (`{query}* -tag:…`), off unless an app sets it. Product customisations and VIP early access are not in the
+  SDK: they are store-specific and live in the app (PR #14).
 - **Metafields the app asks for; the SDK names none of its own.** `ShopifyConfig.variantMetafields`,
   `cartMetafields` and `customerMetafields` (with the existing `productMetafields`) are read on every read of
   that object, as `variant.metafields`, `cart.metafields` and `customer.metafields` (both sign-ins). A product
@@ -20,30 +20,6 @@
   `products.byHandle`/`byId(…, { metafields, variantMetafields })`, read on that page's read only and never kept
   in the product store or on the device; `product.metafieldsRead` / `variantMetafieldsRead` say what a copy's
   read asked for, so a rule can tell "not read" from "none". Unconfigured, every query is the text it was.
-- **Product customisation**: questions a product asks before checkout, as JSON in a product or variant
-  metafield (`ShopifyConfig.customisation`). `useProductCustomisation({ productHandle, variantId, cartLineId })`
-  (questions, prefilled answers, `save()` onto the line and this device; false for a line the cart doesn't
-  have) and `useCartCustomisation()` (`unansweredLineIds`, for holding checkout; `known` false after a failed
-  read and for a line just added) and `useSavedCustomisations()` (what this device saved per variant, answers
-  and line attributes) with `useItemsCustomisation(items)` (the same gate for items paid on a cart made later,
-  such as an auction's wins; an item whose product is `undefined` isn't read yet, so nothing is `known`); the
-  rules are pure exports (`visibleQuestions`, `customisationComplete`, `customisationAttributes`,
-  `answersFromAttributes`, `lineNeedsCustomisation`: a line with no answers at all is never done). A variant's
-  explicit `{"questions":[]}` asks nothing. The device keeps one shopper's answers at a time, marked with whose
-  they are (`customisation.storageKey`, default `tile:shopify:customisation:v1`): another shopper's are never
-  shown, put on a cart or saved to an account. Only the questions showing are saved.
-- **Customisations on the customer's account** (`customisation.accountMetafield`, a `namespace.key` JSON
-  customer metafield): with a Shopify sign-in, `useProductCustomisation` prefills from the account (the
-  variant's saved answers, then the shopper's last answers anywhere) and `save()` writes them back; the new
-  `useOptionPreferences()` gives the option choices the account remembers (`preferredValue('Size', values)`)
-  and `remember(choices)` to save them. One JSON object holds both (`AccountCustomisations`: a variant's
-  answers under its id, the last choices at the top level, as labels), so a store's website can share it.
-  Only choices become last choices (free text stays with its variant); what the website keeps under a variant
-  is kept. The account's answers fill in under what the shopper already typed. Writes go one at a time, each a
-  fresh read of the whole value; a value that can't be read is never overwritten, and a write never lands in
-  another customer's account. `useOptionPreferences().loaded` is false while the profile loads, true after a
-  failed read (tried again on return to the foreground). Signed out or with a password session, answers stay
-  on the device. The metafield needs Customer Account API read and write access.
 - **A store credit amount the service refuses with its reason** (a store's floor or ceiling, or Shopify's own
   limit on a gift card) shows that reason in `useCartStoreCredit().errorMessage`, as the service sent it
   ("The minimum you can redeem is 5.00 USD."), not the general "That amount cannot be redeemed" (ENG-980).
@@ -61,6 +37,9 @@
 - **`useFavoritesPage({ showGone: true })`**: a saved product the store no longer has stays as a card from what
   the device saved (title, photo, price; not for sale), listed in `goneIds`. Needs `wishlistKeepDeleted`. Unset,
   nothing changes.
+- **`useShopify().attributionEnabled`** and **`lineTypeOf`** exported: whether the provider records
+  `_apptile_attribution`, and the rule for a line's type, so a cart built outside the provider (another SDK's
+  checkout) can write the same record with `recordAdd` and `serializeAttribution`.
 
 ## 0.22.0 (2026-10-22)
 

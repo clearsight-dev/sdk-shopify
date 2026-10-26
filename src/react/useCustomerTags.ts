@@ -5,8 +5,7 @@
  *
  * ```tsx
  * const tags = useCustomerTags({ active: useIsFocused() });
- * const vip = tags.known && tags.hasTag("VIP");
- * if (!tags.known) … // not read yet: a rule that protects something waits
+ * const early = tags.hasTag("VIP"); // false while unread: check `known` first
  * ```
  *
  * A Shopify sign-in reads the Customer Account API, a password session the Storefront API (which needs

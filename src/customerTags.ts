@@ -1,10 +1,9 @@
 /**
- * The signed-in customer's Shopify tags (0.23.0), for rules a store keys on them (who may bid, who sees an
- * early drop). What a tag means is the app's, or the SDK that owns the feature's (live selling's blocked
- * bidders): this names none.
+ * The signed-in customer's Shopify tags (0.23.0), read for an app's own rules. The SDK only reads them; what a
+ * tag means is the app's.
  *
- * `tags` is null until read and while every read fails: a rule that protects something must treat that
- * as unknown, not as untagged (`known`). A failed re-read keeps the last known tags.
+ * `tags` is null until read and while every read fails: an app should treat that as unknown, not as
+ * untagged (`known`). A failed re-read keeps the last known tags.
  */
 
 /** Floor between re-reads once the tags are known. */

@@ -162,6 +162,7 @@ console.log('off by default');
   await act(async () => { await api.cart.updateLine(api.cart.cart.lines[0].id, 3, undefined, { source: live }); });
   await act(async () => { await api.cart.updateLine(api.cart.cart.lines[0].id, 2); });
   await act(async () => { await api.cart.removeLine(api.cart.cart.lines[1].id); });
+  check('useShopify().attributionEnabled is false', () => assert.equal(api.attributionEnabled, false));
   check('no attribute write, no attribute, no extra storage key', () => {
     assert.equal(named('CartAttributesUpdate').length, 0);
     assert.deepEqual(serverCart().attributes, cartAttributes);
@@ -189,6 +190,7 @@ console.log('recording');
 {
   const s = memoryStorage();
   await mount(s, on);
+  check('useShopify().attributionEnabled is true', () => assert.equal(api.attributionEnabled, true));
   const before = Math.floor(Date.now() / 1000);
   await act(async () => { await api.cart.addLine({ merchandiseId: V1, quantity: 2, source: live }); });
   check('addLine with a live source records it, with t in epoch seconds', () => {

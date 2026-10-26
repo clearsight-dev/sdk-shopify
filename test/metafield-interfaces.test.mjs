@@ -25,10 +25,10 @@ const productNode = (query) => ({
   options: [], images: { nodes: [] }, featuredImage: null, onlineStoreUrl: null, media: { nodes: [] }, updatedAt: '', createdAt: '',
   ratingMetafields: [null, null],
   // Like Shopify: only what the query asked for.
-  metafields: asked(query, [mf('custom', 'badge', 'New'), mf('auction', 'winners', '["a@example.com"]')]),
+  metafields: asked(query, [mf('custom', 'badge', 'New'), mf('custom', 'size_chart', '["a@example.com"]')]),
   variants: { nodes: [{ id: 'gid://shopify/ProductVariant/7', title: 'S', sku: null, availableForSale: true, quantityAvailable: 3,
     price: money('10.00'), compareAtPrice: null, selectedOptions: [], image: null, sellingPlanAllocations: { nodes: [] },
-    metafields: asked(query, [mf('auction', 'allowedQty', '0')]) }] },
+    metafields: asked(query, [mf('custom', 'fit_note', '0')]) }] },
 });
 const cart = () => ({ id: 'gid://shopify/Cart/1', checkoutUrl: 'https://shop/checkout', totalQuantity: 0, note: '', attributes: [],
   buyerIdentity: { countryCode: 'US', email: null, phone: null }, lines: { nodes: [] },
@@ -55,7 +55,7 @@ global.fetch = async (url, init = {}) => {
     return response(200, { data: { shop: { moneyFormat: '${{amount}}', paymentSettings: { currencyCode: 'USD' } }, localization: { country: { isoCode: 'US' } } } });
   }
   if (name === 'ProductByHandle') {
-    if (holdPageRead && query.includes('"auction",key:"winners"')) await holdPageRead;
+    if (holdPageRead && query.includes('"custom",key:"size_chart"')) await holdPageRead;
     return response(200, { data: { product: productNode(query) } });
   }
   if (name === 'CartCreate') return response(200, { data: { cartCreate: { cart: cart(), userErrors: [] } } });
@@ -123,12 +123,12 @@ await t.check('productMetafields: every product read, recorded as read', async (
 t.section('a product page’s own');
 clearProductStore();
 clearRequestCache();
-const AUCTION = { metafields: [{ namespace: 'auction', key: 'winners' }], variantMetafields: [{ namespace: 'auction', key: 'allowedQty' }] };
+const PAGE_OWN = { metafields: [{ namespace: 'custom', key: 'size_chart' }], variantMetafields: [{ namespace: 'custom', key: 'fit_note' }] };
 let page = null;
 let plain = null;
 let openPage = true;
 function Screen() {
-  page = useProduct(openPage ? 'lot' : null, AUCTION);
+  page = useProduct(openPage ? 'lot' : null, PAGE_OWN);
   plain = useProduct('lot');
   return null;
 }
@@ -149,20 +149,20 @@ const render = () => runAct(async () => root.render(React.createElement(ShopifyP
 await render();
 await settle();
 await t.check('the page’s read asks for its own on top of the configured ones; its product has them, recorded as read', () => {
-  const pageReads = sent.filter((call) => call.name === 'ProductByHandle' && call.query.includes('"auction",key:"winners"'));
+  const pageReads = sent.filter((call) => call.name === 'ProductByHandle' && call.query.includes('"custom",key:"size_chart"'));
   assert.ok(pageReads.length >= 1);
-  assert.match(pageReads[0].query, /metafields\(identifiers: \[\{namespace:"custom",key:"badge"\},\{namespace:"auction",key:"winners"\}\]\)/);
-  assert.deepEqual(page.product.metafields, { 'custom.badge': 'New', 'auction.winners': '["a@example.com"]' });
-  assert.deepEqual(page.product.metafieldsRead, ['custom.badge', 'auction.winners']);
-  assert.deepEqual(page.product.variants[0].metafields, { 'auction.allowedQty': '0' });
-  assert.deepEqual(page.product.variantMetafieldsRead, ['auction.allowedQty']);
+  assert.match(pageReads[0].query, /metafields\(identifiers: \[\{namespace:"custom",key:"badge"\},\{namespace:"custom",key:"size_chart"\}\]\)/);
+  assert.deepEqual(page.product.metafields, { 'custom.badge': 'New', 'custom.size_chart': '["a@example.com"]' });
+  assert.deepEqual(page.product.metafieldsRead, ['custom.badge', 'custom.size_chart']);
+  assert.deepEqual(page.product.variants[0].metafields, { 'custom.fit_note': '0' });
+  assert.deepEqual(page.product.variantMetafieldsRead, ['custom.fit_note']);
 });
 await t.check('the shared copy (product store, device, other screens) never carries them', () => {
   const kept = peekProduct('lot').full;
   assert.deepEqual(kept.metafields, { 'custom.badge': 'New' });
   assert.deepEqual(kept.metafieldsRead, ['custom.badge']);
   assert.equal('metafields' in kept.variants[0], false);
-  assert.equal(plain.product.metafields['auction.winners'], undefined);
+  assert.equal(plain.product.metafields['custom.size_chart'], undefined);
 });
 
 openPage = false;
@@ -183,7 +183,7 @@ releasePageRead();
 await settle();
 await t.check('…then the page’s own read lands, with them', () => {
   assert.ok(sent.filter((call) => call.name === 'ProductByHandle').length > readsBefore);
-  assert.equal(page.product.metafields['auction.winners'], '["a@example.com"]');
+  assert.equal(page.product.metafields['custom.size_chart'], '["a@example.com"]');
 });
 
 t.section('customer metafields, Shopify sign-in');

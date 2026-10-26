@@ -49,8 +49,8 @@ await check('a search sends the term as given: the SDK leaves out no tag of its 
   const { shopify } = await import('../dist/index.js');
   await shopify.init({ storeDomain: 'shop.myshopify.com', storefrontAccessToken: 't' });
   await shopify.products.search('ring');
-  await shopify.products.search('band -tag:SEARCH-BLOCKED');
-  assert.deepEqual(searched.splice(0), ['ring', 'band -tag:SEARCH-BLOCKED']);
+  await shopify.products.search('band -tag:hidden');
+  assert.deepEqual(searched.splice(0), ['ring', 'band -tag:hidden']);
 });
 
 let result = null;

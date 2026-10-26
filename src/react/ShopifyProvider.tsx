@@ -365,6 +365,11 @@ interface ShopifyContextType {
   productsPerPage: number | null;
   /** `useQuickAdd`'s `addStraightToCart` unless it is given one (`quickAddStraightToCart`, 0.22.0). */
   quickAddStraightToCart: boolean;
+  /**
+   * The provider's `attribution.enabled` (0.23.0): whether carts carry `_apptile_attribution`. For a cart
+   * built outside this provider (another SDK's checkout) to write the same record.
+   */
+  attributionEnabled: boolean;
   /** For `useCartPage` (0.14.0): the provider's `cartExtensions`, and its two events. */
   cartPage: {
     extensions: readonly CartExtension[];
@@ -1950,6 +1955,7 @@ export function ShopifyProvider({
     gridColumnsStorageKey,
     productsPerPage: pageSizeSetting,
     quickAddStraightToCart,
+    attributionEnabled: !!attribution?.enabled,
     cart: {
       cart, loading: cartLoading, itemCount: cart?.totalQuantity ?? 0,
       lineCount:          cart?.lines.length ?? 0,
@@ -2030,7 +2036,7 @@ export function ShopifyProvider({
     wtItems, wtIds, wtHas, wtAdd, wtRemove, wtRefresh,
     sessionState, session, authMethod, auth?.signInSurface, profileUpdate, storeCreditOptions,
     checkoutStarted, checkoutOrderPlaced, checkoutPaymentFailed, checkoutPrepare,
-    cartPage, quickAddStraightToCart,
+    cartPage, quickAddStraightToCart, attribution?.enabled,
   ]);
 
   return <ShopifyContext.Provider value={value}>{children}</ShopifyContext.Provider>;
