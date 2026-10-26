@@ -20,6 +20,9 @@
 - **`useFavoritesPage({ showGone: true })`**: a saved product the store no longer has stays as a card from what
   the device saved (title, photo, price; not for sale), listed in `goneIds`. Needs `wishlistKeepDeleted`. Unset,
   nothing changes.
+- **`useShopify().attributionEnabled`** and **`lineTypeOf`** exported: whether the provider records
+  `_apptile_attribution`, and the rule for a line's type, so a cart built outside the provider (another SDK's
+  checkout) can write the same record with `recordAdd` and `serializeAttribution`.
 
 ## 0.22.0 (2026-10-22)
 
