@@ -2,9 +2,10 @@
 
 ## 0.23.1 (2026-10-26)
 
-The 0.23.0 release, published as 0.23.1: npm refused the number 0.23.0 ("previously staged").
+The same code as 0.23.0 (`f04d944`): a second publish, made when npm first answered 0.23.0's as refused
+("previously staged") though it went out. Either version is this release.
 
-## 0.23.0 (not published)
+## 0.23.0 (2026-10-26)
 
 - **Attribution types**: `AttributionSource` and `_apptile_attribution` add `auction` (a live auction show's
   adds and wins), `auction-replay` (adds on its replay) and `silent-auction` (a silent auction's wins, by its id),
