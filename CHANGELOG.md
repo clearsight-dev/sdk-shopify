@@ -1,5 +1,14 @@
 # Changelog
 
+## Unreleased
+
+- **The cart resets on sign-out**: a signed-in shopper becoming signed out (signing out, or the session expiring)
+  starts a fresh cart, as `useCart().reset` does, so the next person on the phone doesn't inherit it. The old cart
+  stays on Shopify. Not while a stored session is read at app open, not on a launch that starts signed out, not on
+  sign-in. A failed reset is logged, not thrown. Always on.
+- **`useCart().ensureCartId()`**: the cart's id, or a new cart created, kept and returned when there is none. Calls
+  made while one is being created share it, so a double tap makes one cart.
+
 ## 0.23.1 (2026-10-26)
 
 The same code as 0.23.0 (`f04d944`): a second publish, made when npm first answered 0.23.0's as refused
