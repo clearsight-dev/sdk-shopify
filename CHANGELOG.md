@@ -1,5 +1,14 @@
 # Changelog
 
+## Unreleased
+
+- **`ShopifyProvider` `resetCartOnSignOut`** (default true): a signed-in shopper becoming signed out (signing out,
+  or the session expiring) starts a fresh cart, as `useCart().reset` does, so the next person on the phone doesn't
+  inherit it. The old cart stays on Shopify. Not while a stored session is read at app open, not on a launch that
+  starts signed out, not on sign-in. A failed reset is logged, not thrown. False keeps the cart.
+- **`useCart().ensureCartId()`**: the cart's id, or a new cart created, kept and returned when there is none. Calls
+  made while one is being created share it, so a double tap makes one cart.
+
 ## 0.23.0 (unreleased)
 
 - **`useCustomerTags({ active?, everyMs? })`**: the signed-in customer's tags (`tags`, `known`, `hasTag`,
