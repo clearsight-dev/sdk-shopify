@@ -180,6 +180,11 @@ interface CartState {
   adopt:              (cartId: string) => Promise<Cart | null>;
   reset:              () => Promise<void>;
   /**
+   * The cart's id, creating (and keeping) a cart when there is none. Calls made while one is being
+   * created share it.
+   */
+  ensureCartId:       () => Promise<string>;
+  /**
    * Waits for queued `attribution` writes and retries an unsent value once. True when the cart holds
    * the device's value (and always when attribution is off). Never throws. Await before checkout:
    * a failed write is otherwise only retried by the next change.
@@ -1325,12 +1330,24 @@ export function ShopifyProvider({
       return { before: current, after };
     }, { retryOnDeadCart }), [writeCart]);
 
+  // Shared while a cart is being created, so a double tap doesn't mint two carts.
+  const cartCreating = useRef<Promise<string> | null>(null);
   const ensureCartId = useCallback(async (): Promise<string> => {
-    if (cart?.id) return cart.id;
-    const created = await shopify.cart.create({ attributes: newCartAttributes() });
-    await persistCart(created);
-    return created.id;
-  }, [cart, persistCart]);
+    const current = cartRef.current;
+    if (current?.id) return current.id;
+    if (!cartCreating.current) {
+      cartCreating.current = (async () => {
+        try {
+          const created = await shopify.cart.create({ attributes: newCartAttributes() });
+          await persistCart(created);
+          return created.id;
+        } finally {
+          cartCreating.current = null;
+        }
+      })();
+    }
+    return cartCreating.current;
+  }, [persistCart, newCartAttributes]);
 
   /**
    * Classifies a failed cart write and emits the matching alert before the error
@@ -1829,6 +1846,19 @@ export function ShopifyProvider({
     await persistCart(created);
   }, [persistCart]);
 
+  // Null until the first state after app open, so a launch that starts signed out never counts as a sign-out.
+  const wasSignedIn = useRef<boolean | null>(null);
+  const signedIn = sessionState.kind !== null;
+  useEffect(() => {
+    if (sessionState.restoring) return;
+    const previous = wasSignedIn.current;
+    wasSignedIn.current = signedIn;
+    if (previous !== true || signedIn) return;
+    cartReset().catch((resetError) => {
+      console.warn("[ShopifyProvider] cart reset after sign-out failed", resetError);
+    });
+  }, [signedIn, sessionState.restoring, cartReset]);
+
   // The wishlist module owns storage and hydration; these just wrap the mutating methods and
   // rely on onChange to keep React in sync.
   const wlAdd     = useCallback(async (p: Product | string) => {
@@ -1973,6 +2003,7 @@ export function ShopifyProvider({
       refresh:            cartRefresh,
       adopt:              cartAdopt,
       reset:              cartReset,
+      ensureCartId,
       flushAttribution:   cartFlushAttribution,
       ensureCartAttributes: cartEnsureAttributes,
       saveLinkTags,
@@ -2031,7 +2062,7 @@ export function ShopifyProvider({
     ready, error, events, emit, storage, gridColumnsStorageKey, pageSizeSetting,
     // A new policy changes `cart.maxLineItems`, so the memo must see it.
     resolvedPolicy,
-    cart, cartLoading, cartAddLine, cartAddLines, cartAddLinesDetailed, cartUpdateLine, cartRemoveLine, cartApplyDiscounts, cartUpdateNote, cartSetBuyerIdentity, cartAddGiftCardCodes, cartRemoveGiftCards, cartRefresh, cartAdopt, cartReset, cartFlushAttribution, cartEnsureAttributes, saveLinkTags,
+    cart, cartLoading, cartAddLine, cartAddLines, cartAddLinesDetailed, cartUpdateLine, cartRemoveLine, cartApplyDiscounts, cartUpdateNote, cartSetBuyerIdentity, cartAddGiftCardCodes, cartRemoveGiftCards, cartRefresh, cartAdopt, cartReset, ensureCartId, cartFlushAttribution, cartEnsureAttributes, saveLinkTags,
     wlItems, wlIds, wlHas, wlAdd, wlRemove, wlToggle, wlClear, wlRefresh,
     wtItems, wtIds, wtHas, wtAdd, wtRemove, wtRefresh,
     sessionState, session, authMethod, auth?.signInSurface, profileUpdate, storeCreditOptions,
