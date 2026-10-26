@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.24.0 (2026-10-26)
 
 - **The cart resets on sign-out**: a signed-in shopper becoming signed out (signing out, or the session expiring)
   starts a fresh cart, as `useCart().reset` does, so the next person on the phone doesn't inherit it. The old cart
