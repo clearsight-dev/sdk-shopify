@@ -1,4 +1,4 @@
-// ShopifyProvider starts a fresh cart when a signed-in shopper becomes signed out,
+// ShopifyProvider starts a fresh cart when a signed-in shopper becomes signed out (`resetCartOnSignOut`),
 // and `useCart().ensureCartId` creates at most one cart however often it is called at once.
 import assert from 'node:assert/strict';
 import { JSDOM } from 'jsdom';
@@ -68,7 +68,7 @@ let root = null;
 let storage = null;
 const settle = () => runAct(async () => { await new Promise((r) => setTimeout(r, 40)); });
 /** A fresh provider, as on app open. `stored`: what the keychain holds. */
-async function launch({ stored = {} } = {}) {
+async function launch({ stored = {}, props = {} } = {}) {
   if (root) await runAct(async () => root.unmount());
   root = createRoot(document.getElementById('root'));
   storage = memoryStorage();
@@ -80,6 +80,9 @@ async function launch({ stored = {} } = {}) {
         config: { storeDomain: 'shop.myshopify.com', storefrontAccessToken: 't', apiVersion: '2026-07' },
         storage,
         auth: { method: 'password', secureStorage: keychain(stored) },
+        // The app that runs Cart Assist turns it on; every case below but the two that test the default.
+        resetCartOnSignOut: true,
+        ...props,
       },
       React.createElement(Probe),
     ));
@@ -131,6 +134,24 @@ t.section('not a sign-out');
 await launch({ stored: { 'auth.storefrontToken': 'tok_old', 'auth.storefrontExpiresAt': '1000' } });
 await t.check('a stored session dropped while restoring does not reset the cart', () => {
   assert.equal(api.customer.restoring, false);
+  assert.equal(api.customer.loggedIn, false);
+  assert.equal(created, 1);
+  assert.equal(api.cart.cart.id, 'gid://shopify/Cart/1');
+});
+
+await launch({ props: { resetCartOnSignOut: false } });
+await act(() => api.customer.login('a@example.com', 'pw'));
+await act(() => api.customer.logout());
+await t.check('resetCartOnSignOut: false keeps the cart on sign-out', () => {
+  assert.equal(api.customer.loggedIn, false);
+  assert.equal(created, 1);
+  assert.equal(api.cart.cart.id, 'gid://shopify/Cart/1');
+});
+
+await launch({ props: { resetCartOnSignOut: undefined } });
+await act(() => api.customer.login('a@example.com', 'pw'));
+await act(() => api.customer.logout());
+await t.check('resetCartOnSignOut unset (no Cart Assist) keeps the cart on sign-out', () => {
   assert.equal(api.customer.loggedIn, false);
   assert.equal(created, 1);
   assert.equal(api.cart.cart.id, 'gid://shopify/Cart/1');

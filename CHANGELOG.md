@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.25.0 (2026-10-27)
+
+- **The sign-out cart reset is the app's switch, off by default**: `ShopifyProvider`'s `resetCartOnSignOut`
+  (0.24.0 always reset). Set it to whether Cart Assist (sdk-apptile-cart-sync) is on: Cart Assist adopts the old
+  cart again at the next sign-in, so the reset only hides it from the next person on the phone; without Cart Assist
+  the reset would lose the shopper's cart for good. Decided 2026-10-27 by the Head of Engineering.
+
 ## 0.24.0 (2026-10-26)
 
 - **The cart resets on sign-out**: a signed-in shopper becoming signed out (signing out, or the session expiring)
