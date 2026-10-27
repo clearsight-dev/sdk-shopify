@@ -1,5 +1,14 @@
 # Changelog
 
+## Unreleased
+
+- **The cart resets on sign-out**: a signed-in shopper becoming signed out (signing out, or the session expiring)
+  starts a fresh cart, as `useCart().reset` does, so the next person on the phone doesn't inherit it. The old cart
+  stays on Shopify. Not while a stored session is read at app open, not on a launch that starts signed out, not on
+  sign-in. A failed reset is logged, not thrown. Always on.
+- **`useCart().ensureCartId()`**: the cart's id, or a new cart created, kept and returned when there is none. Calls
+  made while one is being created share it, so a double tap makes one cart.
+
 ## 0.23.0 (unreleased)
 
 - **`useCustomerTags({ active?, everyMs? })`**: the signed-in customer's tags (`tags`, `known`, `hasTag`,
@@ -20,6 +29,9 @@
 - **`useFavoritesPage({ showGone: true })`**: a saved product the store no longer has stays as a card from what
   the device saved (title, photo, price; not for sale), listed in `goneIds`. Needs `wishlistKeepDeleted`. Unset,
   nothing changes.
+- **`useShopify().attributionEnabled`** and **`lineTypeOf`** exported: whether the provider records
+  `_apptile_attribution`, and the rule for a line's type, so a cart built outside the provider (another SDK's
+  checkout) can write the same record with `recordAdd` and `serializeAttribution`.
 
 ## 0.22.0 (2026-10-22)
 

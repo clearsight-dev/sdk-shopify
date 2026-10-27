@@ -10,6 +10,7 @@ const {
   recordAdd,
   recordRemove,
   mergeAttribution,
+  lineTypeOf,
 } = await import('../dist/index.js');
 
 const fixtures = JSON.parse(readFileSync(new URL('../src/attribution.fixtures.json', import.meta.url), 'utf8'));
@@ -88,6 +89,14 @@ check('t is epoch seconds, whole', () => {
 
 check('serialized output is compact', () => {
   assert.equal(serializeAttribution({ v: 1, app: { 1: { n: 1 } } }), '{"v":1,"app":{"1":{"n":1}}}');
+});
+
+check('lineTypeOf: a `_preauthorized` line is p, any value but "false"', () => {
+  assert.equal(lineTypeOf([{ key: '_preauthorized', value: 'true' }]), 'p');
+  assert.equal(lineTypeOf([{ key: '_preauthorized', value: '' }]), 'p');
+  assert.equal(lineTypeOf([{ key: '_preauthorized', value: 'false' }]), 'n');
+  assert.equal(lineTypeOf([{ key: 'other', value: 'x' }]), 'n');
+  assert.equal(lineTypeOf(undefined), 'n');
 });
 
 console.log(`\n${pass} checks passed`);
