@@ -48,7 +48,7 @@ global.fetch = async (_url, init) => {
   if (name === 'CartCreate') return reply({ cartCreate: { cart: emptyCart, userErrors: [] } });
   if (name === 'CartGet') return reply({ cart: emptyCart });
   if (name === 'WishlistNodes') net.wishlistReads.push(variables.ids.length);
-  if (name === 'WishlistNodes') return reply({ nodes: variables.ids.map((id) => (id.endsWith('/404') ? null : productNode(id))) });
+  if (name === 'WishlistNodes') return reply({ nodes: variables.ids.map((id) => (/\/\d*404$/.test(id) ? null : productNode(id))) });
   return reply({});
 };
 
@@ -288,6 +288,39 @@ await check('showGone: it stays as a card from what was saved, not for sale, in 
   assert.equal(pageShowingGone.status, 'ready');
 });
 await runAct(async () => favRoot.unmount());
+
+console.log('favourites page, a gone product saved by id alone');
+// An auction lot hearted by its id (no title, photo or price saved), then archived. Without `showGoneUntitled`
+// it is no card (as before); with it, an untitled card that can be seen and removed (0.25.1).
+const lotOnly = memory({ [APPTILE_KEY]: JSON.stringify([]) });
+await shopify.wishlist.init({ storage: lotOnly, storageKey: APPTILE_KEY, hydrateOnInit: false });
+await shopify.wishlist.add('gid://shopify/Product/9404');
+await shopify.wishlist.refresh({ keepDeleted: true });
+let pageShowingUntitled = null;
+function UntitledFavourites() {
+  pageShowingGone = sdk.useFavoritesPage({ showGone: true });
+  pageShowingUntitled = sdk.useFavoritesPage({ showGone: true, showGoneUntitled: true });
+  return null;
+}
+const lotRoot = createRoot(document.getElementById('root'));
+await runAct(async () => {
+  lotRoot.render(React.createElement(sdk.ShopifyProvider, { config: CONFIG, storage: lotOnly, wishlistStorageKey: APPTILE_KEY, wishlistKeepDeleted: true, wishlistHydrateOnInit: false },
+    React.createElement(UntitledFavourites)));
+});
+await runAct(async () => { await settle(); await settle(); });
+await check('showGone alone: a gone product saved by id alone is no card, as before', () => {
+  assert.deepEqual(pageShowingGone.goneIds, []);
+  assert.equal(pageShowingGone.status, 'empty');
+});
+await check('showGoneUntitled: it is an untitled card in goneIds, and the page is not empty', () => {
+  pageShowingGone = pageShowingUntitled;
+  assert.deepEqual(pageShowingGone.goneIds, ['gid://shopify/Product/9404']);
+  assert.equal(pageShowingGone.products.length, 1);
+  assert.equal(pageShowingGone.products[0].title, '');
+  assert.equal(pageShowingGone.products[0].availableForSale, false);
+  assert.equal(pageShowingGone.status, 'ready');
+});
+await runAct(async () => lotRoot.unmount());
 
 console.log('favourites page, lazy: the next launch');
 // The same phone opened again (a new launch: nothing cached): every saved entry already carries its stored product.
