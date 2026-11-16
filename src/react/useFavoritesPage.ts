@@ -37,14 +37,18 @@ export interface UseFavoritesPageOptions {
   showGone?: boolean;
 }
 
-/** A saved entry the store no longer has, as a card's product: its saved title, photo and price, not for sale. */
-function savedProduct(item: WishlistItem): Product | null {
-  const { handle, title, image, price } = item.basic;
-  if (!title) return null;
+/**
+ * A saved entry the store no longer has, as a card's product: its saved title, photo and price, not for
+ * sale. One saved by id alone (an auction lot's heart) has none of them and is still a card, an untitled
+ * one (0.25.1): dropped, it stayed in the wishlist's count with no card to take it out by, as Spark*l's
+ * 33.2.0 never did (every saved entry was a card there).
+ */
+function savedProduct(item: WishlistItem): Product {
+  const { handle, title, image, price } = item.basic ?? {};
   const money = price ?? { amount: "0", currencyCode: "" };
-  const photo = image ? { url: image, altText: title, width: null, height: null } : null;
+  const photo = image ? { url: image, altText: title ?? "", width: null, height: null } : null;
   return {
-    id: item.productId, handle: handle ?? "", title, description: "", descriptionHtml: "", vendor: "", productType: "",
+    id: item.productId, handle: handle ?? "", title: title ?? "", description: "", descriptionHtml: "", vendor: "", productType: "",
     tags: [], totalInventory: 0, availableForSale: false, priceRange: { min: money, max: money }, compareAtPriceRange: null,
     options: [], variants: [], images: photo ? [photo] : [], featuredImage: photo, onlineStoreUrl: null,
     mediaContentTypes: [], hasVideo: false, media: [], metafields: {}, rating: null, updatedAt: "", createdAt: "",

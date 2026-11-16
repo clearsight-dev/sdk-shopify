@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.25.1 (2026-11-16)
+
+- **A gone product saved by id alone is a card on the favourites page.** With `useFavoritesPage({ showGone: true })`,
+  a saved product the store no longer has was drawn only from a saved title, so one saved by id (an auction lot's
+  heart, archived after its auction) was no card at all, yet still counted in `useWishlist().ids` with no way to
+  take it out: "4 in the wishlist, nothing on the page". It is now an untitled card in `goneIds`, like every other
+  gone product (not for sale, removable), as Spark*l's 33.2.0 drew every saved entry.
+
 ## 0.25.0 (2026-10-27)
 
 - **The sign-out cart reset is the app's switch, off by default**: `ShopifyProvider`'s `resetCartOnSignOut`
