@@ -35,16 +35,21 @@ export interface UseFavoritesPageOptions {
    * `wishlistKeepDeleted`, which keeps their entries. Default: false, they aren't shown.
    */
   showGone?: boolean;
+  /**
+   * With `showGone`, also keep a gone product the device saved no title for (saved by id alone: an auction
+   * lot's heart) as an untitled card in `goneIds`, so it can still be seen and removed (0.25.1). Off, it is
+   * no card, yet it stays in `useWishlist().ids`. Default: false.
+   */
+  showGoneUntitled?: boolean;
 }
 
 /**
  * A saved entry the store no longer has, as a card's product: its saved title, photo and price, not for
- * sale. One saved by id alone (an auction lot's heart) has none of them and is still a card, an untitled
- * one (0.25.1): dropped, it stayed in the wishlist's count with no card to take it out by, as Spark*l's
- * 33.2.0 never did (every saved entry was a card there).
+ * sale. One saved by id alone has none of them: null, unless `untitled` asks for it as an untitled card.
  */
-function savedProduct(item: WishlistItem): Product {
+function savedProduct(item: WishlistItem, untitled: boolean): Product | null {
   const { handle, title, image, price } = item.basic ?? {};
+  if (!title && !untitled) return null;
   const money = price ?? { amount: "0", currencyCode: "" };
   const photo = image ? { url: image, altText: title ?? "", width: null, height: null } : null;
   return {
@@ -61,7 +66,7 @@ function savedProduct(item: WishlistItem): Product {
  * provider fills the products in at launch.
  */
 export function useFavoritesPage(options: UseFavoritesPageOptions = {}): FavoritesPage {
-  const { showGone = false } = options;
+  const { showGone = false, showGoneUntitled = false } = options;
   const { ready } = useShopify();
   const { items, refresh } = useWishlist();
   const [filling, setFilling] = useState(false);
@@ -72,13 +77,13 @@ export function useFavoritesPage(options: UseFavoritesPageOptions = {}): Favorit
     const gone: string[] = [];
     const list = items.flatMap((item) => {
       if (item.product) return [item.product];
-      const saved = showGone && item.product === null ? savedProduct(item) : null;
+      const saved = showGone && item.product === null ? savedProduct(item, showGoneUntitled) : null;
       if (!saved) return [];
       gone.push(saved.id);
       return [saved];
     });
     return { products: list, goneIds: gone };
-  }, [items, showGone]);
+  }, [items, showGone, showGoneUntitled]);
   const missing = items.some((item) => item.product === undefined);
 
   const retry = useCallback(() => {
