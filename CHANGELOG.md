@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.26.0 (2026-11-22)
+
+- **`_apptile_attribution` is trimmed to the cart.** A removal on the web store (Cart Assist shares the cart) never
+  touched the attribute, so the app adopted the old counts and credited a later re-add to the show. Every cart the
+  provider gets back now also takes off the units it no longer holds (app first, then replays, auction replays,
+  silent auctions, live shows, auction shows, oldest first, as a removal does) and writes the value when that changed
+  it; nothing is ever added. A line write records its own change in the same step, so its units keep their source. A
+  cart read older than one already seen is ignored. Only with `attribution.enabled`.
+- **`trimAttributionToLines(value, lines, lineTypes?)`** and its line type `AttributionCartLine`, exported.
+- **`attribution.lineType`** (classes a line by its attributes; default `lineTypeOf`) and
+  **`attribution.trimLineTypes`** (letters trimmed; default `['n', 'p']`, `'all'` for every one).
+
 ## 0.25.1 (2026-11-16)
 
 - **`useFavoritesPage({ showGone: true, showGoneUntitled: true })`: a gone product saved by id alone is a card.**

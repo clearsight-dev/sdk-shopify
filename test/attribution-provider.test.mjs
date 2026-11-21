@@ -16,6 +16,13 @@ const refused = new Set();
 // Attribute writes left to fail before they start landing again.
 let attrFailures = 0;
 const calls = [];
+// Shopify's `updatedAt`, a second apart per write. A test-made cart without one reads as ''.
+let clock = Date.parse('2026-01-01T00:00:00Z');
+const touch = (c) => { c.updatedAt = new Date(clock += 1000).toISOString(); };
+// Set to a promise: the next cart read is taken at once but answered only when it resolves (a slow read).
+let holdRead = null;
+// The same for the next quantity change: Shopify has made it, the app hasn't heard yet.
+let holdUpdate = null;
 
 const refusal = (id) => ({ field: ['lines'], message: `The merchandise ${id} is no longer available.`, code: 'MERCHANDISE_NOT_FOUND' });
 const sameLine = (a, b) => a.merchandiseId === b.merchandiseId && JSON.stringify(a.attributes ?? []) === JSON.stringify(b.attributes ?? []);
@@ -32,7 +39,7 @@ const payload = (id) => {
       merchandise: { id: l.merchandiseId }, cost: { totalAmount: money, amountPerQuantity: money },
     })) },
     cost: { subtotalAmount: money, totalAmount: money },
-    discountCodes: [], appliedGiftCards: [], createdAt: '', updatedAt: '',
+    discountCodes: [], appliedGiftCards: [], createdAt: '', updatedAt: c.updatedAt ?? '',
   };
 };
 
@@ -64,31 +71,44 @@ global.fetch = async (_url, init) => {
     const id = `gid://shopify/Cart/${nextCartId++}`;
     carts.set(id, { attributes: variables.input?.attributes ?? [], lines: [] });
     addInto(carts.get(id), lines);
+    touch(carts.get(id));
     return reply({ cartCreate: { cart: payload(id), userErrors: [] } });
   }
   if (name === 'CartGet' || query.includes('cart(id:')) {
-    return reply({ cart: carts.has(variables.id) ? payload(variables.id) : null });
+    const read = carts.has(variables.id) ? payload(variables.id) : null;
+    if (holdRead) { const gate = holdRead; holdRead = null; await gate; }
+    return reply({ cart: read });
   }
   if (name === 'CartLinesAdd') {
     const bad = variables.lines.find((l) => refused.has(l.merchandiseId));
     if (bad) return reply({ cartLinesAdd: { cart: null, userErrors: [refusal(bad.merchandiseId)] } });
     addInto(carts.get(variables.cartId), variables.lines);
+    touch(carts.get(variables.cartId));
     return reply({ cartLinesAdd: { cart: payload(variables.cartId), userErrors: [] } });
   }
   if (name === 'CartLinesUpdate') {
     const c = carts.get(variables.cartId);
     for (const u of variables.lines) c.lines[Number(u.id.split('/line/')[1])].quantity = u.quantity;
     c.lines = c.lines.filter((l) => l.quantity > 0);
-    return reply({ cartLinesUpdate: { cart: payload(variables.cartId), userErrors: [] } });
+    touch(c);
+    const updated = payload(variables.cartId);
+    if (holdUpdate) { const gate = holdUpdate; holdUpdate = null; await gate; }
+    return reply({ cartLinesUpdate: { cart: updated, userErrors: [] } });
   }
   if (name === 'CartLinesRemove') {
     const c = carts.get(variables.cartId);
     c.lines = c.lines.filter((_l, i) => !variables.lineIds.includes(`${variables.cartId}/line/${i}`));
+    touch(c);
     return reply({ cartLinesRemove: { cart: payload(variables.cartId), userErrors: [] } });
+  }
+  if (name === 'CartNoteUpdate') {
+    touch(carts.get(variables.cartId));
+    return reply({ cartNoteUpdate: { cart: payload(variables.cartId), userErrors: [] } });
   }
   if (name === 'CartAttributesUpdate') {
     if (attrFailures > 0) { attrFailures -= 1; throw new TypeError('Network request failed'); }
     carts.get(variables.cartId).attributes = variables.attributes;
+    touch(carts.get(variables.cartId));
     return reply({ cartAttributesUpdate: { cart: payload(variables.cartId), userErrors: [] } });
   }
   return reply({});
@@ -98,7 +118,7 @@ const React = (await import('react')).default;
 const { createRoot } = await import('react-dom/client');
 const TestUtils = await import('react-dom/test-utils');
 const runAct = React.act ?? TestUtils.act ?? TestUtils.default.act;
-const { ShopifyProvider, useShopify, parseAttribution, ATTRIBUTION_ATTRIBUTE_KEY } = await import('../dist/index.js');
+const { ShopifyProvider, useShopify, parseAttribution, lineTypeOf, ATTRIBUTION_ATTRIBUTE_KEY } = await import('../dist/index.js');
 
 const CART_KEY = 'shopify:cart-id:v1';
 const LINES_KEY = 'shopify:cart-lines:v1';
@@ -508,6 +528,195 @@ console.log('expired cart restore');
   check('reset starts the new cart from {"v":1}', () => {
     assert.deepEqual(parseAttribution(s3.map.get(ATTR_KEY)), { v: 1 });
     assert.equal(serverValue(), null);
+  });
+}
+
+console.log('trimmed to the cart');
+// A cart the app already uses, as Shopify holds it (cartAttributes included, so the launch writes nothing).
+const storedCart = (id, value, lines) => {
+  const c = { attributes: [...cartAttributes, ...(value ? [{ key: ATTRIBUTION_ATTRIBUTE_KEY, value }] : [])], lines };
+  touch(c);
+  carts.set(id, c);
+  return memoryStorage({ [CART_KEY]: id });
+};
+// A change made on the web store: Shopify's lines move, the attribute doesn't.
+const onWeb = (id, change) => { const c = carts.get(id); c.lines = change(c.lines); touch(c); };
+const rawValue = () => serverCart().attributes.find((a) => a.key === ATTRIBUTION_ATTRIBUTE_KEY)?.value;
+{
+  const id = 'gid://shopify/Cart/web-1';
+  const s = storedCart(id, '{"v":1,"live":{"show-1":{"t":100,"items":{"1":{"n":2},"2":{"n":1}}}}}', [
+    { merchandiseId: V1, quantity: 2, attributes: [] }, { merchandiseId: V2, quantity: 1, attributes: [] },
+  ]);
+  onWeb(id, (lines) => lines.filter((l) => l.merchandiseId !== V1));
+  await mount(s, on);
+  check('removed on the web, then the app launches: the claim is trimmed and written once', () => {
+    assert.equal(named('CartAttributesUpdate').length, 1);
+    assert.deepEqual(serverValue(), { v: 1, live: { 'show-1': { t: 100, items: { 2: { n: 1 } } } } });
+    assert.deepEqual(parseAttribution(s.map.get(ATTR_KEY)), serverValue());
+  });
+  calls.length = 0;
+  await act(async () => { await api.cart.refresh(); });
+  check('the next read finds nothing to trim: no write (no loop)', () => {
+    assert.equal(named('CartAttributesUpdate').length, 0);
+  });
+
+  onWeb(id, () => []);
+  calls.length = 0;
+  await act(async () => { await api.cart.refresh(); });
+  check('removed on the web while the app runs, then refresh: trimmed to {"v":1}, key kept', () => {
+    assert.equal(named('CartAttributesUpdate').length, 1);
+    assert.equal(rawValue(), '{"v":1}');
+  });
+
+  await act(async () => { await api.cart.addLine({ merchandiseId: V1, quantity: 1, source: { type: 'live', showId: 'show-2' } }); });
+  check('an add from a live show after the trim is credited to that show', () => {
+    assert.deepEqual(strip(serverValue()), { v: 1, live: { 'show-2': { items: { 1: { n: 1 } } } } });
+  });
+}
+{
+  const id = 'gid://shopify/Cart/web-none';
+  const s = storedCart(id, null, [{ merchandiseId: V1, quantity: 1, attributes: [] }]);
+  await mount(s, on);
+  await act(async () => { await api.cart.refresh(); });
+  check('a cart without the attribute: no write, and none is created', () => {
+    assert.equal(named('CartAttributesUpdate').length, 0);
+    assert.equal(rawValue(), undefined);
+  });
+}
+{
+  const id = 'gid://shopify/Cart/web-pending';
+  const s = storedCart(id, '{"v":1,"live":{"show-1":{"t":100,"items":{"1":{"n":1}}}}}', [{ merchandiseId: V1, quantity: 1, attributes: [] }]);
+  await mount(s, on);
+  attrFailures = 1;
+  await act(async () => { await api.cart.addLine({ merchandiseId: V2, quantity: 1, source: live }); });
+  onWeb(id, (lines) => lines.filter((l) => l.merchandiseId !== V1));
+  calls.length = 0;
+  await act(async () => { await api.cart.refresh(); });
+  check('a value not yet written is trimmed too, and lands trimmed', () => {
+    assert.equal(named('CartAttributesUpdate').length, 1);
+    assert.deepEqual(strip(serverValue()), { v: 1, live: { 'show-1': { items: { 2: { n: 1 } } } } });
+  });
+}
+{
+  const id = 'gid://shopify/Cart/web-stale';
+  const s = storedCart(id, '{"v":1,"live":{"show-1":{"t":100,"items":{"1":{"n":1}}}}}', [{ merchandiseId: V1, quantity: 1, attributes: [] }]);
+  await mount(s, on);
+  let release;
+  holdRead = new Promise((r) => { release = r; });
+  let reading;
+  await runAct(async () => { reading = api.cart.refresh(); await new Promise((r) => setTimeout(r, 20)); });
+  attrFailures = 1;
+  await act(async () => { await api.cart.addLine({ merchandiseId: V2, quantity: 1, source: live }); });
+  release();
+  await act(async () => { await reading; });
+  let flushed = null;
+  await act(async () => { flushed = await api.cart.flushAttribution(); });
+  check('a read that started before an add and lands after it does not take the new claim off', () => {
+    assert.equal(flushed, true);
+    assert.deepEqual(strip(serverValue()), { v: 1, live: { 'show-1': { items: { 1: { n: 1 }, 2: { n: 1 } } } } });
+  });
+}
+{
+  await mount(memoryStorage(), on);
+  await act(async () => { await api.cart.addLine({ merchandiseId: V1, quantity: 5, source: live }); });
+  await act(async () => { await api.cart.updateLine(api.cart.cart.lines[0].id, 4); });
+  check('an in-app decrease 5 → 4 still removes exactly 1', () => {
+    assert.deepEqual(strip(serverValue()), { v: 1, live: { 'show-1': { items: { 1: { n: 4 } } } } });
+  });
+  await act(async () => { await api.cart.removeLine(api.cart.cart.lines[0].id); });
+  check('an in-app remove takes the whole line, once', () => assert.equal(rawValue(), '{"v":1}'));
+}
+{
+  // Removed on the web, no read after: the new unit keeps its own source and the show's credit goes.
+  const sources = [
+    ['the app', undefined, (v) => ({ v: 1, app: { [v]: { n: 1 } } })],
+    ['a replay', { type: 'replay', showId: 'show-2' }, (v) => ({ v: 1, replay: { 'show-2': { items: { [v]: { n: 1 } } } } })],
+  ];
+  for (const [label, source, expected] of sources) {
+    const id = `gid://shopify/Cart/web-other-${label.replace(' ', '-')}`;
+    const s = storedCart(id, '{"v":1,"live":{"show-1":{"t":100,"items":{"1":{"n":1}}}}}', [{ merchandiseId: V1, quantity: 1, attributes: [] }]);
+    await mount(s, on);
+    onWeb(id, () => []);
+    calls.length = 0;
+    await act(async () => { await api.cart.addLine({ merchandiseId: V2, quantity: 1, ...(source ? { source } : {}) }); });
+    check(`V1 removed on the web, V2 added from ${label}: the add's own cart trims V1, V2 is ${label}'s`, () => {
+      assert.deepEqual(strip(serverValue()), expected(2));
+      assert.equal(named('CartAttributesUpdate').length, 1);
+    });
+  }
+  for (const [label, source, expected] of sources) {
+    const id = `gid://shopify/Cart/web-readd-${label.replace(' ', '-')}`;
+    const s = storedCart(id, '{"v":1,"live":{"show-1":{"t":100,"items":{"1":{"n":1}}}}}', [{ merchandiseId: V1, quantity: 1, attributes: [] }]);
+    await mount(s, on);
+    onWeb(id, () => []);
+    await act(async () => { await api.cart.updateNote('gift'); });
+    await act(async () => { await api.cart.addLine({ merchandiseId: V1, quantity: 1, ...(source ? { source } : {}) }); });
+    check(`V1 removed on the web, a note written, V1 re-added from ${label}: the new unit is ${label}'s`, () => {
+      assert.deepEqual(strip(serverValue()), expected(1));
+    });
+  }
+}
+{
+  await mount(memoryStorage(), on);
+  await act(async () => { await api.cart.addLine({ merchandiseId: V1, quantity: 5, source: live }); });
+  let release;
+  holdUpdate = new Promise((r) => { release = r; });
+  let updating;
+  await runAct(async () => { updating = api.cart.updateLine(api.cart.cart.lines[0].id, 4); await new Promise((r) => setTimeout(r, 20)); });
+  await act(async () => { await api.cart.refresh(); });
+  release();
+  await act(async () => { await updating; });
+  check('a refresh that lands before the decrease it saw: 1 unit off, not 2', () => {
+    assert.deepEqual(strip(serverValue()), { v: 1, live: { 'show-1': { items: { 1: { n: 4 } } } } });
+  });
+
+  holdRead = new Promise((r) => { release = r; });
+  let reading;
+  await runAct(async () => { reading = api.cart.refresh(); await new Promise((r) => setTimeout(r, 20)); });
+  await act(async () => { await api.cart.updateLine(api.cart.cart.lines[0].id, 3); });
+  release();
+  await act(async () => { await reading; });
+  check('a refresh from before a decrease, landing after it, is ignored: 1 unit off', () => {
+    assert.deepEqual(strip(serverValue()), { v: 1, live: { 'show-1': { items: { 1: { n: 3 } } } } });
+    assert.equal(api.cart.cart.lines[0].quantity, 4);
+  });
+}
+{
+  const prize = [{ key: '_prize', value: '1' }];
+  const lineType = (attributes) => (attributes.some((a) => a.key === '_prize') ? 'g' : lineTypeOf(attributes));
+  const id = 'gid://shopify/Cart/web-prize';
+  const s = storedCart(id, '{"v":1,"live":{"show-1":{"t":100,"items":{"1":{"n":1}}}}}', [{ merchandiseId: V1, quantity: 1, attributes: [] }]);
+  await mount(s, { attribution: { enabled: true, lineType } });
+  await act(async () => { await api.cart.addLine({ merchandiseId: V3, quantity: 1, source: live, attributes: prize }); });
+  check('a custom lineType counts a prize line under its own letter', () => {
+    assert.deepEqual(strip(serverValue()).live['show-1'].items, { 1: { n: 1 }, 3: { g: 1 } });
+  });
+  onWeb(id, (lines) => lines.filter((l) => l.merchandiseId !== V3));
+  await act(async () => { await api.cart.refresh(); });
+  check('a custom lineType alone does not widen the trim: g is kept', () => {
+    assert.deepEqual(strip(serverValue()).live['show-1'].items, { 1: { n: 1 }, 3: { g: 1 } });
+  });
+  await mount(s, { attribution: { enabled: true, lineType, trimLineTypes: ['n', 'p', 'g'] } });
+  check('with g in trimLineTypes, the prize gone on the web is trimmed', () => {
+    assert.deepEqual(strip(serverValue()).live['show-1'].items, { 1: { n: 1 } });
+  });
+
+  const id2 = 'gid://shopify/Cart/web-prize-default';
+  const s2 = storedCart(id2, '{"v":1,"live":{"show-1":{"t":100,"items":{"3":{"g":1}}}}}', []);
+  await mount(s2, on);
+  check('without one, another SDK\'s letter is left alone', () => {
+    assert.equal(named('CartAttributesUpdate').length, 0);
+    assert.deepEqual(serverValue().live['show-1'].items, { 3: { g: 1 } });
+  });
+}
+{
+  const id = 'gid://shopify/Cart/web-off';
+  const s = storedCart(id, '{"v":1,"app":{"1":{"n":1}}}', []);
+  await mount(s, { attribution: { enabled: false } });
+  await act(async () => { await api.cart.refresh(); });
+  check('attribution off: nothing is trimmed or written', () => {
+    assert.equal(named('CartAttributesUpdate').length, 0);
+    assert.equal(rawValue(), '{"v":1,"app":{"1":{"n":1}}}');
   });
 }
 

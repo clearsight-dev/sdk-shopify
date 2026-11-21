@@ -117,6 +117,7 @@ export {
   recordAdd,
   recordRemove,
   mergeAttribution,
+  trimAttributionToLines,
   lineTypeOf,
   showsInCart,
   type ShowsInCart,
@@ -125,6 +126,7 @@ export {
   type AttributionShow,
   type AttributionSource,
   type AttributionLineType,
+  type AttributionCartLine,
 } from './attribution';
 export {
   priceRange,

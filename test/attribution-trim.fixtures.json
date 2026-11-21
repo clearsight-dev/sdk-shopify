@@ -1,0 +1,107 @@
+{
+  "about": "SDK trim cases for trimAttributionToLines, also run by the theme-extension port (apptile-shopify-functions); not part of the V2 contract in src/attribution.fixtures.json. trimAttributionToLines(attribution, lines, lineTypes): no more units claimed per variant and line type than the cart's lines hold. The excess comes off app first, then each show group (replay, auction-replay, silent-auction, live, auction) oldest t first, as recordRemove takes it. Never adds. lineTypes absent = [\"n\",\"p\"]; \"all\" = every letter. An empty result is {\"v\":1}.",
+  "cases": [
+    {
+      "name": "removed on the web: the whole claim goes",
+      "attribution": { "v": 1, "live": { "show-1": { "t": 100, "items": { "1": { "n": 2 } } } } },
+      "lines": [],
+      "expected": { "v": 1 }
+    },
+    {
+      "name": "partly removed: the show keeps what is left",
+      "attribution": { "v": 1, "live": { "show-1": { "t": 100, "items": { "1": { "n": 3 } } } } },
+      "lines": [{ "merchandiseId": "gid://shopify/ProductVariant/1", "quantity": 1, "lineType": "n" }],
+      "expected": { "v": 1, "live": { "show-1": { "t": 100, "items": { "1": { "n": 1 } } } } }
+    },
+    {
+      "name": "one variant split across two lines: their units add up, nothing trimmed",
+      "attribution": { "v": 1, "live": { "show-1": { "t": 100, "items": { "1": { "n": 2 } } } }, "app": { "1": { "n": 1 } } },
+      "lines": [
+        { "merchandiseId": "gid://shopify/ProductVariant/1", "quantity": 1, "lineType": "n" },
+        { "merchandiseId": "gid://shopify/ProductVariant/1", "quantity": 2, "lineType": "n" }
+      ],
+      "expected": { "v": 1, "live": { "show-1": { "t": 100, "items": { "1": { "n": 2 } } } }, "app": { "1": { "n": 1 } } }
+    },
+    {
+      "name": "split lines holding less than claimed: only the excess comes off, app first",
+      "attribution": { "v": 1, "live": { "show-1": { "t": 100, "items": { "1": { "n": 3 } } } }, "app": { "1": { "n": 1 } } },
+      "lines": [
+        { "merchandiseId": "gid://shopify/ProductVariant/1", "quantity": 1, "lineType": "n" },
+        { "merchandiseId": "gid://shopify/ProductVariant/1", "quantity": 1, "lineType": "n" }
+      ],
+      "expected": { "v": 1, "live": { "show-1": { "t": 100, "items": { "1": { "n": 2 } } } } }
+    },
+    {
+      "name": "a variant gone from the cart loses every claim; another variant is kept",
+      "attribution": { "v": 1, "live": { "show-1": { "t": 100, "items": { "1": { "n": 1 }, "2": { "n": 2 } } } }, "app": { "1": { "n": 1 } } },
+      "lines": [{ "merchandiseId": "gid://shopify/ProductVariant/2", "quantity": 2, "lineType": "n" }],
+      "expected": { "v": 1, "live": { "show-1": { "t": 100, "items": { "2": { "n": 2 } } } } }
+    },
+    {
+      "name": "the oldest show loses first, the newest keeps its units",
+      "attribution": { "v": 1, "live": { "old": { "t": 100, "items": { "1": { "n": 1 } } }, "new": { "t": 200, "items": { "1": { "n": 1 } } } } },
+      "lines": [{ "merchandiseId": "gid://shopify/ProductVariant/1", "quantity": 1, "lineType": "n" }],
+      "expected": { "v": 1, "live": { "new": { "t": 200, "items": { "1": { "n": 1 } } } } }
+    },
+    {
+      "name": "a replay loses before a live show, whatever their times",
+      "attribution": { "v": 1, "live": { "L": { "t": 100, "items": { "1": { "n": 1 } } } }, "replay": { "R": { "t": 300, "items": { "1": { "n": 1 } } } } },
+      "lines": [{ "merchandiseId": "gid://shopify/ProductVariant/1", "quantity": 1, "lineType": "n" }],
+      "expected": { "v": 1, "live": { "L": { "t": 100, "items": { "1": { "n": 1 } } } } }
+    },
+    {
+      "name": "pre-authorised and normal units are trimmed separately",
+      "attribution": { "v": 1, "live": { "show-1": { "t": 100, "items": { "1": { "n": 2, "p": 1 } } } } },
+      "lines": [{ "merchandiseId": "gid://shopify/ProductVariant/1", "quantity": 2, "lineType": "n" }],
+      "expected": { "v": 1, "live": { "show-1": { "t": 100, "items": { "1": { "n": 2 } } } } }
+    },
+    {
+      "name": "another SDK's letter is left alone by default",
+      "attribution": { "v": 1, "live": { "show-1": { "t": 100, "items": { "1": { "g": 2, "n": 1 } } } } },
+      "lines": [],
+      "expected": { "v": 1, "live": { "show-1": { "t": 100, "items": { "1": { "g": 2 } } } } }
+    },
+    {
+      "name": "lineTypes \"all\" trims every letter",
+      "attribution": { "v": 1, "live": { "show-1": { "t": 100, "items": { "1": { "g": 2, "n": 1 } } } } },
+      "lines": [{ "merchandiseId": "gid://shopify/ProductVariant/1", "quantity": 1, "lineType": "g" }],
+      "lineTypes": "all",
+      "expected": { "v": 1, "live": { "show-1": { "t": 100, "items": { "1": { "g": 1 } } } } }
+    },
+    {
+      "name": "lineTypes given: only those letters are trimmed",
+      "attribution": { "v": 1, "app": { "1": { "n": 1, "p": 1 } } },
+      "lines": [],
+      "lineTypes": ["n"],
+      "expected": { "v": 1, "app": { "1": { "p": 1 } } }
+    },
+    {
+      "name": "never raises: more in the cart than claimed, and unclaimed variants, change nothing",
+      "attribution": { "v": 1, "live": { "show-1": { "t": 100, "items": { "1": { "n": 1 } } } } },
+      "lines": [
+        { "merchandiseId": "gid://shopify/ProductVariant/1", "quantity": 5, "lineType": "n" },
+        { "merchandiseId": "gid://shopify/ProductVariant/2", "quantity": 3, "lineType": "n" },
+        { "merchandiseId": "gid://shopify/ProductVariant/1", "quantity": 2, "lineType": "p" }
+      ],
+      "expected": { "v": 1, "live": { "show-1": { "t": 100, "items": { "1": { "n": 1 } } } } }
+    },
+    {
+      "name": "everything trimmed is {\"v\":1}",
+      "attribution": { "v": 1, "app": { "1": { "n": 1 } }, "silent-auction": { "S": { "t": 5, "items": { "1": { "p": 1 } } } } },
+      "lines": [],
+      "expected": { "v": 1 }
+    },
+    {
+      "name": "a line's merchandiseId may be a bare variant id",
+      "attribution": { "v": 1, "app": { "45123456789": { "n": 2 } } },
+      "lines": [{ "merchandiseId": "45123456789", "quantity": 1, "lineType": "n" }],
+      "expected": { "v": 1, "app": { "45123456789": { "n": 1 } } }
+    },
+    {
+      "name": "an empty value stays empty",
+      "attribution": { "v": 1 },
+      "lines": [{ "merchandiseId": "gid://shopify/ProductVariant/1", "quantity": 1, "lineType": "n" }],
+      "expected": { "v": 1 }
+    }
+  ]
+}
