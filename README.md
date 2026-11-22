@@ -1510,6 +1510,13 @@ updateLine(lineId, 3, undefined, { source: { type: 'replay', showId: streamingId
   `initiateCheckout` and `purchase` when either list has a show (Freckled Poppy's `streamAttribution`).
 - `shopify.cart.updateAttributes` still replaces the whole set: send the cart's current attributes,
   `_apptile_attribution` included.
+- **Trimmed to the cart** (0.26.0): the web store shares the cart but never touches the attribute, so
+  every cart the provider gets back (launch, `refresh()`, `adopt`, and each write's own result) also
+  takes off units the cart no longer holds, in the order a removal does, and writes the value when that
+  changed it. It never adds a count. `trimAttributionToLines(value, lines, lineTypes?)` is the same
+  step, exported. `attribution.lineType(attributes)` classes a line (default `lineTypeOf`: `n` or `p`);
+  `attribution.trimLineTypes` are the letters trimmed (default `['n', 'p']`, `'all'` for every one), so
+  another SDK's letter is kept unless listed.
 
 ### Which link the shopper came from: link tags (0.11.0)
 

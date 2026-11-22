@@ -10,11 +10,13 @@ const {
   recordAdd,
   recordRemove,
   mergeAttribution,
+  trimAttributionToLines,
   showsInCart,
   lineTypeOf,
 } = await import('../dist/index.js');
 
 const fixtures = JSON.parse(readFileSync(new URL('../src/attribution.fixtures.json', import.meta.url), 'utf8'));
+const trimFixtures = JSON.parse(readFileSync(new URL('./attribution-trim.fixtures.json', import.meta.url), 'utf8'));
 
 let pass = 0;
 const check = (label, fn) => { fn(); pass++; console.log('  ✓', label); };
@@ -108,6 +110,29 @@ check("lineTypeOf: '_preauthorized' is 'p' (blank included), 'false' or none is 
   assert.equal(lineTypeOf([{ key: '_preauthorized', value: '' }]), 'p');
   assert.equal(lineTypeOf([{ key: '_preauthorized', value: 'false' }]), 'n');
   assert.equal(lineTypeOf(undefined), 'n');
+});
+
+console.log('trim to the cart (attribution-trim.fixtures.json)');
+for (const c of trimFixtures.cases) {
+  check(c.name, () => {
+    const out = trimAttributionToLines(c.attribution, c.lines, c.lineTypes);
+    assert.deepEqual(out, c.expected);
+    assert.equal(serializeAttribution(out), serializeAttribution(c.expected));
+  });
+}
+
+check('trim does not mutate its input', () => {
+  const a = parseAttribution('{"v":1,"live":{"s":{"t":1,"items":{"1":{"n":2}}}},"app":{"1":{"n":1}}}');
+  const frozen = JSON.stringify(a);
+  const out = trimAttributionToLines(a, []);
+  assert.equal(JSON.stringify(a), frozen);
+  assert.notEqual(out, a);
+});
+
+check('trim equals the same removal made in the app', () => {
+  const a = parseAttribution('{"v":1,"live":{"a":{"t":1,"items":{"1":{"n":2}}},"b":{"t":2,"items":{"1":{"n":1}}}},"app":{"1":{"n":1}}}');
+  const lines = [{ merchandiseId: 'gid://shopify/ProductVariant/1', quantity: 1, lineType: 'n' }];
+  assert.deepEqual(trimAttributionToLines(a, lines), recordRemove(a, '1', 'n', 3));
 });
 
 console.log(`\n${pass} checks passed`);

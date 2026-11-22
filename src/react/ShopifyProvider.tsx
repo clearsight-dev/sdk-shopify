@@ -12,9 +12,9 @@ import { shopify } from "../shopify";
 import { isConfigured, setConfig } from "../client";
 import { addGiftCardsKeepingBuyer } from "../cart";
 import { prepareCheckout, type CheckoutPreparation, type PrepareCheckoutOptions } from "../checkout";
-import { showsInCart, type AttributionSource, type ShowsInCart } from "../attribution";
+import { showsInCart, type AttributionLineType, type AttributionSource, type ShowsInCart } from "../attribution";
 import { hasLapsedHoldIn, type CartExtension } from "../cartPage";
-import { createAttributionRecorder } from "./attributionRecorder";
+import { createAttributionRecorder, type AttributionChange } from "./attributionRecorder";
 import { CHECKOUT_STARTED_KEY, createCartRecovery, type CartRecovery } from "./cartRecovery";
 import { createHoldEndWatch, type HoldEndWatch } from "./holdEndWatch";
 import {
@@ -698,9 +698,16 @@ export interface ShopifyProviderProps {
   storeCredit?: StoreCreditOptions;
   /**
    * Records where the cart's units came from (live show, replay, or the rest of the app) in the
-   * `_apptile_attribution` cart attribute, after each line write lands. Off by default.
+   * `_apptile_attribution` cart attribute, after each line write lands. Off by default. Every cart the
+   * provider gets back also trims the value to the units the cart holds, so a removal on the web store
+   * stops being credited. `lineType` classes a line by its attributes (default `lineTypeOf`: `n` or
+   * `p`); `trimLineTypes` are the line types trimmed (default `['n', 'p']`; `'all'`: every letter).
    */
-  attribution?: { enabled: boolean };
+  attribution?: {
+    enabled: boolean;
+    lineType?: (attributes: CartAttribute[]) => AttributionLineType;
+    trimLineTypes?: readonly AttributionLineType[] | "all";
+  };
   /**
    * Saves the `ref` and `utm…` tags of each link that opens the app, and puts them on the cart, so the
    * order says which link the shopper came from (0.11.0; see `linkTags.ts`). Off when unset or when
@@ -982,6 +989,10 @@ export function ShopifyProvider({
 
   const attributionOn = useRef(false);
   attributionOn.current = !!attribution?.enabled;
+  const attributionLineType = useRef(attribution?.lineType);
+  attributionLineType.current = attribution?.lineType;
+  const attributionTrimLineTypes = useRef(attribution?.trimLineTypes);
+  attributionTrimLineTypes.current = attribution?.trimLineTypes;
   const recorderRef = useRef<ReturnType<typeof createAttributionRecorder> | null>(null);
   if (!recorderRef.current) {
     recorderRef.current = createAttributionRecorder({
@@ -990,6 +1001,8 @@ export function ShopifyProvider({
       storage: () => storageRef.current,
       write: (cartId, attrs) => shopify.cart.updateAttributes(cartId, attrs),
       onWritten: (next) => persistCartRef.current(next),
+      lineType: () => attributionLineType.current,
+      trimLineTypes: () => attributionTrimLineTypes.current,
     });
   }
   const recorder = recorderRef.current;
@@ -1282,13 +1295,19 @@ export function ShopifyProvider({
     }
   }, [config.country]);
 
-  /** `written: false` for a cart only read, which must not count as used (`saveSnapshot`). */
-  const persistCart = useCallback(async (next: Cart | null, written = true) => {
+  /**
+   * `written: false` for a cart only read, which must not count as used (`saveSnapshot`). `changes`: the
+   * line writes `next` already holds, recorded in the same step as the trim (`AttributionRecorder.sync`).
+   */
+  const persistCart = useCallback(async (
+    next: Cart | null,
+    { written = true, changes }: { written?: boolean; changes?: AttributionChange[] } = {},
+  ) => {
     latestCart.current = next;
     setCart(next);
     cartRef.current = next;
     holdWatch.follow(next);
-    const synced = recorder.sync(next);
+    const synced = recorder.sync(next, { changes });
     const s = storageRef.current;
     if (s) {
       if (next) await Promise.resolve(s.setItem(CART_STORAGE_KEY, next.id));
@@ -1413,11 +1432,10 @@ export function ShopifyProvider({
       }
       const next = measured.after;
       const [landedQuantity] = landedQuantities(measured.before, next, [approved]);
-      await persistCart(next);
+      const landed = { ...approved, quantity: landedQuantity };
+      await persistCart(next, { changes: landedQuantity > 0 ? [{ type: "add", input: landed }] : [] });
       await recovery.clearCheckoutMark();
       if (landedQuantity > 0) {
-        const landed = { ...approved, quantity: landedQuantity };
-        recorder.addInput(next.id, landed);
         emit("cart:add", { cart: next, changedLines: changesForAdds(next, [landed]) });
         announceLanded(landed, next);
       }
@@ -1535,10 +1553,9 @@ export function ShopifyProvider({
         }
       });
       if (next) {
-        await persistCart(next);
+        await persistCart(next, { changes: landed.map((input) => ({ type: "add", input })) });
         await recovery.clearCheckoutMark();
         const settled = next;
-        landed.forEach((input) => recorder.addInput(settled.id, input));
         if (landed.length) emit("cart:add", { cart: settled, changedLines: changesForAdds(settled, landed) });
         landed.forEach((input) => announceLanded(input, settled));
       }
@@ -1628,9 +1645,11 @@ export function ShopifyProvider({
         reportCartFailure(updateError);
         throw updateError;
       }
-      await persistCart(next);
+      const changes: AttributionChange[] = previous
+        ? [{ type: "line", line: previous, delta: update.quantity - previous.quantity, source: opts?.source }]
+        : [];
+      await persistCart(next, { changes });
       await recovery.clearCheckoutMark();
-      recorder.changeLine(next.id, previous, previous ? update.quantity - previous.quantity : 0, opts?.source);
       // A quantity change is not one of the panel's alerts — emitted as a state
       // signal so a host can refresh a badge, with no copy attached.
       // The line as it is now; gone at 0, so the line as it was.
@@ -1668,9 +1687,8 @@ export function ShopifyProvider({
     setCartLoad(true);
     try {
       const next = await writeCart((current) => shopify.cart.removeLines(current.id, [lineId]));
-      await persistCart(next);
+      await persistCart(next, { changes: previous ? [{ type: "line", line: previous, delta: -previous.quantity }] : [] });
       await recovery.clearCheckoutMark();
-      recorder.changeLine(next.id, previous, -(previous?.quantity ?? 0));
       // The panel's "Removed From Cart" alert. Previously nothing fired here, so
       // the configured copy had no trigger at all.
       emit("cart:remove", {
@@ -1761,7 +1779,7 @@ export function ShopifyProvider({
     if (!id) return null;
     const next = await shopify.cart.get(id);
     if (next) {
-      await persistCart(next, false);
+      await persistCart(next, { written: false });
       return next;
     }
     // Queued, so it can't run alongside a write's own replacement of the same cart.
@@ -1826,7 +1844,7 @@ export function ShopifyProvider({
     const fetched = await shopify.cart.get(cartId);
     const next = fetched ? await applyCartAttributes(await pinMarket(fetched)) : null;
     if (next) {
-      await persistCart(next, next !== fetched);
+      await persistCart(next, { written: next !== fetched });
       // This phone's link tags go with it, as on any cart of this phone's (0.11.0).
       await syncLinkTags();
     }

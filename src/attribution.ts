@@ -5,6 +5,10 @@
 export type AttributionCounts = { n?: number; p?: number; [lineType: string]: number | undefined };
 /** One show (or auction). `t` = epoch SECONDS of the last add from it (each group separately). */
 export type AttributionShow = { t: number; items: Record<string, AttributionCounts> };
+/**
+ * Adding a group needs a `v` bump, or apptile-shopify-functions' `apptile-attribution-trim.js` (the
+ * theme's trim) shipped first: it strips groups it doesn't know.
+ */
 export type Attribution = {
   v: 1;
   live?: Record<string, AttributionShow>;              // key = a live shopping show's streamId (live-selling `streamingId`)
@@ -46,7 +50,7 @@ const isRecord = (x: unknown): x is Record<string, unknown> =>
 const isCount = (x: unknown): x is number => typeof x === 'number' && Number.isInteger(x) && x > 0;
 
 /** `gid://shopify/ProductVariant/45123456789` → `"45123456789"`; a bare id passes through. */
-function variantKey(variantId: string): string {
+export function variantKey(variantId: string): string {
   return String(variantId).split('/').pop()!.split('?')[0];
 }
 
@@ -202,6 +206,38 @@ export function recordRemove(
     Object.entries(next[group] ?? {}).sort(([idA, x], [idB, y]) => x.t - y.t || idA.localeCompare(idB));
   for (const group of SHOW_GROUPS) for (const [, show] of oldestFirst(group)) take(show.items);
   return normalize(next);
+}
+
+/** A cart line as `trimAttributionToLines` reads it: its variant, units and line type. */
+export type AttributionCartLine = { merchandiseId: string; quantity: number; lineType: AttributionLineType };
+
+/**
+ * `a` with no more units claimed per variant and line type than `lines` hold, for a cart changed where
+ * the attribute isn't kept (the web store). The excess comes off as `recordRemove` takes it; nothing is
+ * ever added. Only `lineTypes` are trimmed (`'all'`: every letter), as only they are known on `lines`.
+ */
+export function trimAttributionToLines(
+  a: Attribution,
+  lines: AttributionCartLine[],
+  lineTypes: readonly AttributionLineType[] | 'all' = ['n', 'p'],
+): Attribution {
+  const inScope = (type: string) => isLineType(type) && (lineTypes === 'all' || lineTypes.includes(type));
+  const inCart = new Map<string, number>();
+  for (const line of lines) {
+    if (!inScope(line.lineType) || !isCount(line.quantity)) continue;
+    const key = `${variantKey(line.merchandiseId)}/${line.lineType}`;
+    inCart.set(key, (inCart.get(key) ?? 0) + line.quantity);
+  }
+  let next = normalize(a);
+  let claimed = sumItems({}, next.app);
+  for (const group of SHOW_GROUPS) for (const show of Object.values(next[group] ?? {})) claimed = sumItems(claimed, show.items);
+  for (const [variant, counts] of Object.entries(claimed)) {
+    for (const [type, units = 0] of Object.entries(counts)) {
+      const excess = units - (inCart.get(`${variant}/${type}`) ?? 0);
+      if (inScope(type) && excess > 0) next = recordRemove(next, variant, type, excess);
+    }
+  }
+  return next;
 }
 
 function sumItems(
